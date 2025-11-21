@@ -10,10 +10,7 @@
     },
     "contractPolicy": {
        "$ref": "policy.json"
-    },
-    "contractDefintionId": {
-      "type": "string"
     }
   },
-  "required": ["accessPolicy", "contractPolicy", "contractDefintionId"]
+  "required": ["accessPolicy", "contractPolicy"]
 }
