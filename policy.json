@@ -5,8 +5,8 @@
   "description": "Adds a generic policy object.",
   "type": "object",
   "properties": {
-    "policy": {
-      "type": "object"
+    "permissions": {
+      "type": "array"
     }
   }
 }
