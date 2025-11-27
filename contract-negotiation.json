@@ -2,23 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "contract-negotiation.json",
   "title": "Contract Negotiations Value",
-  "description": "Adds a property containing the main parts of a DSP Contract Negotiation.",
+  "description": "Adds a property containing the status of a corresponding EDC Contract Negotiation.",
   "type": "object",
   "properties": {
-    "counterPartyId": {
-      "type": "string"
+    "isPending": {
+      "type": "boolean"
     },
-    "counterPartyAddress": {
-      "type": "string"
-    },
-    "protocol": {
-      "type": "string"
-    },
-    "callbackAddresses": {
-      "type": "array",
-      "items": {
-        "$ref": "callback-address.json"
-      }
+    "isLeased": {
+      "type": "boolean"
     }
   }
 }
