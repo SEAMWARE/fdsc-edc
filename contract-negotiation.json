@@ -17,8 +17,8 @@
         "state": {
           "type": "string",
           "enum": [
-            "initial", "requesting", "requested", "offering", "offered", "accepting", "terminated",
-            "accepted", "agreeing", "agreed", "verifying", "verified", "finalizing", "terminating"
+            "INITIAL", "REQUESTING", "REQUESTED", "OFFERING", "OFFERED", "ACCEPTING", "ACCEPTED",
+            "AGREEING", "AGREED", "VERIFYING", "VERIFIED", "FINALIZING", "FINALIZED", "TERMINATING", "TERMINATED"
           ]
         }
       }
