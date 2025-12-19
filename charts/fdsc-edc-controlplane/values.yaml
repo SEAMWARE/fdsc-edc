@@ -1,0 +1,240 @@
+# -- option to override the name config in the _helpers.tpl
+nameOverride: ""
+# -- option to override the fullname config in the _helpers.tpl
+fullnameOverride: "edc"
+
+# -- if an edc specific service account should be used, it can be configured here
+# ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+serviceAccount:
+  # -- specifies if the account should be created
+  create: false
+
+
+## configuration for the k8s service to access cp
+service:
+  # -- service type
+  type: ClusterIP
+  # -- port to be used by the service
+  port: 8080
+  # -- additional annotations, if required
+  annotations: { }
+  # -- define the name of the service and avoid generating one
+  serviceNameOverride: ""
+  protocol:
+    port: 8081
+  control:
+    port: 8082
+  catalog:
+    port: 8083
+  version:
+    port: 8084
+  management:
+    port: 8085
+
+## deployment specific configuration
+deployment:
+  # -- port that the cp container uses
+  port: 8080
+  # -- base path of the controlplane
+  path: /api
+  # -- initial number of target replications, can be different if autoscaling is enabled
+  replicaCount: 1
+  # -- number of old replicas to be retained
+  revisionHistoryLimit: 3
+  ## configuration of the cp update strategy
+  updateStrategy:
+    # -- type of the update
+    type: RollingUpdate
+    # -- new pods will be added gradually
+    rollingUpdate:
+      # -- number of pods that can be created above the desired amount while updating
+      maxSurge: 1
+      # -- number of pods that can be unavailable while updating
+      maxUnavailable: 0
+  ## configuration of the image to be used
+  image:
+    # -- cp image name
+    # ref: https://quay.io/repository/wistefan/odrl-cp
+    repository: quay.io/wi_stefan/edc-controlplane
+    # -- tag of the image to be used
+    tag: local
+    # -- specification of the image pull policy
+    pullPolicy: Always
+  # -- secrets for pulling images from a private repository
+  # ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+  imagePullSecrets: [ ]
+  # -- additional labels for the deployment, if required
+  additionalLabels: { }
+  # -- additional annotations for the deployment, if required
+  additionalAnnotations: { }
+  initContainers:
+    # load the self-generated root ca into the java truststore
+    - name: load-certs
+      image: quay.io/fiware/contract-management:3.3.0
+      command: [ "/bin/sh", "-c", "/bin/import-ca.sh /certs-folder /root-ca/cacert.pem" ]
+      volumeMounts:
+        - name: ca-certs-script
+          mountPath: /bin/import-ca.sh
+          subPath: import-ca.sh
+        - name: cacerts
+          mountPath: /certs-folder/
+        - name: root-ca
+          mountPath: /root-ca
+    # get a credential to be used by the contract-management
+    - name: get-credential
+      image: quay.io/curl/curl:8.1.2
+      command: [ "/bin/sh", "-c", "/bin/get-credential.sh /credential-repo" ]
+      volumeMounts:
+        - name: marketplace-credential-script
+          mountPath: /bin/get-credential.sh
+          subPath: get-credential.sh
+        - name: credential-repo
+          mountPath: /credential-repo
+  # -- additional volume
+  additionalVolumeMounts:
+    - name: credential-repo
+      mountPath: /credential-repo
+    - name: signing-key
+      mountPath: /signing-key
+    # add the self generated root ca to the system truststore
+    - name: root-ca
+      mountPath: /etc/ssl/cacert.pem
+      subPath: cacert.pem
+    - name: cacerts
+      mountPath: /usr/lib/jvm/java-21/lib/security/cacerts
+      subPath: cacerts
+  # -- additional volumes to be added for the containers
+  additionalVolumes:
+    - name: marketplace-credential-script
+      configMap:
+        name: marketplace-credential
+        defaultMode: 0755
+    - name: ca-certs-script
+      configMap:
+        name: ca-certs-script
+        defaultMode: 0755
+    - name: credential-repo
+      emptyDir: {}
+    - name: signing-key
+      secret:
+        secretName: signing-key
+    - name: root-ca
+      secret:
+        secretName: root-ca
+    - name: cacerts
+      emptyDir: {}
+    ## cp resource requests and limits, we leave the default empty to make that a concious choice by the user.
+    ## for the autoscaling to make sense, you should configure this.
+    # resources:
+    # limits:
+    # cpu: 100m
+    # memory: 128Mi
+    # requests:
+  # cpu: 100m
+  # memory: 128Mi
+  # -- selector template
+  # ref: https://kubernetes.io/docs/user-guide/node-selection/
+  nodeSelector: { }
+  # -- tolerations template
+  # ref: ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
+  tolerations: [ ]
+  # -- affinity template
+  # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
+  affinity: { }
+  ## liveness and readiness probes
+  # ref: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#container-probes
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 30
+  readinessProbe:
+    initialDelaySeconds: 31
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 30
+  # -- arguments to be set for the container
+  args: [ ]
+  # -- command to be used for starting the container
+  command: [ ]
+  # -- individual ports and paths
+  management:
+    port: 8085
+    path: /api/management
+      # auth:
+      # type: tokenbased
+    # key: password
+  protocol:
+    port: 8081
+    path: /api/dsp
+  control:
+    port: 8082
+    path: /api/control
+  catalog:
+    port: 8083
+    path: /api/catalog
+      # auth:
+      # type: tokenbased
+    # key: password
+  version:
+    port: 8084
+    path: /api/version
+
+## pod autoscaling configuration, use for automatic scaling of the broker pods
+autoscaling:
+  #  -- should autoscaling be enabled for cp
+  enabled: false
+
+# -- a list of additional env vars to be set
+additonalEnvVars: [ ]
+
+configMap: |-
+  oid4vp.proxy.enabled=true
+  oid4vp.proxy.host=localhost
+  oid4vp.proxy.port=8888
+  oid4vp.enabled=false
+  oid4vp.holder.id=did:web:provider.io
+  oid4vp.holder.kid=did:web:provider.io
+  oid4vp.holder.key.type=EC
+  oid4vp.holder.key.path=oid4vp/private-key.pem
+  oid4vp.holder.signatureAlgorithm=ECDH-ES
+  oid4vp.credentialsFolder=oid4vp/credentials
+  oid4vp.organizationClaim=verifiableCredential.issuer
+  
+  testExtension.enabled=true
+  testExtension.controller.enabled=true
+  testExtension.controller.port=8687
+  testExtension.controller.path=/tck
+  testExtension.identity.enabled=true
+  
+  tmfExtension.enabled=true
+  tmfExtension.quoteApi=http://provider-tm-forum-api-quote:8080/tmf-api/quote/v4
+  tmfExtension.agreementApi=http://provider-tm-forum-api-agreement:8080/tmf-api/agreementManagement/v4
+  tmfExtension.productOrderApi=http://provider-tm-forum-api-product-ordering-management:8080/tmf-api/productOrderingManagement/v4
+  tmfExtension.productCatalogApi=http://provider-tm-forum-api-product-catalog:8080/tmf-api/productCatalogManagement/v4
+  tmfExtension.productInventoryApi=http://provider-tm-forum-api-product-inventory:8080/tmf-api/productInventory/v4
+  tmfExtension.usageManagementApi=http://provider-tm-forum-api-usage-management:8080/tmf-api/usageManagement/v4
+  tmfExtension.partyCatalogApi=http://provider-tm-forum-api-party-catalog:8080/tmf-api/party/v4
+  tmfExtension.transferControl.enabled=true
+  tmfExtension.transferControl.dataplaneUrl=http://localhost:8067
+  tmfExtension.catalog.enabled=true
+  
+  edc.participant.id=did:web:provider.io
+  edc.log.level=DEBUG
+  edc.jsonld.https.enabled=true
+  edc.jsonld.http.enabled=true
+  edc.negotiation.state.machine.iteration.wait.millis=5
+  
+  web.http.port=8080
+  web.http.protocol.path=/api/dsp
+  web.http.protocol.port=8081
+  web.http.control.path=/api/control
+  web.http.control.port=8082
+  web.http.catalog.path=/api/catalog
+  web.http.catalog.port=8083
+  web.http.version.path=/api/version
+  web.http.version.port=8084
+  web.http.management.path=/api/management
+  web.http.management.port=8085
+  
+  default.http.https.resolution=true

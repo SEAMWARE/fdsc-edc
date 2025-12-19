@@ -1,0 +1,73 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.seamware.edc</groupId>
+        <artifactId>edc-containers</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>oid4vc-extension</artifactId>
+
+    <properties>
+
+        <version.org.openapitools.generator-maven-plugin>7.10.0</version.org.openapitools.generator-maven-plugin>
+        <version.org.codehaus.mojo.build-helper-maven-plugin>3.4.0</version.org.codehaus.mojo.build-helper-maven-plugin>
+
+        <!-- OID4VP -->
+        <version.com.nimbusds.nimbus-jose-jwt>10.5</version.com.nimbusds.nimbus-jose-jwt>
+        <version.org.bouncycastle>1.81</version.org.bouncycastle>
+        <version.io.github.wistefan.oid4vp-client-lib>0.0.2</version.io.github.wistefan.oid4vp-client-lib>
+    </properties>
+
+    <dependencies>
+
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>core-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>protocol-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>boot-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>token-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <!-- OID4VP -->
+        <dependency>
+            <groupId>io.github.wistefan</groupId>
+            <artifactId>oid4vp-client-lib</artifactId>
+            <version>${version.io.github.wistefan.oid4vp-client-lib}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>${version.com.nimbusds.nimbus-jose-jwt}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>${version.org.bouncycastle}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${version.org.bouncycastle}</version>
+        </dependency>
+
+
+    </dependencies>
+
+</project>

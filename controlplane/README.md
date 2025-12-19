@@ -1,0 +1,1 @@
+docker run --env WEB_HTTP_PORT=8080 --env WEB_HTTP_MANAGEMENT_PORT=8081 --env WEB_HTTP_MANAGEMENT_PATH=/api/management controlplane
