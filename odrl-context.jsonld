@@ -6,6 +6,10 @@
     "profiles":     { "@id": "profiles",     "@container": "@set" },
     "duties":       { "@id": "duties",       "@container": "@set" },
     "constraints":  { "@id": "constraints",  "@container": "@set" },
-    "credentials": {"@id": "credentials", "@container": "@set"}
+    "credentials": {"@id": "credentials", "@container": "@set"},
+    "claims": {"@id": "claims", "@container": "@set"},
+    "trustedIssuersLists": {"@id": "trustedIssuersLists", "@container": "@set"},
+    "trustedParticipantsLists": {"@id": "trustedParticipantsLists", "@container": "@set"},
+    "vct_values": {"@id": "vct_values", "@container": "@set"}
   }
 }
