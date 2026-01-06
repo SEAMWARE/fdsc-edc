@@ -1,11 +1,11 @@
 {
   "@context": {
-    "permission":  { "@id": "permission",  "@container": "@set" },
-    "prohibition": { "@id": "prohibition", "@container": "@set" },
-    "obligation":  { "@id": "obligation",  "@container": "@set" },
+    "permissions":  { "@id": "permissions",  "@container": "@set" },
+    "prohibitions": { "@id": "prohibitions", "@container": "@set" },
+    "obligations":  { "@id": "obligations",  "@container": "@set" },
     "profiles":     { "@id": "profiles",     "@container": "@set" },
     "duties":       { "@id": "duties",       "@container": "@set" },
-    "constraint":  { "@id": "constraint",  "@container": "@set" },
+    "constraints":  { "@id": "constraints",  "@container": "@set" },
     "credentials": {"@id": "credentials", "@container": "@set"},
     "claims": {"@id": "claims", "@container": "@set"},
     "path": {"@id": "path", "@container": "@set"},
