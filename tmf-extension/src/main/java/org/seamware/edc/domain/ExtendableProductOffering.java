@@ -1,7 +1,11 @@
 package org.seamware.edc.domain;
 
+import com.fasterxml.jackson.annotation.JacksonInject;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import org.jetbrains.annotations.Nullable;
+import org.seamware.edc.SchemaBaseUriHolder;
 import org.seamware.tmforum.productcatalog.model.ProductOfferingVO;
 import org.seamware.tmforum.productcatalog.model.ProductSpecificationRefVO;
 
@@ -9,12 +13,22 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.seamware.edc.TMFContractNegotiationExtension.SCHEMA_BASE_URI_PROP;
+import static org.seamware.edc.domain.ExtendableProduct.EXTERNAL_ID_SCHEMA;
+
 public class ExtendableProductOffering extends ProductOfferingVO {
 
-    public static final String EXTERNAL_ID_SCHEMA = "https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/external-id.json";
 
-    {
-        setAtSchemaLocation(URI.create(EXTERNAL_ID_SCHEMA));
+    @Override
+    public @Nullable URI getAtSchemaLocation() {
+        URI current = super.getAtSchemaLocation();
+        if (current == null) {
+            URI baseUri = SchemaBaseUriHolder.get(); // configurable
+            URI resolved = baseUri.resolve(EXTERNAL_ID_SCHEMA);
+            setAtSchemaLocation(resolved);
+            return resolved;
+        }
+        return current;
     }
 
     /**

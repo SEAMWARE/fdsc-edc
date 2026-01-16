@@ -7,8 +7,10 @@ import java.util.function.Function;
 
 public class FDSCEndpointGenerator implements Function<DataAddress, Endpoint> {
 
+    private static final String ENDPOINT_URL = "endpointUrl";
+
     @Override
     public Endpoint apply(DataAddress dataAddress) {
-       return Endpoint.url(dataAddress.getStringProperty("endpointUrl"));
+       return Endpoint.url(dataAddress.getStringProperty(ENDPOINT_URL));
     }
 }

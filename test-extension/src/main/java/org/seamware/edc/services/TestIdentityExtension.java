@@ -35,13 +35,13 @@ public class TestIdentityExtension implements ServiceExtension {
             return;
         }
 
-        context.registerService(IdentityService.class, identityService());
+        context.registerService(IdentityService.class, identityService(context));
         context.registerService(AudienceResolver.class, audienceResolver());
         context.registerService(DefaultParticipantIdExtractionFunction.class, defaultParticipantIdExtractionFunction());
     }
 
-    private IdentityService identityService() {
-        return new TestIdentityService(monitor, objectMapper);
+    private IdentityService identityService(ServiceExtensionContext context) {
+        return new TestIdentityService(monitor, objectMapper, context.getParticipantId());
     }
 
     private AudienceResolver audienceResolver() {

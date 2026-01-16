@@ -29,6 +29,7 @@ import java.util.Optional;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
+// TODO: Reevaluate Usage as TransferProcess representation
 public class TMFBackedTransferProcessStore implements TransferProcessStore, LeaseReturnableStore<TransferProcess> {
 
     private final Monitor monitor;

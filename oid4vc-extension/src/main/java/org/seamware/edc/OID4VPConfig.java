@@ -107,16 +107,16 @@ public class OID4VPConfig {
         getNullSafeFromConfig(() -> proxyConfig.getString("host")).ifPresent(proxyConfigBuilder::host);
         getNullSafeFromConfig(() -> proxyConfig.getInteger("port")).ifPresent(proxyConfigBuilder::port);
 
-        configBuilder.holder(holderConfigBuilder.build());
+        configBuilder.holderConfigBuilder(holderConfigBuilder);
         configBuilder.proxy(proxyConfigBuilder.build());
 
         return configBuilder.build();
     }
 
     /**
-     * @param id of the holder, usually a did
-     * @param kid of to be used for signing. if nothing is provided, the id will be used
-     * @param keyConfig configuration of the signing key
+     * @param id                 of the holder, usually a did
+     * @param kid                of to be used for signing. if nothing is provided, the id will be used
+     * @param keyConfig          configuration of the signing key
      * @param signatureAlgorithm algorithm to be used for signing the vp-token. defaults to ECDH-ES
      */
     public record HolderConfig(String id, String kid, KeyConfig keyConfig, String signatureAlgorithm) {
@@ -164,8 +164,8 @@ public class OID4VPConfig {
 
     /**
      * @param enabled should a proxy be used
-     * @param host of the proxy
-     * @param port of the proxy
+     * @param host    of the proxy
+     * @param port    of the proxy
      */
     public record ProxyConfig(boolean enabled, String host, int port) {
         public static class Builder {
@@ -226,6 +226,8 @@ public class OID4VPConfig {
 
     public static class Builder {
         private final OID4VPConfig oid4VPConfig;
+        private HolderConfig.Builder holderConfigBuilder;
+        private ProxyConfig.Builder proxyConfigBuilder;
 
         private Builder(OID4VPConfig oid4VPConfig) {
             this.oid4VPConfig = oid4VPConfig;
@@ -283,6 +285,17 @@ public class OID4VPConfig {
             return this;
         }
 
+
+        public Builder proxyConfigBuilder(ProxyConfig.Builder proxyConfigBuilder) {
+            this.proxyConfigBuilder = proxyConfigBuilder;
+            return this;
+        }
+
+        public Builder holderConfigBuilder(HolderConfig.Builder holderConfigBuilder) {
+            this.holderConfigBuilder = holderConfigBuilder;
+            return this;
+        }
+
         public Builder holder(HolderConfig holder) {
             oid4VPConfig.holder = holder;
             return this;
@@ -290,6 +303,12 @@ public class OID4VPConfig {
 
         public OID4VPConfig build() {
             if (oid4VPConfig.enabled) {
+                if (holderConfigBuilder != null) {
+                    oid4VPConfig.holder = holderConfigBuilder.build();
+                }
+                if (proxyConfigBuilder != null) {
+                    oid4VPConfig.proxy = proxyConfigBuilder.build();
+                }
                 Objects.requireNonNull(oid4VPConfig.holder, "When OID4VP is enabled, a holder configuration has to be provided.");
                 Objects.requireNonNull(oid4VPConfig.credentialsFolder, "When OID4VP is enabled, a folder containing credentials has to be provided.");
                 Objects.requireNonNull(oid4VPConfig.clientId, "When OID4VP is enabled, a clientId has to be provided.");

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "policy.json",
+  "title": "Policy Value",
+  "description": "Adds a generic policy object.",
+  "type": "object",
+  "properties": {
+    "permissions": {
+      "type": "array"
+    }
+  }
+}

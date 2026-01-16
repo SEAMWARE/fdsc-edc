@@ -19,7 +19,7 @@ public class FDSCProviderResourceDefinitionGenerator implements ProviderResource
     @Override
     public @Nullable ResourceDefinition generate(TransferProcess transferProcess, DataAddress assetAddress, Policy policy) {
 
-        monitor.info("Generate resource definition for " + transferProcess.getAssetId() + " - " + transferProcess.getCorrelationId());
+        monitor.debug("Generate resource definition for " + transferProcess.getAssetId() + " - " + transferProcess.getCorrelationId());
 
         return FDSCProviderResourceDefinition.Builder.newInstance()
                 .assetId(transferProcess.getAssetId())
@@ -30,8 +30,7 @@ public class FDSCProviderResourceDefinitionGenerator implements ProviderResource
 
     @Override
     public boolean canGenerate(TransferProcess transferProcess, DataAddress assetAddress, Policy policy) {
-        monitor.info("Can generate");
-        // for now
+        // TODO: check if there can be something meaningful in the future
         return true;
     }
 }

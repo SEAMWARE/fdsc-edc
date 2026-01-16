@@ -1,34 +1,72 @@
 package org.seamware.edc.pap;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
+import org.eclipse.edc.policy.model.Action;
+import org.eclipse.edc.policy.model.Policy;
+import org.eclipse.edc.policy.model.PolicyType;
+import org.eclipse.edc.policy.model.Rule;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.seamware.credentials.model.ServiceVO;
 import org.seamware.edc.BaseClient;
+import org.seamware.edc.domain.ExtendableAgreementVO;
+import org.seamware.pap.model.PolicyPathVO;
+import org.seamware.pap.model.PolicyVO;
+import org.seamware.pap.model.ServiceCreateVO;
 
+import java.io.IOException;
+import java.util.Map;
 import java.util.Optional;
 
 public class OdrlPapClient extends BaseClient {
 
     private static final String SERVICE_PATH = "service";
+    private static final String POLICY_PATH = "policy";
 
     public OdrlPapClient(Monitor monitor, OkHttpClient okHttpClient, String baseUrl, ObjectMapper objectMapper) {
-        super(monitor, okHttpClient, baseUrl, objectMapper);
+        // use a copy to not manipulate the overall mapper
+        super(monitor, okHttpClient, baseUrl, objectMapper.copy());
+        super.objectMapper.addMixIn(Policy.class, PolicyMixin.class);
+        super.objectMapper.addMixIn(Rule.class, RuleMixin.class);
+        super.objectMapper.addMixIn(Action.class, ActionMixin.class);
+        super.objectMapper.addMixIn(PolicyType.class, PolicyTypeMixin.class);
     }
 
-    public void createService(ServiceVO serviceVO) {
+    public PolicyPathVO createService(ServiceCreateVO serviceCreate) {
         HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
         urlBuilder.addPathSegment(SERVICE_PATH);
-        String serviceString = "";
+        RequestBody requestBody = null;
         try {
-            serviceString = objectMapper.writeValueAsString(serviceVO);
+            String br = objectMapper.writeValueAsString(serviceCreate);
+            requestBody = RequestBody.create(br, JSON);
         } catch (JsonProcessingException e) {
-            monitor.warning("Was not able to parse service.", e);
-            throw new IllegalArgumentException("Was not able to parse service.", e);
+            throw new IllegalArgumentException("Was not able to serialize agreement.", e);
+        }
+        Request request = new Request.Builder().url(urlBuilder.build()).post(requestBody).build();
+        try (ResponseBody responseBody = executeRequest(request).body()) {
+            return objectMapper.readValue(responseBody.bytes(), PolicyPathVO.class);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Was not able to read agreement creation response.", e);
+        }
+    }
+
+    public void createPolicy(String serviceId, Policy policy) {
+        HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
+        urlBuilder.addPathSegment(SERVICE_PATH);
+        urlBuilder.addPathSegment(serviceId);
+        urlBuilder.addPathSegment(POLICY_PATH);
+        String policyString = "";
+        try {
+            policyString = objectMapper.writeValueAsString(policy);
+            monitor.info("Policy " + policyString);
+        } catch (JsonProcessingException e) {
+            monitor.warning("Was not able to parse policy.", e);
+            throw new IllegalArgumentException("Was not able to parse policy.", e);
         }
 
-        Request request = new Request.Builder().url(urlBuilder.build()).post(RequestBody.create(serviceString, JSON)).build();
+        Request request = new Request.Builder().url(urlBuilder.build()).post(RequestBody.create(policyString, JSON)).build();
         Optional.ofNullable(executeRequest(request).body()).ifPresent(ResponseBody::close);
     }
 

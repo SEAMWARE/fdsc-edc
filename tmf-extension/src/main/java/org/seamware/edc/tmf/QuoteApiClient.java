@@ -43,7 +43,8 @@ public class QuoteApiClient extends ApiClient {
             return objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableQuoteVO>>() {
             });
         } catch (Exception e) {
-            throw new IllegalArgumentException("Was not able to get quotes.", e);
+            monitor.warning("Was not able to get quotes.", e);
+            return List.of();
         }
     }
 

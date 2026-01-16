@@ -117,6 +117,7 @@ public class OID4VPExtension implements ServiceExtension {
         OID4VPConfig config = oid4VPConfig(context);
         if (oid4VPClient == null && config.getEnabled()) {
 
+            monitor.info("Enabling OID4VP Client.");
 
             Security.addProvider(new BouncyCastleProvider());
 
@@ -138,6 +139,7 @@ public class OID4VPExtension implements ServiceExtension {
                     privateKey);
             SigningService signingService = new HolderSigningService(holderConfiguration, objectMapper);
 
+            // allows configuration of additional trust anchors
             Set<TrustAnchor> trustAnchors = Optional.ofNullable(config.getTrustAnchorsFolder())
                     .map(OID4VPExtension::loadCertificatesFromFolder)
                     .orElse(List.of())

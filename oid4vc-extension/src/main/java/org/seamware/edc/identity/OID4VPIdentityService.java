@@ -19,6 +19,11 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
+/**
+ * Handle identity in an OID4VC based security ecosystem.
+ * 1. Authenticate via OID4VP
+ * 2. Accept and decode JWTs already verified by an apigateways
+ */
 public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentityService {
 
     private static final String AUD_PARAMETER = "aud";
@@ -61,6 +66,10 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
         }
     }
 
+    /**
+     * In case of the FIWARE Dataspace Connector, the EDC endpoints are ALWAYS protected by the PEP(e.g. Apisix) which is responsible for verifying the token.
+     * The method only has to do the decoding.
+     */
     @Override
     public Result<ClaimToken> verifyJwtToken(TokenRepresentation tokenRepresentation, VerificationContext verificationContext) {
         try {

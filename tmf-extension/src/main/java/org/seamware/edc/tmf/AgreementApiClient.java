@@ -5,10 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
-import org.seamware.edc.domain.ExtendableAgreementCreateVO;
-import org.seamware.edc.domain.ExtendableAgreementVO;
-import org.seamware.edc.domain.ExtendableProductOffering;
-import org.seamware.edc.domain.ExtendableQuoteVO;
+import org.seamware.edc.domain.*;
 import org.seamware.tmforum.agreement.model.AgreementVO;
 import org.seamware.tmforum.productinventory.model.ProductCreateVO;
 import org.seamware.tmforum.productinventory.model.ProductVO;
@@ -76,6 +73,49 @@ public class AgreementApiClient extends ApiClient {
         }
     }
 
+    /**
+     * Updates the given quote
+     */
+    public ExtendableAgreementVO updateAgreement(String id, ExtendableAgreementUpdateVO agreementUpdateVO) {
+
+        HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
+        urlBuilder.addPathSegment(AGREEMENT_PATH);
+        urlBuilder.addPathSegment(id);
+        RequestBody requestBody = null;
+        try {
+            String qc = objectMapper.writeValueAsString(agreementUpdateVO);
+            requestBody = RequestBody.create(qc, JSON);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Was not able to serialize agreement update.", e);
+        }
+        Request request = new Request.Builder().url(urlBuilder.build()).patch(requestBody).build();
+        try (ResponseBody responseBody = executeRequest(request)) {
+            return objectMapper.readValue(responseBody.bytes(), ExtendableAgreementVO.class);
+        } catch (IOException e) {
+            monitor.severe("Was not able to read agreement creation.", e);
+            throw new IllegalArgumentException("Was not able to read agreement creation response.", e);
+        }
+    }
+
+    public Optional<ExtendableAgreementVO> findByNegotiationId(String negotiationId) {
+        HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
+        urlBuilder.addPathSegment(AGREEMENT_PATH);
+        urlBuilder.addQueryParameter("negotiationId", negotiationId);
+        Request request = new Request.Builder().url(urlBuilder.build()).build();
+        try (ResponseBody responseBody = executeRequest(request)) {
+            List<ExtendableAgreementVO> extendableAgreementVOS = objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableAgreementVO>>() {
+            });
+            if (extendableAgreementVOS.size() > 1) {
+                throw new IllegalArgumentException(String.format("There cannot be more than one agreement per negotiation id. Found multiple for %s.", negotiationId));
+            }
+            if (extendableAgreementVOS.isEmpty()) {
+                return Optional.empty();
+            }
+            return Optional.ofNullable(extendableAgreementVOS.getFirst());
+        } catch (IOException e) {
+            throw new IllegalArgumentException(String.format("Was not able to get agreements for negotiationId %s", negotiationId), e);
+        }
+    }
 
     public Optional<ExtendableAgreementVO> findByContractId(String contractId) {
         HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();

@@ -39,7 +39,7 @@ public class CatalogProtocolServiceExtension implements ServiceExtension {
     public void initialize(ServiceExtensionContext context) {
         TMFConfig tmfConfig = TMFConfig.fromConfig(context.getConfig());
         if (tmfConfig.isEnabled() && tmfConfig.getCatalogConfig().enabled()) {
-            context.registerService(CatalogProtocolService.class, new TMForumBackedCatalogProtocolService(tmfEdcMapper, productCatalogApi, context.getParticipantId()));
+            context.registerService(CatalogProtocolService.class, new TMForumBackedCatalogProtocolService(tmfEdcMapper, productCatalogApi, context.getParticipantId(), monitor));
         } else {
             monitor.info("TMF Catalog Protocol Service is not enabled.");
         }

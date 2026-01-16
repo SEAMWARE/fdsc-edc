@@ -13,6 +13,8 @@ public interface TMFObjectMapper {
     ProductOrderUpdateVO map(ProductOrderVO productOrderVO);
 
     ExtendableAgreementCreateVO map(ExtendableAgreementVO extendableAgreementVO);
+    ExtendableAgreementUpdateVO mapToUpdate(ExtendableAgreementVO extendableAgreementVO);
+
 
     ExtendableQuoteUpdateVO map(ExtendableQuoteVO quoteVO);
 

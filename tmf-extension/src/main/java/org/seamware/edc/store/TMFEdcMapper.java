@@ -14,8 +14,6 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.Con
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractOffer;
 import org.eclipse.edc.connector.controlplane.contract.spi.validation.ValidatableConsumerOffer;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinition;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceManifest;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.policy.model.Policy;
@@ -25,6 +23,7 @@ import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.seamware.edc.domain.*;
+import org.seamware.edc.tmf.AgreementApiClient;
 import org.seamware.edc.tmf.ParticipantResolver;
 import org.seamware.tmforum.agreement.model.AgreementItemVO;
 import org.seamware.tmforum.agreement.model.CharacteristicVO;
@@ -35,7 +34,6 @@ import org.seamware.tmforum.productorder.model.ProductOrderUpdateVO;
 import org.seamware.tmforum.productorder.model.ProductOrderVO;
 import org.seamware.tmforum.quote.model.ProductOfferingRefVO;
 import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
-import org.seamware.tmforum.usage.model.CharacteristicValueSpecificationVO;
 import org.seamware.tmforum.usage.model.RatedProductUsageVO;
 import org.seamware.tmforum.usage.model.UsageCharacteristicVO;
 import org.seamware.tmforum.usage.model.UsageStatusTypeVO;
@@ -47,6 +45,9 @@ import static org.eclipse.edc.connector.controlplane.transfer.spi.types.Transfer
 import static org.seamware.edc.tmf.ParticipantResolver.CONSUMER_ROLE;
 import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
 
+/**
+ * Mapper between TMForum and EDC entities
+ */
 public class TMFEdcMapper {
 
     public static final String POT_NAME_CONTRACT_DEFINITION = "edc:contractDefinition";
@@ -81,6 +82,7 @@ public class TMFEdcMapper {
     private static final String DEFINITION_ASSET_ID_KEY = "assetId";
     private static final String DEFINITION_ID_KEY = "id";
     private static final String DEFINITION_TRANSFER_PROCESS_ID_KEY = "transferProcessId";
+    public static final String QUOTE_ITEM_ADD_ACTION = "add";
 
     private final Monitor monitor;
     private final ObjectMapper objectMapper;
@@ -94,15 +96,13 @@ public class TMFEdcMapper {
         this.tmfObjectMapper = new TMFObjectMapperImpl();
     }
 
-    public ExtendableAgreementVO toAgreement(ContractAgreement contractAgreement, String productId) {
+    public ExtendableAgreementVO toAgreement(String negotiationId, ContractAgreement contractAgreement) {
         ExtendableAgreementVO agreementVO = new ExtendableAgreementVO();
         agreementVO.setExternalId(contractAgreement.getId());
+        agreementVO.setNegotiationId(negotiationId);
         agreementVO.agreementType(AGREEMENT_TYPE_DSP);
         agreementVO.name(String.format("DSP Contract between %s - %s for %s.", contractAgreement.getProviderId(), contractAgreement.getConsumerId(), contractAgreement.getAssetId()));
 
-        AgreementItemVO agreementItemVO = new AgreementItemVO()
-                .addProductItem(new ProductRefVO().id(productId));
-        agreementVO.agreementItem(List.of(agreementItemVO));
         String consumerId = participantResolver.getTmfId(contractAgreement.getConsumerId());
         String providerId = participantResolver.getTmfId(contractAgreement.getProviderId());
         agreementVO.addEngagedPartyItem(new RelatedPartyVO().id(consumerId).role(CONSUMER_ROLE))
@@ -141,14 +141,11 @@ public class TMFEdcMapper {
         Optional<Distribution> distribution = getDataService(productSpecification)
                 .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build());
 
-
         Dataset.Builder datasetBuilder = Dataset.Builder.newInstance()
-                .id(extendableProductOffering.getExternalId())
-                .offer(getIdFromPolicy(contractPolicy), contractPolicy);
+                .offer(extendableProductOffering.getExternalId(), contractPolicy);
+        productSpecification.ifPresent(pS -> datasetBuilder.id(pS.getExternalId()));
 
-        if (distribution.isPresent()) {
-            datasetBuilder.distribution(distribution.get());
-        }
+        distribution.ifPresent(datasetBuilder::distribution);
         return datasetBuilder.build();
     }
 
@@ -221,9 +218,14 @@ public class TMFEdcMapper {
      * 1300 TERMINATING
      */
 
-    public ContractNegotiation toContractNegotiation(List<ExtendableQuoteVO> quoteVOs, ParticipantResolver participantResolver, String participantId) {
+    public ContractNegotiation toContractNegotiation(List<ExtendableQuoteVO> quoteVOs, AgreementApiClient agreementApiClient, ParticipantResolver participantResolver, String participantId) {
 
         ContractNegotiation.Builder contractNegotiationBuilder = ContractNegotiation.Builder.newInstance();
+
+        if (quoteVOs.isEmpty()) {
+            monitor.warning("Tried to map an empty list to a contract negotiation.");
+            return null;
+        }
 
         // the newest one represents the current state of the negotiation
         ExtendableQuoteVO newestQuoteVo = getNewest(quoteVOs);
@@ -276,33 +278,36 @@ public class TMFEdcMapper {
                 .flatMap(List::stream)
                 .map(this::fromQuoteItem)
                 .forEach(contractNegotiationBuilder::contractOffer);
-        if (cnState.code() >= ContractNegotiationStates.OFFERING.code() && cnState.code() < ContractNegotiationStates.TERMINATING.code()) {
-            ContractAgreement.Builder contractAgreementBuilder = ContractAgreement.Builder.newInstance()
-                    .consumerId(negotiationParticipants.getConsumerId())
-                    .providerId(negotiationParticipants.getProviderId());
-            List<ExtendableQuoteItemVO> quoteItemVOS = newestQuoteVo.getExtendableQuoteItem()
-                    .stream()
-                    .filter(eqi -> eqi.getState().equals(QuoteStateTypeVO.ACCEPTED.getValue()) || eqi.getState().equals(QuoteStateTypeVO.APPROVED.getValue()))
-                    .toList();
-            if (quoteItemVOS.size() != 1) {
-                throw new IllegalArgumentException("After a successful negotiation, exactly one successfully accepted QuoteItem should exist.");
-            }
-            ExtendableQuoteItemVO acceptedItem = quoteItemVOS.getFirst();
+        if (cnState.code() >= ContractNegotiationStates.AGREEING.code() && cnState.code() < ContractNegotiationStates.TERMINATING.code()) {
+            agreementApiClient.findByNegotiationId(newestQuoteVo.getExternalId())
+                    .map(this::toContractAgreement)
+                    .ifPresent(contractNegotiationBuilder::contractAgreement);
 
-            Policy agreementPolicy = acceptedItem.getPolicy();
-            if (!negotiationParticipants.participantsAvailable()) {
-                throw new IllegalArgumentException("The quote need to contain a consumer and a provider.");
-            }
-            agreementPolicy = agreementPolicy.toBuilder()
-                    .assigner(negotiationParticipants.getProviderId())
-                    .assignee(negotiationParticipants.getConsumerId())
-                    .type(PolicyType.CONTRACT)
-                    .build();
-            contractAgreementBuilder.policy(agreementPolicy);
-
-            contractAgreementBuilder.assetId(acceptedItem.getDatasetId());
-            contractNegotiationBuilder.contractAgreement(contractAgreementBuilder.build());
-
+//            ContractAgreement.Builder contractAgreementBuilder = ContractAgreement.Builder.newInstance()
+//                    .consumerId(negotiationParticipants.getConsumerId())
+//                    .providerId(negotiationParticipants.getProviderId());
+//            List<ExtendableQuoteItemVO> quoteItemVOS = newestQuoteVo.getExtendableQuoteItem()
+//                    .stream()
+//                    .filter(eqi -> eqi.getState().equals(QuoteStateTypeVO.ACCEPTED.getValue()) || eqi.getState().equals(QuoteStateTypeVO.APPROVED.getValue()))
+//                    .toList();
+//            if (quoteItemVOS.size() != 1) {
+//                throw new IllegalArgumentException("After a successful negotiation, exactly one successfully accepted QuoteItem should exist.");
+//            }
+//            ExtendableQuoteItemVO acceptedItem = quoteItemVOS.getFirst();
+//
+//            Policy agreementPolicy = acceptedItem.getPolicy();
+//            if (!negotiationParticipants.participantsAvailable()) {
+//                throw new IllegalArgumentException("The quote need to contain a consumer and a provider.");
+//            }
+//            agreementPolicy = agreementPolicy.toBuilder()
+//                    .assigner(negotiationParticipants.getProviderId())
+//                    .assignee(negotiationParticipants.getConsumerId())
+//                    .type(PolicyType.CONTRACT)
+//                    .build();
+//            contractAgreementBuilder.policy(agreementPolicy);
+//
+//            contractAgreementBuilder.assetId(acceptedItem.getDatasetId());
+//            contractNegotiationBuilder.contractAgreement(contractAgreementBuilder.build());
         }
         return contractNegotiationBuilder.build();
 
@@ -356,6 +361,7 @@ public class TMFEdcMapper {
         extendableQuoteItemVO.setExternalId(contractOffer.getId());
         extendableQuoteItemVO.setPolicy(contractOffer.getPolicy());
         extendableQuoteItemVO.setState(negotiationState);
+        extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
         return extendableQuoteItemVO;
     }
 
@@ -370,6 +376,7 @@ public class TMFEdcMapper {
         extendableQuoteItemVO.setId(contractOfferId.uuid());
         extendableQuoteItemVO.setDatasetId(contractOffer.getAssetId());
         extendableQuoteItemVO.setExternalId(contractOfferId.asDecoded());
+        extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
         offerTmfId.ifPresent(offerId -> extendableQuoteItemVO.productOffering(new ProductOfferingRefVO().id(offerId)));
         extendableQuoteItemVO.setPolicy(contractOffer.getPolicy());
         extendableQuoteItemVO.setState(negotiationState);
@@ -501,8 +508,12 @@ public class TMFEdcMapper {
                 .build();
     }
 
-    public ExtendableAgreementCreateVO toUpdate(ExtendableAgreementVO extendableAgreementVO) {
+    public ExtendableAgreementCreateVO toCreate(ExtendableAgreementVO extendableAgreementVO) {
         return tmfObjectMapper.map(extendableAgreementVO);
+    }
+
+    public ExtendableAgreementUpdateVO toUpdate(ExtendableAgreementVO extendableAgreementVO) {
+        return tmfObjectMapper.mapToUpdate(extendableAgreementVO);
     }
 
     public ExtendableQuoteUpdateVO toUpdate(ExtendableQuoteVO extendableQuoteVO) {

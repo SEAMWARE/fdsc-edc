@@ -1,7 +1,7 @@
 package org.seamware.edc;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import okhttp3.OkHttpClient;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.AssetIndex;
@@ -34,6 +34,7 @@ import java.time.Clock;
         ContractNegotiationStore.class, ContractDefinitionStore.class, PolicyDefinitionStore.class, AssetIndex.class, DataAddressResolver.class})
 public class TMFContractNegotiationExtension implements ServiceExtension {
 
+    public static final String SCHEMA_BASE_URI_PROP = "schemaBaseUri";
     private static final String NAME = "TMFExtension";
 
     @Inject
@@ -88,6 +89,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
             monitor.info("TMF extension is not enabled.");
             return;
         }
+        SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
         context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
         context.registerService(ObjectMapper.class, objectMapper());
         context.registerService(QuoteApiClient.class, quoteApi(config));

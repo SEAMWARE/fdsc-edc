@@ -4,6 +4,9 @@ import org.eclipse.edc.spi.iam.AudienceResolver;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
 
+/**
+ * Resolver for the counterparty from a  remote message.
+ */
 public class CounterPartyAddressAudienceResolver implements AudienceResolver {
 
     @Override

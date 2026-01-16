@@ -1,6 +1,9 @@
 package org.seamware.edc.domain;
 
-import com.fasterxml.jackson.annotation.*;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import org.jetbrains.annotations.Nullable;
+import org.seamware.edc.SchemaBaseUriHolder;
 import org.seamware.tmforum.quote.model.QuoteCreateVO;
 
 import java.net.URI;
@@ -9,8 +12,18 @@ import java.util.List;
 
 public class ExtendableQuoteCreateVO extends QuoteCreateVO {
 
-    {
-        setAtSchemaLocation(URI.create("https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/contract-negotiation.json"));
+    protected static final String CONTRACT_NEGOTIATION_SCHEMA = "contract-negotiation.json";
+
+    @Override
+    public @Nullable URI getAtSchemaLocation() {
+        URI current = super.getAtSchemaLocation();
+        if (current == null) {
+            URI baseUri = SchemaBaseUriHolder.get(); // configurable
+            URI resolved = baseUri.resolve(CONTRACT_NEGOTIATION_SCHEMA);
+            setAtSchemaLocation(resolved);
+            return resolved;
+        }
+        return current;
     }
 
     @JsonProperty("contractNegotiation")

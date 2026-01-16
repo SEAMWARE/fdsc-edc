@@ -2,15 +2,26 @@ package org.seamware.edc.domain;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.eclipse.edc.policy.model.Policy;
+import org.jetbrains.annotations.Nullable;
+import org.seamware.edc.SchemaBaseUriHolder;
 import org.seamware.tmforum.quote.model.QuoteItemVO;
 
 import java.net.URI;
 
 public class ExtendableQuoteItemVO extends QuoteItemVO {
 
+    protected static final String QUOTE_ITEM_SCHEMA = "quote-item.json";
 
-    {
-        setAtSchemaLocation(URI.create("https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/quote-item.json"));
+    @Override
+    public @Nullable URI getAtSchemaLocation() {
+        URI current = super.getAtSchemaLocation();
+        if (current == null) {
+            URI baseUri = SchemaBaseUriHolder.get(); // configurable
+            URI resolved = baseUri.resolve(QUOTE_ITEM_SCHEMA);
+            setAtSchemaLocation(resolved);
+            return resolved;
+        }
+        return current;
     }
 
     @JsonProperty("policy")

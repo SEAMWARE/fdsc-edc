@@ -30,7 +30,7 @@ CONSUMER_ID=$(curl -X 'POST' \
   "partyCharacteristic": [
     {
       "name": "did",
-      "value": "TCK_PARTICIPANT"
+      "value": "did:web:fancy-marketplace.biz"
     }
   ]
 }' | jq .id -r); echo ${CONSUMER_ID}
@@ -81,6 +81,8 @@ grep -E '^[A-Za-z0-9_]+DATASETID=' "$PROPERTIES_FILE" | while IFS='=' read -r ke
     -H 'Content-Type: application/json;charset=utf-8' \
     -d "{
            \"name\": \"Test Spec\",
+           \"externalId\": \"${assetId}\",
+           \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/external-id.json\",
            \"productSpecCharacteristic\": [
                {
                    \"id\": \"endpointUrl\",
@@ -355,7 +357,7 @@ grep -E '^[A-Za-z0-9_]+AGREEMENTID=' "$PROPERTIES_FILE" | while IFS='=' read -r 
                         \"name\": \"edc:contractDefinition\",
                         \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/contract-definition.json\",
                         \"contractPolicy\": {
-                          \"uid\": \"${contract_policy_id}\",
+                          \"odrl:uid\": \"${contract_policy_id}\",
                           \"assigner\": \"did:web:provider.io\",
                           \"@type\": {
                             \"@policytype\": \"offer\"
@@ -368,7 +370,7 @@ grep -E '^[A-Za-z0-9_]+AGREEMENTID=' "$PROPERTIES_FILE" | while IFS='=' read -r 
                           }]
                         },
                         \"accessPolicy\": {
-                          \"uid\": \"${access_policy_id}\",
+                          \"odrl:uid\": \"${access_policy_id}\",
                           \"assigner\": \"did:web:provider.io\",
                           \"permissions\": [{
                             \"action\": {
@@ -402,11 +404,11 @@ grep -E '^[A-Za-z0-9_]+AGREEMENTID=' "$PROPERTIES_FILE" | while IFS='=' read -r 
               \"relatedParty\": [
                 {
                   \"id\": \"$PROVIDER_ID\",
-                  \"role\": \"provider\"
+                  \"role\": \"Provider\"
                 },
                 {
                   \"id\": \"$CONSUMER_ID\",
-                  \"role\": \"consumer\"
+                  \"role\": \"Consumer\"
                 }
               ],
               \"productOffering\": {
@@ -427,11 +429,11 @@ grep -E '^[A-Za-z0-9_]+AGREEMENTID=' "$PROPERTIES_FILE" | while IFS='=' read -r 
             \"relatedParty\": [
               {
                 \"id\": \"$PROVIDER_ID\",
-                \"role\": \"provider\"
+                \"role\": \"Provider\"
               },
               {
                 \"id\": \"$CONSUMER_ID\",
-                \"role\": \"consumer\"
+                \"role\": \"Consumer\"
               }
             ]
         }" | jq '.id' -r)

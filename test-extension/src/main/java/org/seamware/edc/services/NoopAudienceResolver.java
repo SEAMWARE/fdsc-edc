@@ -15,7 +15,7 @@ public class NoopAudienceResolver implements AudienceResolver {
 
     @Override
     public Result<String> resolve(RemoteMessage remoteMessage) {
-        monitor.warning("Tried to resolve. " + remoteMessage.getProtocol());
+        monitor.debug("Tried to resolve audience.");
         return Result.success("Resolved");
     }
 }

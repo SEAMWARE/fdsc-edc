@@ -1,11 +1,15 @@
 package org.seamware.edc.tmf;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.tmforum.party.model.CharacteristicVO;
+import org.seamware.tmforum.party.model.OrganizationCreateVO;
 import org.seamware.tmforum.party.model.OrganizationVO;
+import org.seamware.tmforum.quote.model.QuoteCreateVO;
 
 import java.io.IOException;
 import java.util.List;
@@ -41,7 +45,7 @@ public class OrganizationApiClient extends ApiClient {
         }
     }
 
-    public OrganizationVO getByDid(String did) {
+    public Optional<OrganizationVO> getByDid(String did) {
         HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
         urlBuilder.addPathSegment(ORGANIZATION_PATH);
         urlBuilder.addQueryParameter(PARTY_CHARACTERISTIC_NAME, PARTY_CHARACTERISTIC_DID);
@@ -57,10 +61,30 @@ public class OrganizationApiClient extends ApiClient {
                                     .filter(characteristicVO -> characteristicVO.getName().equals(PARTY_CHARACTERISTIC_DID))
                                     .anyMatch(characteristicVO -> characteristicVO.getValue().equals(did))
                     )
-                    .findAny()
-                    .orElseThrow(() -> new IllegalArgumentException(String.format("Was not able to get Organization for %s", did)));
+                    .findAny();
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get Organization for %s", did), e);
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Creates the given organization
+     */
+    public OrganizationVO createOrganization(OrganizationCreateVO organizationCreateVO) {
+
+        HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
+        urlBuilder.addPathSegment(ORGANIZATION_PATH);
+        RequestBody requestBody = null;
+        try {
+            requestBody = RequestBody.create(objectMapper.writeValueAsString(organizationCreateVO), JSON);
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Was not able to serialize organization.", e);
+        }
+        Request request = new Request.Builder().url(urlBuilder.build()).post(requestBody).build();
+        try (ResponseBody responseBody = executeRequest(request)) {
+            return objectMapper.readValue(responseBody.bytes(), OrganizationVO.class);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Was not able to read organization creation response.", e);
         }
     }
 

@@ -19,6 +19,7 @@ import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.seamware.edc.apisix.ApisixAdminClient;
 import org.seamware.edc.ccs.CredentialsConfigServiceClient;
+import org.seamware.edc.pap.OdrlPapClient;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 import org.seamware.edc.transfer.FDSCEndpointGenerator;
 import org.seamware.edc.transfer.FDSCProviderResourceDefinitionGenerator;
@@ -66,6 +67,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
 
     private ApisixAdminClient apisixAdminClient;
     private CredentialsConfigServiceClient credentialsConfigServiceClient;
+    private OdrlPapClient odrlPapClient;
     private TransferConfig transferConfig;
     private TransferMapper transferMapper;
     private TransferProcessStore transferProcessStore;
@@ -89,6 +91,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
                     monitor,
                     apisixAdminClient(context),
                     credentialsConfigServiceClient(context),
+                    odrlPapClient(context),
                     productCatalogApiClient,
                     transferMapper(context),
                     objectMapper);
@@ -134,6 +137,15 @@ public class FDSCTransferControlExtension implements ServiceExtension {
         }
         return credentialsConfigServiceClient;
     }
+
+    @Provider
+    public OdrlPapClient odrlPapClient(ServiceExtensionContext context) {
+        if (odrlPapClient == null) {
+            odrlPapClient = new OdrlPapClient(monitor, okHttpClient, transferConfig(context).getOdrlPapHost(), objectMapper);
+        }
+        return odrlPapClient;
+    }
+
 
     @Provider
     public TransferMapper transferMapper(ServiceExtensionContext context) {

@@ -29,6 +29,8 @@ public class TransferConfig {
     private String transferHost;
     // host of the open policy agent to be used by the created service-route
     private String opaHost;
+    // host of the odrlPap to be used for creating the policies
+    private String odrlPapHost;
 
     public String getCredentialsConfigAddress() {
         return credentialsConfigAddress;
@@ -40,6 +42,10 @@ public class TransferConfig {
 
     public String getOpaHost() {
         return opaHost;
+    }
+
+    public String getOdrlPapHost() {
+        return odrlPapHost;
     }
 
     public String getTransferHost() {
@@ -65,6 +71,7 @@ public class TransferConfig {
         getNullSafeFromConfig(() -> transferConfig.getBoolean("enabled")).ifPresent(transferConfigBuilder::enabled);
         getNullSafeFromConfig(() -> transferConfig.getString("transferHost")).ifPresent(transferConfigBuilder::transferHost);
         getNullSafeFromConfig(() -> transferConfig.getString("verifierHost")).ifPresent(transferConfigBuilder::verifierHost);
+        getNullSafeFromConfig(() -> transferConfig.getString("odrlPapHost")).ifPresent(transferConfigBuilder::odrlPapHost);
         getNullSafeFromConfig(() -> transferConfig.getString("verifierInternalHost")).ifPresent(transferConfigBuilder::verifierInternalHost);
         getNullSafeFromConfig(() -> transferConfig.getString("opaHost")).ifPresent(transferConfigBuilder::opaHost);
         getNullSafeFromConfig(() -> transferConfig.getString("credentialsConfigAddress")).ifPresent(transferConfigBuilder::credentialsConfigAddress);
@@ -73,6 +80,7 @@ public class TransferConfig {
         Apisix.Builder apisixBuilder = new Apisix.Builder();
         getNullSafeFromConfig(() -> apisixConfig.getString("address")).ifPresent(apisixBuilder::address);
         getNullSafeFromConfig(() -> apisixConfig.getString("token")).ifPresent(apisixBuilder::token);
+        getNullSafeFromConfig(() -> apisixConfig.getString("httpsProxy")).ifPresent(apisixBuilder::httpsProxy);
         transferConfigBuilder.apisix(apisixBuilder.build());
 
         return transferConfigBuilder.build();
@@ -80,13 +88,15 @@ public class TransferConfig {
 
     /**
      * @param address of the apisix admin-api
-     * @param token to be used when accessing the admin-api
+     * @param token   to be used when accessing the admin-api
+     * @param httpsProxy address of an httpsProxy to be added to the routes. If null, no proxy will be used
      */
-    public record Apisix(String address, String token) {
+    public record Apisix(String address, String token, String httpsProxy) {
 
         public static class Builder {
             private String address;
             private String token;
+            private String httpsProxy;
 
             public Builder address(String address) {
                 this.address = address;
@@ -98,10 +108,16 @@ public class TransferConfig {
                 return this;
             }
 
+            public Builder httpsProxy(String httpsProxy) {
+                this.httpsProxy = httpsProxy;
+                return this;
+            }
+
+
             public Apisix build() {
                 Objects.requireNonNull(address, "If FDSC Transfer is enabled, an apisix address needs to be configured.");
                 Objects.requireNonNull(token, "If FDSC Transfer is enabled, an apisix admin token needs to be configured.");
-                return new Apisix(address, token);
+                return new Apisix(address, token, httpsProxy);
             }
 
         }
@@ -149,6 +165,11 @@ public class TransferConfig {
             return this;
         }
 
+        public Builder odrlPapHost(String odrlPapHost) {
+            transferConfig.odrlPapHost = odrlPapHost;
+            return this;
+        }
+
         public Builder credentialsConfigAddress(String credentialsConfigAddress) {
             transferConfig.credentialsConfigAddress = credentialsConfigAddress;
             return this;
@@ -161,6 +182,8 @@ public class TransferConfig {
                 Objects.requireNonNull(transferConfig.getTransferHost(), "If FDSC Transfers are supported, the host address for the transfers needs to be provided.");
                 Objects.requireNonNull(transferConfig.getVerifierHost(), "If FDSC Transfers are supported, the host address for the verifier needs to be provided.");
                 Objects.requireNonNull(transferConfig.getOpaHost(), "If FDSC Transfers are supported, the host address for opa to be configured in apisix needs to be provided.");
+                Objects.requireNonNull(transferConfig.getOdrlPapHost(), "If FDSC Transfers are supported, the host address for odrl-pap needs to be provided.");
+
                 if (transferConfig.getVerifierInternalHost() == null) {
                     transferConfig.verifierInternalHost = transferConfig.getVerifierHost();
                 }

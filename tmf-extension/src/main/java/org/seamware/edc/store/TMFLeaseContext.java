@@ -11,6 +11,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+// TODO: reevaluate usage together with Usage as TransferProcess representation
 public class TMFLeaseContext implements LeaseContext {
 
     private static final int LEASE_DURATION_IN_MS = 60000;

@@ -18,7 +18,10 @@ import org.seamware.edc.ccs.CredentialsConfigServiceClient;
 import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.domain.ExtendableProductSpecification;
 import org.seamware.edc.domain.ExtendableProductSpecificationRef;
+import org.seamware.edc.pap.OdrlPapClient;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
+import org.seamware.pap.model.PolicyPathVO;
+import org.seamware.pap.model.ServiceCreateVO;
 import org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
 import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 
@@ -27,6 +30,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * Provisioner for Transfer Processes in the FIWARE Dataspace Connector
+ */
 public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefinition, FDSCProvisionedResource> {
 
     private static final String SERVICE_CONFIGURATION_KEY = "serviceConfiguration";
@@ -35,14 +41,16 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
     private final Monitor monitor;
     private final ApisixAdminClient apisixAdminClient;
     private final CredentialsConfigServiceClient credentialsConfigServiceClient;
+    private final OdrlPapClient odrlPapClient;
     private final ProductCatalogApiClient productCatalogApiClient;
     private final TransferMapper transferMapper;
     private final ObjectMapper objectMapper;
 
-    public FDSCProvisioner(Monitor monitor, ApisixAdminClient apisixAdminClient, CredentialsConfigServiceClient credentialsConfigServiceClient, ProductCatalogApiClient productCatalogApiClient, TransferMapper transferMapper, ObjectMapper objectMapper) {
+    public FDSCProvisioner(Monitor monitor, ApisixAdminClient apisixAdminClient, CredentialsConfigServiceClient credentialsConfigServiceClient, OdrlPapClient odrlPapClient, ProductCatalogApiClient productCatalogApiClient, TransferMapper transferMapper, ObjectMapper objectMapper) {
         this.monitor = monitor;
         this.apisixAdminClient = apisixAdminClient;
         this.credentialsConfigServiceClient = credentialsConfigServiceClient;
+        this.odrlPapClient = odrlPapClient;
         this.productCatalogApiClient = productCatalogApiClient;
         this.transferMapper = transferMapper;
         this.objectMapper = objectMapper.copy().configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, false);
@@ -64,16 +72,15 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
      * Policies and Trusted Issuers Entries are created by the contract-management
      * -> create routes for service and well-known
      * -> conditionally: create credentials config entry
+     * -> create policies at the pap
      *
      * @param resourceDefinition that contains metadata associated with the provision operation
      * @param policy             the contract agreement usage policy for the asset being transferred
      * @return
      */
-
     @Override
     public CompletableFuture<StatusResult<ProvisionResponse>> provision(FDSCProviderResourceDefinition resourceDefinition, Policy policy) {
         monitor.info("Provision " + resourceDefinition.getTransferProcessId());
-
 
         Optional<ExtendableProductSpecification> optionalExtendableProductSpecification = productCatalogApiClient.getProductOfferingByAssetId(resourceDefinition.getAssetId())
                 .map(ExtendableProductOffering::getExtendableProductSpecification)
@@ -91,7 +98,16 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
                     "Without an configured endpoint, the service cannot be provisioned."));
         }
 
-        Route serviceRoute = transferMapper.toServiceRoute(resourceDefinition, serviceAddress.get());
+        String serviceId = resourceDefinition.getTransferProcessId();
+
+
+        PolicyPathVO policyPathVO = odrlPapClient.createService(new ServiceCreateVO().id(serviceId));
+
+        policy.getExtensibleProperties()
+                .put("@context", "http://www.w3.org/ns/odrl.jsonld");
+        odrlPapClient.createPolicy(serviceId, policy);
+
+        Route serviceRoute = transferMapper.toServiceRoute(resourceDefinition, serviceAddress.get(), policyPathVO.getPolicyPath());
         Route wellKnownRoute = transferMapper.toWellknownRouteRoute(resourceDefinition);
         apisixAdminClient.addRoute(serviceRoute);
         apisixAdminClient.addRoute(wellKnownRoute);
@@ -123,6 +139,10 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
 
         String serviceRouteId = transferMapper.toServiceRouteId(provisionedResource);
         String wellKnownRouteId = transferMapper.toWellKnownRouteId(provisionedResource);
+        String serviceId = provisionedResource.getTransferProcessId().replace("-", "");
+
+        odrlPapClient.deleteService(serviceId);
+
         apisixAdminClient.deleteRoute(serviceRouteId);
         apisixAdminClient.deleteRoute(wellKnownRouteId);
 

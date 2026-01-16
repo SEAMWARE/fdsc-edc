@@ -17,6 +17,7 @@ public class TMFConfig {
 
     private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";
     private static final String TMF_EXTENSION_CATALOG_CONFIG_PATH = "tmfExtension.catalog";
+    private static final URI DEFAULT_SCHEMA_BASE_URI = URI.create("https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas");
 
     // should storage in TMForum be enabled
     private boolean enabled;
@@ -34,6 +35,9 @@ public class TMFConfig {
     private URL usageManagementApi;
     // address of the TMForum Party Catalog API
     private URL partyCatalogApi;
+    // base uri for the json-schemas to be used when extending the TMForum objects.
+    private URI schemaBaseUri;
+
     // configuration for the catalog endpoint
     private CatalogConfig catalogConfig;
 
@@ -69,6 +73,10 @@ public class TMFConfig {
         return partyCatalogApi;
     }
 
+    public URI getSchemaBaseUri() {
+        return schemaBaseUri;
+    }
+
     public CatalogConfig getCatalogConfig() {
         return catalogConfig;
     }
@@ -85,6 +93,7 @@ public class TMFConfig {
         getNullSafeFromConfig(() -> tmfExtensionConfig.getString("productInventoryApi")).ifPresent(tmfConfigBuilder::productInventoryApi);
         getNullSafeFromConfig(() -> tmfExtensionConfig.getString("usageManagementApi")).ifPresent(tmfConfigBuilder::usageManagementApi);
         getNullSafeFromConfig(() -> tmfExtensionConfig.getString("partyCatalogApi")).ifPresent(tmfConfigBuilder::partyCatalogApi);
+        getNullSafeFromConfig(() -> tmfExtensionConfig.getString("schemaBaseUri")).ifPresent(tmfConfigBuilder::schemaBaseUri);
 
         CatalogConfig.Builder catalogConfigBuilder = new CatalogConfig.Builder();
         Config catalogConfig = config.getConfig(TMF_EXTENSION_CATALOG_CONFIG_PATH);
@@ -103,6 +112,11 @@ public class TMFConfig {
 
         public static Builder newInstance() {
             return new Builder(new TMFConfig());
+        }
+
+        public Builder schemaBaseUri(String schemaBaseUri) {
+            tmfConfig.schemaBaseUri = URI.create(schemaBaseUri);
+            return this;
         }
 
         public Builder quoteApi(String quoteApi) {
@@ -188,6 +202,9 @@ public class TMFConfig {
                 Objects.requireNonNull(tmfConfig.usageManagementApi, "If TMFExtension is enabled, a valid usageManagementApi has to be provided.");
                 Objects.requireNonNull(tmfConfig.partyCatalogApi, "If TMFExtension is enabled, a valid partyCatalogApi has to be provided.");
                 Objects.requireNonNull(tmfConfig.catalogConfig, "If TMFExtension is enabled, a valid catalog config has to be provided.");
+                if (tmfConfig.schemaBaseUri == null) {
+                    tmfConfig.schemaBaseUri = DEFAULT_SCHEMA_BASE_URI;
+                }
             }
             return tmfConfig;
         }

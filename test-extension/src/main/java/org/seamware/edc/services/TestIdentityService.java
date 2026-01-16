@@ -18,29 +18,34 @@ public class TestIdentityService implements org.eclipse.edc.spi.iam.IdentityServ
 
     private final Monitor monitor;
     private final ObjectMapper objectMapper;
+    private final String participantId;
 
-    public TestIdentityService(Monitor monitor, ObjectMapper objectMapper) {
+    public TestIdentityService(Monitor monitor, ObjectMapper objectMapper, String participantId) {
         this.monitor = monitor;
         this.objectMapper = objectMapper;
+        this.participantId = participantId;
     }
 
     @Override
     public Result<TokenRepresentation> obtainClientCredentials(TokenParameters tokenParameters) {
-        monitor.warning("Tried to obtain credential.");
-        return Result.success(TokenRepresentation.Builder.newInstance().token("1234").build());
+        monitor.debug("Obtain test credential.");
+
+        return Result.success(TokenRepresentation.Builder.newInstance().token(String.format("{\"id\": \"%s\"}", participantId)).build());
     }
 
     @Override
     public Result<ClaimToken> verifyJwtToken(TokenRepresentation tokenRepresentation, VerificationContext verificationContext) {
 
         try {
+            monitor.info("The token: " + tokenRepresentation.getToken());
+
             Map<String, String> claims = objectMapper.readValue(tokenRepresentation.getToken(), new TypeReference<Map<String, String>>() {
             });
             ClaimToken.Builder tokenBuilder = ClaimToken.Builder.newInstance();
             claims.forEach(tokenBuilder::claim);
             return Result.success(tokenBuilder.build());
         } catch (JsonProcessingException e) {
-            return Result.failure("Was not able to read the token " + e.getMessage());
+            return Result.failure("[TestIdentityService] Was not able to read the token " + e.getMessage());
         }
     }
 }

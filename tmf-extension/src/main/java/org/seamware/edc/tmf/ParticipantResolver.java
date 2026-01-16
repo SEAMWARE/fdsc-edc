@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.OkHttpClient;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.seamware.tmforum.party.model.CharacteristicVO;
+import org.seamware.tmforum.party.model.OrganizationCreateVO;
 import org.seamware.tmforum.party.model.OrganizationVO;
 
 import java.util.List;
@@ -14,8 +15,8 @@ import static org.seamware.edc.tmf.OrganizationApiClient.PARTY_CHARACTERISTIC_TC
 
 public class ParticipantResolver {
 
-    public static final String PROVIDER_ROLE = "provider";
-    public static final String CONSUMER_ROLE = "consumer";
+    public static final String PROVIDER_ROLE = "Provider";
+    public static final String CONSUMER_ROLE = "Consumer";
 
     private final OrganizationApiClient organizationApi;
 
@@ -33,8 +34,19 @@ public class ParticipantResolver {
 
     public String getTmfId(String did) {
         return organizationApi.getByDid(did)
+                .orElse(createOrganization(did))
                 .getId();
     }
+
+    private OrganizationVO createOrganization(String did) {
+        CharacteristicVO didCharacteristic = new CharacteristicVO()
+                .name(PARTY_CHARACTERISTIC_DID)
+                .value(did);
+        OrganizationCreateVO organizationCreateVO = new OrganizationCreateVO()
+                .partyCharacteristic(List.of(didCharacteristic));
+        return organizationApi.createOrganization(organizationCreateVO);
+    }
+
 
     public static String getDidFromOrganization(OrganizationVO organizationVO) {
         return Optional.ofNullable(organizationVO

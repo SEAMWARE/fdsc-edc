@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "external-id.json",
+  "title": "External ID",
+  "description": "Externally assigned Id of an object.",
+  "type": "object",
+  "properties": {
+    "externalId": {
+      "type": "string"
+    }
+  },
+  "required": ["externalId"]
+}

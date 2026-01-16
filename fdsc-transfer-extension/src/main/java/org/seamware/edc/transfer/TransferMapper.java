@@ -4,13 +4,14 @@ import org.seamware.edc.TransferConfig;
 import org.seamware.edc.apisix.*;
 
 import java.util.Map;
+import java.util.Optional;
 
 public class TransferMapper {
 
     private static final String WELL_KOWN_OPEN_ID_CONFIGURATION = "/.well-known/openid-configuration";
     private static final String WELL_KNOWN_ENDPOINT_TEMPLATE = "/services/%s" + WELL_KOWN_OPEN_ID_CONFIGURATION;
     private static final String DISCOVERY_ENDPOINT_TEMPLATE = "%s" + WELL_KNOWN_ENDPOINT_TEMPLATE;
-    private static final String POLICY_MAIN = "policy/main";
+    private static final String POLICY_TEMPLATE = "policy/%s";
     private static final String SERVICE_ROUTE_ID = "%s-service";
     private static final String WELL_KNOWN_ROUTE_ID = "%s-well-known";
     private static final String ROUTING_TYPE_ROUND_ROBIN = "roundrobin";
@@ -30,7 +31,7 @@ public class TransferMapper {
     }
 
 
-    public Route toServiceRoute(FDSCProviderResourceDefinition resourceDefinition, String serviceAddress) {
+    public Route toServiceRoute(FDSCProviderResourceDefinition resourceDefinition, String serviceAddress, String policyAddress) {
 
         Upstream upstream = new Upstream()
                 .setType(ROUTING_TYPE_ROUND_ROBIN)
@@ -38,7 +39,7 @@ public class TransferMapper {
 
         OpaPlugin opaPlugin = new OpaPlugin()
                 .setHost(transferConfig.getOpaHost())
-                .setPolicy(POLICY_MAIN)
+                .setPolicy(String.format(POLICY_TEMPLATE, policyAddress))
                 .setWithBody(true);
 
         OpenidConnectPlugin openidConnectPlugin = new OpenidConnectPlugin()
@@ -47,15 +48,14 @@ public class TransferMapper {
                 .setClientSecret("unused")
                 .setDiscovery(String.format(DISCOVERY_ENDPOINT_TEMPLATE, transferConfig.getVerifierHost(), resourceDefinition.getTransferProcessId()))
                 .setSslVerify(false)
-                .setUseJwks(true)
-                // TODO: remove
-                .setProxyOpts(Map.of("https_proxy", "http://squid-proxy.infra.svc.cluster.local:8888"));
+                .setUseJwks(true);
+        Optional.ofNullable(transferConfig.getApisix().httpsProxy()).ifPresent((proxyAddress) -> openidConnectPlugin.setProxyOpts(Map.of("https_proxy", proxyAddress)));
 
         return new Route()
                 .setId(String.format(SERVICE_ROUTE_ID, resourceDefinition.getTransferProcessId()))
                 .setHost(transferConfig.getTransferHost())
                 .setUpstream(upstream)
-                .setUri(resourceDefinition.getTransferProcessId())
+                .setUri("/" + resourceDefinition.getTransferProcessId())
                 .setPlugins(Map.of(opaPlugin.getPluginName(), opaPlugin, openidConnectPlugin.getPluginName(), openidConnectPlugin));
     }
 
@@ -66,7 +66,6 @@ public class TransferMapper {
                 .setNodes(Map.of(transferConfig.getVerifierInternalHost(), 1));
 
         ProxyRewritePlugin proxyRewritePlugin = new ProxyRewritePlugin()
-                // preconfigured service?
                 .setUri(String.format(WELL_KNOWN_ENDPOINT_TEMPLATE, resourceDefinition.getTransferProcessId()));
 
 
@@ -74,7 +73,7 @@ public class TransferMapper {
                 .setId(String.format(WELL_KNOWN_ROUTE_ID, resourceDefinition.getTransferProcessId()))
                 .setHost(transferConfig.getTransferHost())
                 .setUpstream(upstream)
-                .setUri(WELL_KOWN_OPEN_ID_CONFIGURATION)
+                .setUri("/" + resourceDefinition.getTransferProcessId() + WELL_KOWN_OPEN_ID_CONFIGURATION)
                 .setPlugins(Map.of(proxyRewritePlugin.getPluginName(), proxyRewritePlugin));
     }
 

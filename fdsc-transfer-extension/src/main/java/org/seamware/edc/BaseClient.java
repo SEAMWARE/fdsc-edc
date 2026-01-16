@@ -6,6 +6,9 @@ import org.eclipse.edc.spi.monitor.Monitor;
 
 import java.io.IOException;
 
+/**
+ * Base http client
+ */
 public abstract class BaseClient {
 
     protected static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");

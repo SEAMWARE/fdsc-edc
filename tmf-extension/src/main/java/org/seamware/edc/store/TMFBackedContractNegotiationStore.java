@@ -21,6 +21,9 @@ import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.AutomaticUnlockingLockManager;
 import org.seamware.edc.domain.*;
 import org.seamware.edc.tmf.*;
+import org.seamware.tmforum.agreement.model.AgreementItemVO;
+import org.seamware.tmforum.agreement.model.AgreementTermOrConditionVO;
+import org.seamware.tmforum.agreement.model.ProductRefVO;
 import org.seamware.tmforum.productinventory.model.ProductOfferingRefVO;
 import org.seamware.tmforum.productinventory.model.ProductStatusTypeVO;
 import org.seamware.tmforum.productinventory.model.ProductVO;
@@ -97,8 +100,22 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
     @Override
     public @NotNull Stream<ContractNegotiation> queryNegotiations(QuerySpec querySpec) {
-        monitor.warning("Query negotiations " + querySpec.toString());
-        return Stream.empty();
+        Map<String, List<ExtendableQuoteVO>> negotiationQuotes = new HashMap<>();
+
+        quoteApi.getQuotes(querySpec.getOffset(), querySpec.getLimit())
+                .forEach(eq -> {
+                    String negotiationId = eq.getExternalId();
+                    if (negotiationQuotes.containsKey(negotiationId)) {
+                        negotiationQuotes.get(negotiationId).add(eq);
+                    } else {
+                        List<ExtendableQuoteVO> quotes = new ArrayList<>();
+                        quotes.add(eq);
+                        negotiationQuotes.put(negotiationId, quotes);
+                    }
+                });
+        return negotiationQuotes.entrySet()
+                .stream()
+                .map(e -> tmfEdcMapper.toContractNegotiation(e.getValue(), agreementApi, participantResolver, participantId));
     }
 
     @Override
@@ -123,7 +140,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     @Override
     public @Nullable ContractNegotiation findById(String s) {
         List<ExtendableQuoteVO> contractNegotiations = quoteApi.findByNegotiationId(s);
-        return tmfEdcMapper.toContractNegotiation(contractNegotiations, participantResolver, participantId);
+        return tmfEdcMapper.toContractNegotiation(contractNegotiations, agreementApi, participantResolver, participantId);
     }
 
     @Override
@@ -152,7 +169,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                 List<ContractNegotiation> contractNegotiations;
                 contractNegotiations = negotiationIds.stream()
                         .map(quoteApi::findByNegotiationId)
-                        .map(extendableQuoteVOS -> tmfEdcMapper.toContractNegotiation(extendableQuoteVOS, participantResolver, participantId))
+                        .map(extendableQuoteVOS -> tmfEdcMapper.toContractNegotiation(extendableQuoteVOS, agreementApi, participantResolver, participantId))
                         .filter(filterPredicate)
                         .filter(e -> !isLeased(e.getId()))
                         .map(ContractNegotiation.class::cast)
@@ -202,18 +219,6 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     @Override
     public void save(ContractNegotiation contractNegotiation) {
         persistContractNegotiation(contractNegotiation);
-
-//        transactionContext.execute(() -> {
-//            try {
-//                lockManager.writeLock(() -> {
-//                    persistContractNegotiation(contractNegotiation);
-//                    return contractNegotiation;
-//                });
-//            } catch (Exception e) {
-//                monitor.warning("Failed to save.", e);
-//                throw new EdcPersistenceException(e);
-//            }
-//        });
     }
 
     private void persistContractNegotiation(ContractNegotiation contractNegotiation) {
@@ -242,7 +247,15 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                     getFromNegotiation(contractNegotiation)
                             .stream()
                             .map(p -> new org.seamware.tmforum.productorder.model.RelatedPartyVO().id(p.partyId()).role(p.role()))
-                            .forEach(productOrderCreateVO::addRelatedPartyItem);
+                            .forEach(pr -> {
+                                if (pr.getRole().equals(CONSUMER_ROLE)) {
+                                    productOrderCreateVO.addRelatedPartyItem(pr);
+                                    // Customer is the role expected by the Contract-Management
+                                    productOrderCreateVO.addRelatedPartyItem(new org.seamware.tmforum.productorder.model.RelatedPartyVO().id(pr.getId()).role("Customer"));
+                                } else {
+                                    productOrderCreateVO.addRelatedPartyItem(pr);
+                                }
+                            });
                     productOrderCreateVO.quote(List.of(new QuoteRefVO().id(quoteVO.getId())));
 
                     productOrderApi.createProductOrder(productOrderCreateVO);
@@ -274,13 +287,13 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                     }
                 }
                 case AGREEING, AGREED -> {
-                    monitor.severe("Agreeing " + negotiationState);
                     Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.AGREEING, ContractNegotiationStates.AGREED, ContractNegotiationStates.ACCEPTED, ContractNegotiationStates.REQUESTED));
                     if (activeQuote.isEmpty()) {
                         // we cannot throw something here, since it somehow kills an internal edc worker...
                         monitor.warning(String.format("Cannot save transition to %s for %s.", negotiationState.name(), contractNegotiation.getId()));
                     } else {
                         updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+                        createAgreement(activeQuote.get(), contractNegotiation);
                     }
                 }
                 case OFFERING, OFFERED -> {
@@ -344,7 +357,11 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
 
     public void finalizeOrder(ContractNegotiation contractNegotiation, ExtendableQuoteVO finalQuote) {
-        monitor.warning("FINALIZED");
+        try {
+            monitor.warning("FINALIZING Negotiation " + objectMapper.writeValueAsString(contractNegotiation));
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
         Optional<ProductOrderVO> orderVO = getProductOrder(finalQuote.getId());
         if (orderVO.isEmpty()) {
             throw new IllegalArgumentException("When finalizing, an order should already exist.");
@@ -373,7 +390,15 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         }
         ProductVO product = productInventoryApi.createProduct(productCreateVO);
 
-        agreementApi.createAgreement(tmfEdcMapper.toUpdate(tmfEdcMapper.toAgreement(contractNegotiation.getContractAgreement(), product.getId())));
+        ExtendableAgreementVO extendableAgreementVO = agreementApi.findByContractId(contractNegotiation.getContractAgreement().getId())
+                .orElseThrow(() -> new IllegalArgumentException("An agreement needs to be present at that stage."));
+        extendableAgreementVO.setStatus(AgreementState.AGREED.getValue());
+        AgreementItemVO agreementItemVO = new AgreementItemVO()
+                .addProductItem(new ProductRefVO().id(product.getId()));
+        // throw away the old ref, irrelevant by now
+        extendableAgreementVO.agreementItem(List.of(agreementItemVO));
+
+        agreementApi.updateAgreement(extendableAgreementVO.getId(), tmfEdcMapper.toUpdate(extendableAgreementVO));
         productOrderApi.updateProductOrder(orderVO.get().getId(), productOrderUpdateVO);
     }
 
@@ -427,30 +452,44 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
         ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(orginialQuote);
         quoteUpdateVO.setState(quoteState);
-        quoteUpdateVO.setContractNegotiationState(new ContractNegotiationState()
+
+        ContractNegotiationState contractNegotiationState = new ContractNegotiationState()
                 .setPending(contractNegotiation.isPending())
                 .setState(ContractNegotiationStates.TERMINATED.name())
                 .setCorrelationId(contractNegotiation.getCorrelationId())
-                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress()));
+                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+
+        quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
         quoteUpdateVO.setExtendableQuoteItem(offersToQuoteItems(contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
 
         quoteApi.updateQuote(orginialQuote.getId(), quoteUpdateVO);
     }
 
-    private void updateQuote(ExtendableQuoteVO orginialQuote, ContractNegotiation contractNegotiation, QuoteStateTypeVO quoteState) {
+    private void createAgreement(ExtendableQuoteVO originalQuote, ContractNegotiation contractNegotiation) {
+        ExtendableAgreementVO agreementVO = tmfEdcMapper.toAgreement(contractNegotiation.getId(), contractNegotiation.getContractAgreement());
+        // refer to the offering, as long as no product exists
+        agreementVO.addAgreementItemItem(new AgreementItemVO().addTermOrConditionItem(new AgreementTermOrConditionVO()
+                .description("Under negotiation")));
+        agreementVO.setStatus(AgreementState.IN_PROCESS.getValue());
+        agreementApi.createAgreement(tmfEdcMapper.toCreate(agreementVO));
+    }
+
+    private void updateQuote(ExtendableQuoteVO originalQuote, ContractNegotiation contractNegotiation, QuoteStateTypeVO quoteState) {
         monitor.warning("Update existing quote for negotiation " + contractNegotiation.getId() + " - state " + ContractNegotiationStates.from(contractNegotiation.getState()).name());
         boolean isConsumer = contractNegotiation.getType() == ContractNegotiation.Type.CONSUMER;
 
-        ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(orginialQuote);
+        ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(originalQuote);
         quoteUpdateVO.setState(quoteState);
-        quoteUpdateVO.setContractNegotiationState(new ContractNegotiationState()
+        ContractNegotiationState contractNegotiationState = new ContractNegotiationState()
                 .setPending(contractNegotiation.isPending())
                 .setState(contractNegotiation.stateAsString())
                 .setCorrelationId(contractNegotiation.getCorrelationId())
-                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress()));
+                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+
+        quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
         quoteUpdateVO.setExtendableQuoteItem(offersToQuoteItems(contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
 
-        quoteApi.updateQuote(orginialQuote.getId(), quoteUpdateVO);
+        quoteApi.updateQuote(originalQuote.getId(), quoteUpdateVO);
     }
 
     private List<ExtendableQuoteItemVO> offersToQuoteItems(List<ContractOffer> offers, String negotiationState, boolean isConsumer) {
@@ -496,6 +535,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         monitor.warning("Create a quote for negotiation");
 
         ExtendableQuoteCreateVO quoteCreateVO = new ExtendableQuoteCreateVO();
+
         quoteCreateVO.setExternalId(contractNegotiation.getId());
         quoteCreateVO.setContractNegotiationState(new ContractNegotiationState().setPending(contractNegotiation.isPending())
                 .setState(contractNegotiation.stateAsString())
@@ -527,49 +567,16 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         return quoteApi.createQuote(quoteCreateVO);
     }
 
-    private Optional<ExtendableQuoteItemVO> getQuoteItemForOffer(String uuid, List<ExtendableQuoteItemVO> quoteItemVOS) {
-        return quoteItemVOS.stream()
-                .filter(quoteItemVO -> quoteItemVO.getId().equals(uuid))
-                .findAny();
-    }
-
     private List<PartyWithRole> getFromNegotiation(ContractNegotiation contractNegotiation) {
         if (roleFromNegotiation(contractNegotiation.getType()).equals(PROVIDER_ROLE)) {
             return List.of(
-                    new PartyWithRole(participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), "consumer"),
-                    new PartyWithRole(participantResolver.getTmfId(participantId), "provider"));
+                    new PartyWithRole(participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), CONSUMER_ROLE),
+                    new PartyWithRole(participantResolver.getTmfId(participantId), PROVIDER_ROLE));
         } else {
             return List.of(
-                    new PartyWithRole(participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), "provider"),
-                    new PartyWithRole(participantResolver.getTmfId(participantId), "consumer"));
+                    new PartyWithRole(participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), PROVIDER_ROLE),
+                    new PartyWithRole(participantResolver.getTmfId(participantId), CONSUMER_ROLE));
         }
-    }
-
-    public TMFContractNegotiation fromContractNegotiation(ContractNegotiation contractNegotiation) {
-        monitor.warning("fromContractNegotiation");
-        if (contractNegotiation == null) {
-            return null;
-        }
-        TMFContractNegotiation tmfContractNegotiation = new TMFContractNegotiation()
-                .setProtocol(contractNegotiation.getProtocol())
-                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress())
-                .setCounterPartyId(contractNegotiation.getCounterPartyId());
-        List<TMFCallbackAddress> tmfCallbackAddresses = contractNegotiation.getCallbackAddresses()
-                .stream()
-                .map(this::fromCallbackAddress)
-                .toList();
-        tmfContractNegotiation.setCallbackAddresses(tmfCallbackAddresses);
-        return tmfContractNegotiation;
-    }
-
-    public TMFCallbackAddress fromCallbackAddress(CallbackAddress callbackAddress) {
-        if (callbackAddress == null) {
-            return null;
-        }
-        return new TMFCallbackAddress()
-                .setAuthCodeId(callbackAddress.getAuthCodeId())
-                .setUri(callbackAddress.getUri())
-                .setAuthKey(callbackAddress.getAuthKey());
     }
 
     public String roleFromNegotiation(ContractNegotiation.Type type) {

@@ -1,7 +1,5 @@
 package org.seamware.edc.identity;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.edc.protocol.spi.DefaultParticipantIdExtractionFunction;
 import org.eclipse.edc.spi.iam.ClaimToken;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -10,9 +8,11 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.function.Function;
 
+/**
+ * Extract the participants id from  a JWT issued in an OID4VC based ecosystem
+ */
 public class OID4VPParticipantIdExtractionFunction implements DefaultParticipantIdExtractionFunction {
 
     private final Monitor monitor;

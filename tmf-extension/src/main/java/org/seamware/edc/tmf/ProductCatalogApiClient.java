@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+import static org.seamware.edc.domain.ExtendableProduct.EXTERNAL_ID_SCHEMA;
 import static org.seamware.edc.store.TMFEdcMapper.*;
 
 /**
@@ -193,7 +194,7 @@ public class ProductCatalogApiClient extends ApiClient {
 
             HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
             urlBuilder.addPathSegment(PRODUCT_OFFERING_PATH);
-            urlBuilder.addQueryParameter("atSchemaLocation", ExtendableProductOffering.EXTERNAL_ID_SCHEMA);
+            urlBuilder.addQueryParameter("atSchemaLocation", EXTERNAL_ID_SCHEMA);
             urlBuilder.addQueryParameter(LIMIT_PARAM, "100");
             urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
             Request request = new Request.Builder().url(urlBuilder.build()).build();
