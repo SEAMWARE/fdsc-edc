@@ -8,6 +8,8 @@ import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.jetbrains.annotations.Nullable;
 
+import static org.seamware.edc.FDSCTransferControlExtension.TRANSFER_TYPE_HTTP_PULL;
+
 public class FDSCProviderResourceDefinitionGenerator implements ProviderResourceDefinitionGenerator {
 
     private final Monitor monitor;
@@ -21,7 +23,7 @@ public class FDSCProviderResourceDefinitionGenerator implements ProviderResource
 
         monitor.debug("Generate resource definition for " + transferProcess.getAssetId() + " - " + transferProcess.getCorrelationId());
 
-        return FDSCProviderResourceDefinition.Builder.newInstance()
+        return FDSCOID4VPProviderResourceDefinition.Builder.newInstance()
                 .assetId(transferProcess.getAssetId())
                 .id(transferProcess.getCorrelationId())
                 .transferProcessId(transferProcess.getId())
@@ -30,7 +32,6 @@ public class FDSCProviderResourceDefinitionGenerator implements ProviderResource
 
     @Override
     public boolean canGenerate(TransferProcess transferProcess, DataAddress assetAddress, Policy policy) {
-        // TODO: check if there can be something meaningful in the future
-        return true;
+        return transferProcess.getTransferType().equals(TRANSFER_TYPE_HTTP_PULL);
     }
 }
