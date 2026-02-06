@@ -30,11 +30,6 @@
     </dependencyManagement>
 
     <dependencies>
-<!--        <dependency>-->
-<!--            <groupId>org.seamware.edc</groupId>-->
-<!--            <artifactId>oid4vc-extension</artifactId>-->
-<!--            <version>${project.version}</version>-->
-<!--        </dependency>-->
         <dependency>
             <groupId>org.seamware.edc</groupId>
             <artifactId>dcp-extension</artifactId>
@@ -233,13 +228,6 @@
             <version>${edc.version}</version>
         </dependency>
 
-        <!-- testing -->
-<!--        <dependency>-->
-<!--            <groupId>org.eclipse.edc</groupId>-->
-<!--            <artifactId>data-plane-core</artifactId>-->
-<!--            <version>${edc.version}</version>-->
-<!--            <scope>test</scope>-->
-<!--        </dependency>-->
     </dependencies>
 
 

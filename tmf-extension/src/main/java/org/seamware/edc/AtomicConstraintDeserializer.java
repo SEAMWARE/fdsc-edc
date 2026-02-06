@@ -1,4 +1,4 @@
-package org.seamware.edc.policy;
+package org.seamware.edc;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.databind.DeserializationContext;

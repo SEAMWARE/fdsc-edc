@@ -9,9 +9,9 @@ import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinit
 import static java.util.Objects.requireNonNull;
 
 
-@JsonTypeName("dataspaceconnector:fdscproviderresourcedefinition")
-@JsonDeserialize(builder = FDSCProviderResourceDefinition.Builder.class)
-public class FDSCProviderResourceDefinition extends ResourceDefinition {
+@JsonTypeName("dataspaceconnector:fdscoid4vpproviderresourcedefinition")
+@JsonDeserialize(builder = FDSCOID4VPProviderResourceDefinition.Builder.class)
+public class FDSCOID4VPProviderResourceDefinition extends ResourceDefinition {
 
     private String assetId;
 
@@ -26,10 +26,10 @@ public class FDSCProviderResourceDefinition extends ResourceDefinition {
     }
 
     @JsonPOJOBuilder(withPrefix = "")
-    public static class Builder extends ResourceDefinition.Builder<FDSCProviderResourceDefinition, Builder> {
+    public static class Builder extends ResourceDefinition.Builder<FDSCOID4VPProviderResourceDefinition, Builder> {
 
         private Builder() {
-            super(new FDSCProviderResourceDefinition());
+            super(new FDSCOID4VPProviderResourceDefinition());
         }
 
         @JsonCreator

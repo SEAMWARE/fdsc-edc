@@ -2,6 +2,7 @@ package org.seamware.edc.store;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.eclipse.edc.connector.controlplane.contract.spi.ContractOfferId;
 import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
@@ -59,6 +60,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     private final Clock clock;
     private final TMFEdcMapper tmfEdcMapper;
     private final String participantId;
+    private final String controlplane;
 
     private final CriterionOperatorRegistry criterionOperatorRegistry;
 
@@ -66,7 +68,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     private final AutomaticUnlockingLockManager lockManager;
     private final Map<String, Lease> leases = new HashMap<>();
 
-    public TMFBackedContractNegotiationStore(Monitor monitor, ObjectMapper objectMapper, QuoteApiClient quoteApi, AgreementApiClient agreementApi, ProductOrderApiClient productOrderApi, ProductCatalogApiClient productCatalogApi, ProductInventoryApiClient productInventoryApi, ParticipantResolver participantResolver, TMFEdcMapper tmfEdcMapper, String participantId, Clock clock, CriterionOperatorRegistry criterionOperatorRegistry) {
+    public TMFBackedContractNegotiationStore(Monitor monitor, ObjectMapper objectMapper, QuoteApiClient quoteApi, AgreementApiClient agreementApi, ProductOrderApiClient productOrderApi, ProductCatalogApiClient productCatalogApi, ProductInventoryApiClient productInventoryApi, ParticipantResolver participantResolver, TMFEdcMapper tmfEdcMapper, String participantId, Clock clock, String controlplane, CriterionOperatorRegistry criterionOperatorRegistry) {
         this.monitor = monitor;
         this.objectMapper = objectMapper;
         this.quoteApi = quoteApi;
@@ -78,6 +80,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         this.tmfEdcMapper = tmfEdcMapper;
         this.participantId = participantId;
         this.clock = clock;
+        this.controlplane = controlplane;
         this.criterionOperatorRegistry = criterionOperatorRegistry;
         this.lockId = UUID.randomUUID().toString();
         this.lockManager = new AutomaticUnlockingLockManager(new ReentrantReadWriteLock(true), 10500, monitor);
@@ -105,6 +108,9 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         Map<String, List<ExtendableQuoteVO>> negotiationQuotes = new HashMap<>();
 
         quoteApi.getQuotes(querySpec.getOffset(), querySpec.getLimit())
+                .stream()
+                // only those that this controlplane is responsible for
+                .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
                 .forEach(eq -> {
                     String negotiationId = eq.getExternalId();
                     if (negotiationQuotes.containsKey(negotiationId)) {
@@ -144,8 +150,12 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
     @Override
     public @Nullable ContractNegotiation findById(String s) {
-        List<ExtendableQuoteVO> contractNegotiations = quoteApi.findByNegotiationId(s);
-        return tmfEdcMapper.toContractNegotiation(contractNegotiations, agreementApi, participantResolver, participantId);
+        List<ExtendableQuoteVO> contractNegotiations = quoteApi.findByNegotiationId(s)
+                .stream()
+                // only those that this controlplane is responsible for
+                .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
+                .toList();
+        return tmfEdcMapper.toContractNegotiation(new ArrayList<>(contractNegotiations), agreementApi, participantResolver, participantId);
     }
 
     @Override
@@ -166,6 +176,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                     List<ExtendableQuoteVO> extendableQuoteVOS = quoteApi.getQuotes(offset, limit);
                     extendableQuoteVOS
                             .stream()
+                            // only those that this controlplane is responsible for
+                            .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
                             .map(ExtendableQuoteVO::getExternalId)
                             .forEach(negotiationIds::add);
                     moreQuotesAvailable = extendableQuoteVOS.size() == limit;
@@ -297,7 +309,6 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                         // we cannot throw something here, since it somehow kills an internal edc worker...
                         monitor.warning(String.format("Cannot save transition to %s for %s.", negotiationState.name(), contractNegotiation.getId()));
                     } else {
-                        monitor.warning("Cn " + objectMapper.writeValueAsString(contractNegotiation));
                         updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
                         if (contractNegotiation.getContractAgreement() != null) {
                             createAgreement(contractNegotiation);
@@ -462,6 +473,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         quoteUpdateVO.setState(quoteState);
 
         ContractNegotiationState contractNegotiationState = new ContractNegotiationState()
+                .setControlplane(controlplane)
                 .setPending(contractNegotiation.isPending())
                 .setState(ContractNegotiationStates.TERMINATED.name())
                 .setCorrelationId(contractNegotiation.getCorrelationId())
@@ -489,6 +501,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(originalQuote);
         quoteUpdateVO.setState(quoteState);
         ContractNegotiationState contractNegotiationState = new ContractNegotiationState()
+                .setControlplane(controlplane)
                 .setPending(contractNegotiation.isPending())
                 .setState(contractNegotiation.stateAsString())
                 .setCorrelationId(contractNegotiation.getCorrelationId())
@@ -534,7 +547,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
         return ContractOfferIdParser.parseId(contractOffer.getId())
                 .asOptional()
-                .map(ContractOfferIdParser.ContractOfferWithUid::asDecoded)
+                .map(ContractOfferIdParser.ContractOfferWithUid::contractOfferId)
+                .map(ContractOfferId::definitionPart)
                 .flatMap(productCatalogApi::getProductOfferingByExternalId)
                 .map(ExtendableProductOffering::getId);
     }
@@ -546,6 +560,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
         quoteCreateVO.setExternalId(contractNegotiation.getId());
         quoteCreateVO.setContractNegotiationState(new ContractNegotiationState().setPending(contractNegotiation.isPending())
+                .setControlplane(controlplane)
                 .setState(contractNegotiation.stateAsString())
                 .setCorrelationId(contractNegotiation.getCorrelationId())
                 .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress()));

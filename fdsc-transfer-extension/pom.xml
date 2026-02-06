@@ -13,6 +13,8 @@
     <artifactId>fdsc-transfer-extension</artifactId>
 
     <properties>
+        <version.com.nimbusds.nimbus-jose-jwt>10.5</version.com.nimbusds.nimbus-jose-jwt>
+
         <credentials-config-service.api.url>https://raw.githubusercontent.com/FIWARE/credentials-config-service/refs/heads/main/api/credentials-config-service.yaml</credentials-config-service.api.url>
         <odrl-pap.api.url>https://raw.githubusercontent.com/wistefan/odrl-pap/refs/heads/policy-per-service/api/odrl.yaml</odrl-pap.api.url>
     </properties>
@@ -48,6 +50,11 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
+            <artifactId>vault-hashicorp</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
             <artifactId>token-spi</artifactId>
             <version>${edc.version}</version>
         </dependency>
@@ -69,6 +76,11 @@
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>data-plane-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>data-plane-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -97,6 +109,11 @@
             <version>${edc.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>${version.com.nimbusds.nimbus-jose-jwt}</version>
+        </dependency>
 
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>

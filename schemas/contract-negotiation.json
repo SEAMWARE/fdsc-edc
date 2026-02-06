@@ -8,6 +8,9 @@
     "contractNegotiation": {
       "type" : "object",
       "properties": {
+        "controlplane": {
+          "type": "string"
+        },
         "isPending": {
           "type": "boolean"
         },

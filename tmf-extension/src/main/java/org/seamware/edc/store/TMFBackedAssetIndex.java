@@ -42,8 +42,8 @@ public class TMFBackedAssetIndex implements AssetIndex {
     @Override
     public Asset findById(String s) {
         return productCatalogApiClient
-                .getProductOfferingByAssetId(s)
-                .map(offering -> tmfEdcMapper.assetFromProductOffering(offering, getProductSpec(offering)))
+                .getProductSpecByExternalId(s)
+                .map(tmfEdcMapper::assetFromProductSpec)
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .orElseThrow(() -> new IllegalArgumentException(String.format("Asset %s does not exist.", s)));
@@ -79,17 +79,17 @@ public class TMFBackedAssetIndex implements AssetIndex {
         int offset = 0;
         boolean moreOfferingsAvailable = true;
         while (moreOfferingsAvailable) {
-            List<ExtendableProductOffering> productOfferings = productCatalogApiClient.getProductOfferings(offset, 100);
+            List<ExtendableProductSpecification> productSpecifications = productCatalogApiClient.getProductSpecifications(offset, 100);
 
 
-            productOfferings.stream()
-                    .map(offering -> tmfEdcMapper.assetFromProductOffering(offering, getProductSpec(offering)))
+            productSpecifications.stream()
+                    .map(tmfEdcMapper::assetFromProductSpec)
                     .filter(Optional::isPresent)
                     .map(Optional::get)
                     .filter(predicate)
                     .findAny()
                     .ifPresent(assets::add);
-            moreOfferingsAvailable = productOfferings.size() == 100;
+            moreOfferingsAvailable = productSpecifications.size() == 100;
             offset += 100;
         }
         return assets.size();

@@ -1,6 +1,7 @@
 package org.seamware.edc.tir;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
 
 import java.io.IOException;

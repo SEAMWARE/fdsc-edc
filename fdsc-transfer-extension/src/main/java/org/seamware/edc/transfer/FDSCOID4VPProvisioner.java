@@ -1,18 +1,23 @@
 package org.seamware.edc.transfer;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.eclipse.edc.connector.controlplane.transfer.spi.provision.Provisioner;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonReader;
+import org.eclipse.edc.connector.controlplane.contract.spi.policy.TransferProcessPolicyContext;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.DeprovisionedResource;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionResponse;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionedResource;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinition;
+import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.policy.model.Action;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.policy.model.PolicyType;
 import org.eclipse.edc.policy.model.Rule;
+import org.eclipse.edc.spi.iam.RequestContext;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.response.ResponseStatus;
 import org.eclipse.edc.spi.response.StatusResult;
@@ -20,26 +25,28 @@ import org.seamware.credentials.model.ServiceVO;
 import org.seamware.edc.apisix.ApisixAdminClient;
 import org.seamware.edc.apisix.Route;
 import org.seamware.edc.ccs.CredentialsConfigServiceClient;
-import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.domain.ExtendableProductSpecification;
-import org.seamware.edc.domain.ExtendableProductSpecificationRef;
 import org.seamware.edc.pap.*;
+import org.seamware.edc.store.TMFEdcMapper;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 import org.seamware.pap.model.PolicyPathVO;
 import org.seamware.pap.model.ServiceCreateVO;
 import org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
 import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 
+import java.io.StringReader;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+import static org.seamware.edc.FDSCTransferControlExtension.CONTEXT_SCOPE;
+
 /**
  * Provisioner for Transfer Processes in the FIWARE Dataspace Connector
  */
-public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefinition, FDSCProvisionedResource> {
+public class FDSCOID4VPProvisioner extends FDSCProvisioner<FDSCOID4VPProviderResourceDefinition, FDSCProvisionedResource> {
 
     private static final String SERVICE_CONFIGURATION_KEY = "serviceConfiguration";
     private static final String TARGET_KEY = "targetSpecification";
@@ -47,34 +54,26 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
     private static final String ODRL_TARGET_KEY = "target";
     public static final String ODRL_UID = "odrl:uid";
 
-    private final Monitor monitor;
-    private final ApisixAdminClient apisixAdminClient;
+    private final ObjectMapper objectMapper;
     private final CredentialsConfigServiceClient credentialsConfigServiceClient;
     private final OdrlPapClient odrlPapClient;
-    private final ProductCatalogApiClient productCatalogApiClient;
-    private final TransferMapper transferMapper;
-    private final ObjectMapper objectMapper;
+    private final TMFEdcMapper tmfEdcMapper;
+    private final JsonLd jsonLd;
 
-    public FDSCProvisioner(Monitor monitor, ApisixAdminClient apisixAdminClient, CredentialsConfigServiceClient credentialsConfigServiceClient, OdrlPapClient odrlPapClient, ProductCatalogApiClient productCatalogApiClient, TransferMapper transferMapper, ObjectMapper objectMapper) {
-        this.monitor = monitor;
-        this.apisixAdminClient = apisixAdminClient;
+    public FDSCOID4VPProvisioner(Monitor monitor, ApisixAdminClient apisixAdminClient, CredentialsConfigServiceClient credentialsConfigServiceClient, OdrlPapClient odrlPapClient, ProductCatalogApiClient productCatalogApiClient, TransferMapper transferMapper, ObjectMapper objectMapper, TMFEdcMapper tmfEdcMapper, JsonLd jsonLd) {
+        super(monitor, apisixAdminClient, productCatalogApiClient, transferMapper, objectMapper);
         this.credentialsConfigServiceClient = credentialsConfigServiceClient;
         this.odrlPapClient = odrlPapClient;
-        this.productCatalogApiClient = productCatalogApiClient;
-        this.transferMapper = transferMapper;
         this.objectMapper = objectMapper.copy();
+        this.tmfEdcMapper = tmfEdcMapper;
+        this.jsonLd = jsonLd;
         this.objectMapper.configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, false);
-        // required, so that the convertValue produces a proper map representation
-        this.objectMapper.addMixIn(Policy.class, PolicyMixin.class);
-        this.objectMapper.addMixIn(Rule.class, RuleMixin.class);
-        this.objectMapper.addMixIn(Action.class, ActionMixin.class);
-        this.objectMapper.addMixIn(PolicyType.class, PolicyTypeMixin.class);
     }
 
     @Override
     public boolean canProvision(ResourceDefinition resourceDefinition) {
 
-        return resourceDefinition instanceof FDSCProviderResourceDefinition;
+        return resourceDefinition instanceof FDSCOID4VPProviderResourceDefinition;
     }
 
     @Override
@@ -94,13 +93,7 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
      * @return
      */
     @Override
-    public CompletableFuture<StatusResult<ProvisionResponse>> provision(FDSCProviderResourceDefinition resourceDefinition, Policy policy) {
-        try {
-            monitor.info("Provision " + resourceDefinition.getTransferProcessId() + " and policy " + objectMapper.writeValueAsString(policy));
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException(e);
-        }
-
+    public CompletableFuture<StatusResult<ProvisionResponse>> provision(FDSCOID4VPProviderResourceDefinition resourceDefinition, Policy policy) {
         try {
 
             Optional<ExtendableProductSpecification> optionalExtendableProductSpecification = productCatalogApiClient
@@ -123,20 +116,29 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
 
             // in order to not conflict in the pap, the policy should be identified by the process, rather than its orginal id
             policy.getExtensibleProperties().put(ODRL_UID, resourceDefinition.getTransferProcessId());
+            // translate the policy into expanded odrl-jsonld
+            Map<String, Object> odrlPolicy = tmfEdcMapper.fromEdcPolicy(policy);
+            String policyString = objectMapper.writeValueAsString(odrlPolicy);
+            JsonObject compactedPolicy = null;
+            try (JsonReader reader = Json.createReader(new StringReader(policyString))) {
+                compactedPolicy = jsonLd.compact(reader.readObject(), CONTEXT_SCOPE)
+                        .orElseThrow(f -> new IllegalArgumentException(String.format("Was not able to compact the policy. Failure: %s", f.getFailureDetail())));
 
+            }
+
+            Map<String, Object> policyMap = objectMapper.readValue(compactedPolicy.toString(), new TypeReference<Map<String, Object>>() {
+            });
             Optional<Map> targetSpec = optionalExtendableProductSpecification
                     .flatMap(eps -> getCharValue(eps, TARGET_KEY, Map.class));
             if (targetSpec.isPresent()) {
                 monitor.debug("Replace target with the asset specific config.");
-                Map<String, Object> policyMap = objectMapper.convertValue(policy, new TypeReference<Map<String, Object>>() {
-                });
                 policyMap.put(ODRL_TARGET_KEY, targetSpec.get());
                 odrlPapClient.createPolicy(serviceId, policyMap);
             } else {
-                odrlPapClient.createPolicy(serviceId, policy);
+                odrlPapClient.createPolicy(serviceId, policyMap);
             }
 
-            Route serviceRoute = transferMapper.toServiceRoute(resourceDefinition, upstreamAddress.get(), policyPathVO.getPolicyPath());
+            Route serviceRoute = transferMapper.toOid4VpServiceRoute(resourceDefinition, upstreamAddress.get(), policyPathVO.getPolicyPath());
             Route wellKnownRoute = transferMapper.toWellknownRouteRoute(resourceDefinition);
             apisixAdminClient.addRoute(serviceRoute);
             apisixAdminClient.addRoute(wellKnownRoute);
@@ -172,7 +174,6 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
         monitor.info("Deprovision " + provisionedResource.getTransferProcessId());
         try {
 
-
             String serviceRouteId = transferMapper.toServiceRouteId(provisionedResource);
             String wellKnownRouteId = transferMapper.toWellKnownRouteId(provisionedResource);
 
@@ -198,7 +199,7 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
         }
     }
 
-    public <T> Optional<T> getCharValue(ExtendableProductSpecification extendableProductSpecification, String valueKey, Class<T> targetClass) {
+    private Optional<CharacteristicValueSpecificationVO> getCharValueSpec(ExtendableProductSpecification extendableProductSpecification, String valueKey) {
         List<CharacteristicValueSpecificationVO> cvsList = Optional.ofNullable(extendableProductSpecification
                         .getProductSpecCharacteristic())
                 .orElse(List.of())
@@ -210,15 +211,19 @@ public class FDSCProvisioner implements Provisioner<FDSCProviderResourceDefiniti
                 .flatMap(List::stream)
                 .toList();
         return Optional.ofNullable(cvsList
-                        .stream()
-                        .filter(cvs -> Optional.ofNullable(cvs.getIsDefault()).orElse(false))
-                        .findAny()
-                        .orElseGet(() -> {
-                            if (cvsList.isEmpty()) {
-                                return null;
-                            }
-                            return cvsList.getFirst();
-                        }))
+                .stream()
+                .filter(cvs -> Optional.ofNullable(cvs.getIsDefault()).orElse(false))
+                .findAny()
+                .orElseGet(() -> {
+                    if (cvsList.isEmpty()) {
+                        return null;
+                    }
+                    return cvsList.getFirst();
+                }));
+    }
+
+    public <T> Optional<T> getCharValue(ExtendableProductSpecification extendableProductSpecification, String valueKey, Class<T> targetClass) {
+        return getCharValueSpec(extendableProductSpecification, valueKey)
                 .map(CharacteristicValueSpecificationVO::getValue)
                 .map(val -> objectMapper.convertValue(val, targetClass));
     }

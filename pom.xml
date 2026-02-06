@@ -23,7 +23,7 @@
         <version.org.mapstruct>1.4.2.Final</version.org.mapstruct>
         <main.basedir>${project.basedir}</main.basedir>
         <image.registry>quay.io</image.registry>
-        <image.repository>fiware</image.repository>
+        <image.repository>wi_stefan</image.repository>
     </properties>
 
     <modules>
@@ -31,8 +31,9 @@
         <module>oid4vc-extension</module>
         <module>fdsc-transfer-extension</module>
         <module>test-extension</module>
-        <module>controlplane</module>
-        <module>charts</module>
+        <module>dcp-extension</module>
+        <module>controlplane-oid4vc</module>
+        <module>controlplane-dcp</module>
     </modules>
 
     <build>
@@ -136,7 +137,7 @@
                     <skip>true</skip>
                     <images>
                         <image>
-                            <name>${image.registry}/${image.repository}/fdsc-edc:${project.version}</name>
+                            <name>${image.registry}/${image.repository}/fdsc-edc-${artifactId}:${project.version}</name>
                             <build>
                                 <dockerFile>Dockerfile</dockerFile>
                                 <contextDir>${project.build.directory}/context</contextDir>

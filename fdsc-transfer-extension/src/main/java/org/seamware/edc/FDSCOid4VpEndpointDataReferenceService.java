@@ -1,28 +1,23 @@
 package org.seamware.edc;
 
 import org.eclipse.edc.connector.dataplane.spi.DataFlow;
-import org.eclipse.edc.connector.dataplane.spi.Endpoint;
 import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
-import org.eclipse.edc.connector.dataplane.spi.iam.PublicEndpointGeneratorService;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.seamware.edc.transfer.FDSCDataAddress;
 
-import java.util.HashMap;
-import java.util.logging.Logger;
-
 import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
 import static org.eclipse.edc.spi.result.Result.success;
 
 
-public class FDSCEndpointDataReferenceService implements EndpointDataReferenceService {
+public class FDSCOid4VpEndpointDataReferenceService implements EndpointDataReferenceService {
 
     public static final String ENDPOINT_TYPE = "https://w3id.org/idsa/v4.1/HTTP";
 
     private final TransferConfig transferConfig;
 
-    public FDSCEndpointDataReferenceService(TransferConfig transferConfig) {
+    public FDSCOid4VpEndpointDataReferenceService(TransferConfig transferConfig) {
         this.transferConfig = transferConfig;
     }
 

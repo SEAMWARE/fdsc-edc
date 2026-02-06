@@ -3,12 +3,18 @@ package org.seamware.edc;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import jakarta.json.Json;
+import jakarta.json.JsonBuilderFactory;
 import okhttp3.OkHttpClient;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.AssetIndex;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.DataAddressResolver;
 import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
 import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractDefinitionStore;
 import org.eclipse.edc.connector.controlplane.policy.spi.store.PolicyDefinitionStore;
+import org.eclipse.edc.connector.controlplane.transform.odrl.OdrlTransformersFactory;
+import org.eclipse.edc.connector.controlplane.transform.odrl.from.JsonObjectFromPolicyTransformer;
+import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.participant.spi.ParticipantIdMapper;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.protocol.spi.DataspaceProfileContextRegistry;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
@@ -19,10 +25,16 @@ import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.query.CriterionOperatorRegistry;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.spi.types.TypeManager;
+import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
+import org.eclipse.edc.transform.transformer.edc.to.JsonValueToGenericTypeTransformer;
 import org.seamware.edc.store.*;
 import org.seamware.edc.tmf.*;
 
 import java.time.Clock;
+import java.util.Map;
+
+import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
 
 
 /**
@@ -43,6 +55,8 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
     private DataspaceProfileContextRegistry dataspaceProfileContextRegistry;
     @Inject
     private Monitor monitor;
+    @Inject
+    private TypeManager typeManager;
 
     private ObjectMapper objectMapper;
 
@@ -68,6 +82,12 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
     @Inject
     private Clock clock;
 
+    @Inject
+    private TypeTransformerRegistry typeTransformerRegistry;
+
+    @Inject
+    private JsonLd jsonLd;
+
     @Override
     public String name() {
         return NAME;
@@ -84,11 +104,30 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
 
     @Override
     public void initialize(ServiceExtensionContext context) {
+
         TMFConfig config = tmfConfig(context);
         if (!config.isEnabled()) {
             monitor.info("TMF extension is not enabled.");
             return;
         }
+        JsonBuilderFactory jsonBuilderFactory = Json.createBuilderFactory(Map.of());
+        ParticipantIdMapper participantIdMapper = new ParticipantIdMapper() {
+            @Override
+            public String toIri(String s) {
+                return s;
+            }
+
+            @Override
+            public String fromIri(String s) {
+                return s;
+            }
+        };
+        OdrlTransformersFactory.jsonObjectToOdrlTransformers(participantIdMapper).forEach(typeTransformerRegistry::register);
+        typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
+        typeTransformerRegistry.register(new JsonObjectFromPolicyTransformer(jsonBuilderFactory,
+                participantIdMapper,
+                new JsonObjectFromPolicyTransformer.TransformerConfig(true, true)));
+
         SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
         context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
         context.registerService(ObjectMapper.class, objectMapper());
@@ -108,7 +147,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
 
     public TMFEdcMapper tmfEdcMapper(TMFConfig config) {
         if (tmfEdcMapper == null) {
-            tmfEdcMapper = new TMFEdcMapper(monitor, objectMapper(), participantResolver(config));
+            tmfEdcMapper = new TMFEdcMapper(monitor, objectMapper(), participantResolver(config), typeTransformerRegistry, jsonLd);
         }
         return tmfEdcMapper;
     }
@@ -146,7 +185,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
 
     public ProductCatalogApiClient productCatalogApi(TMFConfig tmfConfig) {
         if (productCatalogApi == null) {
-            productCatalogApi = new ProductCatalogApiClient(monitor, okHttpClient, tmfConfig.getProductCatalogApi().toString(), objectMapper());
+            productCatalogApi = new ProductCatalogApiClient(monitor, okHttpClient, tmfConfig.getProductCatalogApi().toString(), objectMapper(), tmfEdcMapper(tmfConfig));
         }
         return productCatalogApi;
     }
@@ -174,9 +213,11 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
 
     public ContractNegotiationStore contractNegotiationStore(ServiceExtensionContext serviceExtensionContext, TMFConfig tmfConfig) {
         if (contractNegotiationStore == null) {
+
+            String controlplane = serviceExtensionContext.getConfig().getString("edc.hostname");
             contractNegotiationStore = new TMFBackedContractNegotiationStore(monitor, objectMapper(), quoteApi(tmfConfig), agreementApi(tmfConfig),
                     productOrderApi(tmfConfig), productCatalogApi(tmfConfig), productInventoryApi(tmfConfig), participantResolver(tmfConfig),
-                    tmfEdcMapper(tmfConfig), serviceExtensionContext.getParticipantId(), clock, criterionOperatorRegistry);
+                    tmfEdcMapper(tmfConfig), serviceExtensionContext.getParticipantId(), clock, controlplane, criterionOperatorRegistry);
         }
         return contractNegotiationStore;
     }

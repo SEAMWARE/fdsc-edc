@@ -9,7 +9,7 @@ import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinit
 import static java.util.Objects.requireNonNull;
 
 
-@JsonTypeName("dataspaceconnector:fdscproviderresourcedefinition")
+@JsonTypeName("dataspaceconnector:fdscdscpproviderresourcedefinition")
 @JsonDeserialize(builder = FDSCDcpProviderResourceDefinition.Builder.class)
 public class FDSCDcpProviderResourceDefinition extends ResourceDefinition {
 

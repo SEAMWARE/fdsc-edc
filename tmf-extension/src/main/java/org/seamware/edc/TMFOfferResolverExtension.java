@@ -2,6 +2,7 @@ package org.seamware.edc;
 
 import org.eclipse.edc.connector.controlplane.contract.spi.offer.ConsumerOfferResolver;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
+import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.runtime.metamodel.annotation.Requires;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtension;
@@ -15,7 +16,7 @@ import java.util.logging.Logger;
 /**
  * Extension to resolve offers through TMForum
  */
-@Requires(ConsumerOfferResolver.class)
+@Provides(ConsumerOfferResolver.class)
 public class TMFOfferResolverExtension implements ServiceExtension {
 
 

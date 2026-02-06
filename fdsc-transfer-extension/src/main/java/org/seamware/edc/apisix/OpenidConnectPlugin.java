@@ -2,8 +2,11 @@ package org.seamware.edc.apisix;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.OptBoolean;
 
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class OpenidConnectPlugin extends ApisixPlugin {
 
@@ -12,6 +15,7 @@ public class OpenidConnectPlugin extends ApisixPlugin {
     private String clientSecret;
     private String discovery;
     private Map<String, Object> proxyOpts;
+    private List<String> requiredScopes = null;
     private boolean sslVerify;
     private boolean useJwks;
 
@@ -87,6 +91,17 @@ public class OpenidConnectPlugin extends ApisixPlugin {
     @JsonProperty("use_jwks")
     public OpenidConnectPlugin setUseJwks(boolean useJwks) {
         this.useJwks = useJwks;
+        return this;
+    }
+
+    @JsonProperty(value = "required_scopes", isRequired = OptBoolean.FALSE)
+    public List<String> getRequiredScopes() {
+        return requiredScopes;
+    }
+
+    @JsonProperty(value = "required_scopes", isRequired = OptBoolean.FALSE)
+    public OpenidConnectPlugin setRequiredScopes(List<String> requiredScopes) {
+        this.requiredScopes = requiredScopes;
         return this;
     }
 

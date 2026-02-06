@@ -31,8 +31,40 @@ public class TransferMapper {
         return String.format(WELL_KNOWN_ROUTE_ID, provisionedResource.getTransferProcessId());
     }
 
+    public Route toDcpServiceRoute(FDSCDcpProviderResourceDefinition resourceDefinition, String upstreamAddress) {
 
-    public Route toServiceRoute(FDSCProviderResourceDefinition resourceDefinition, String upstreamAddress, String policyAddress) {
+        // configure the route to the service
+        Upstream upstream = new Upstream()
+                .setType(ROUTING_TYPE_ROUND_ROBIN)
+                .setNodes(Map.of(upstreamAddress, 1));
+
+        // remove the process id from the path before forwarding to the upstream
+        ProxyRewritePlugin proxyRewritePlugin = new ProxyRewritePlugin()
+                .setRegexUri(List.of(String.format(REWRITE_TEMPLATE, resourceDefinition.getTransferProcessId()), "/$1"));
+
+        String discoveryAddress = transferConfig.getDcp().oidConfig().host() + transferConfig.getDcp().oidConfig().openIdPath();
+
+        OpenidConnectPlugin openidConnectPlugin = new OpenidConnectPlugin()
+                .setBearerOnly(true)
+                .setClientId(resourceDefinition.getTransferProcessId())
+                .setClientSecret("unused")
+                .setDiscovery(discoveryAddress)
+                .setRequiredScopes(List.of(resourceDefinition.getTransferProcessId()))
+                .setUseJwks(true);
+        Optional.ofNullable(transferConfig.getApisix().httpsProxy()).ifPresent((proxyAddress) ->
+                openidConnectPlugin.setProxyOpts(Map.of("https_proxy", proxyAddress, "no_proxy", "*.cluster.local")));
+
+        return new Route()
+                .setId(String.format(SERVICE_ROUTE_ID, resourceDefinition.getTransferProcessId()))
+                .setHost(transferConfig.getTransferHost())
+                .setUpstream(upstream)
+                .setUri("/" + resourceDefinition.getTransferProcessId() + "/*")
+                .setPlugins(Map.of(
+                        openidConnectPlugin.getPluginName(), openidConnectPlugin,
+                        proxyRewritePlugin.getPluginName(), proxyRewritePlugin));
+    }
+
+    public Route toOid4VpServiceRoute(FDSCOID4VPProviderResourceDefinition resourceDefinition, String upstreamAddress, String policyAddress) {
 
         // configure the route to the service
         Upstream upstream = new Upstream()
@@ -41,7 +73,7 @@ public class TransferMapper {
 
         // configure the open-policy-agent connection - will enforce the policy
         OpaPlugin opaPlugin = new OpaPlugin()
-                .setHost(transferConfig.getOpaHost())
+                .setHost(transferConfig.getOid4Vc().opaHost())
                 .setPolicy(policyAddress)
                 .setWithBody(true)
                 .setWithRoute(true);
@@ -54,10 +86,12 @@ public class TransferMapper {
                 .setBearerOnly(true)
                 .setClientId(resourceDefinition.getTransferProcessId())
                 .setClientSecret("unused")
-                .setDiscovery(String.format(DISCOVERY_ENDPOINT_TEMPLATE, transferConfig.getVerifierHost(), resourceDefinition.getTransferProcessId()))
+                .setDiscovery(
+                        String.format(DISCOVERY_ENDPOINT_TEMPLATE, transferConfig.getOid4Vc().verifierHost(), resourceDefinition.getTransferProcessId()))
                 .setSslVerify(false)
                 .setUseJwks(true);
-        Optional.ofNullable(transferConfig.getApisix().httpsProxy()).ifPresent((proxyAddress) -> openidConnectPlugin.setProxyOpts(Map.of("https_proxy", proxyAddress)));
+        Optional.ofNullable(transferConfig.getApisix().httpsProxy()).ifPresent((proxyAddress) ->
+                openidConnectPlugin.setProxyOpts(Map.of("https_proxy", proxyAddress, "no_proxy", "*.cluster.local")));
 
         return new Route()
                 .setId(String.format(SERVICE_ROUTE_ID, resourceDefinition.getTransferProcessId()))
@@ -70,11 +104,11 @@ public class TransferMapper {
                         proxyRewritePlugin.getPluginName(), proxyRewritePlugin));
     }
 
-    public Route toWellknownRouteRoute(FDSCProviderResourceDefinition resourceDefinition) {
+    public Route toWellknownRouteRoute(FDSCOID4VPProviderResourceDefinition resourceDefinition) {
 
         Upstream upstream = new Upstream()
                 .setType(ROUTING_TYPE_ROUND_ROBIN)
-                .setNodes(Map.of(transferConfig.getVerifierInternalHost(), 1));
+                .setNodes(Map.of(transferConfig.getOid4Vc().verifierInternalHost(), 1));
 
         ProxyRewritePlugin proxyRewritePlugin = new ProxyRewritePlugin()
                 .setUri(String.format(WELL_KNOWN_ENDPOINT_TEMPLATE, resourceDefinition.getTransferProcessId()));

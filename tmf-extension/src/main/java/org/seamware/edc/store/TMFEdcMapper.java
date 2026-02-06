@@ -3,6 +3,9 @@ package org.seamware.edc.store;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.json.Json;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonReader;
 import org.eclipse.edc.connector.controlplane.asset.spi.domain.Asset;
 import org.eclipse.edc.connector.controlplane.catalog.spi.DataService;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Dataset;
@@ -16,29 +19,28 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractO
 import org.eclipse.edc.connector.controlplane.contract.spi.validation.ValidatableConsumerOffer;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
+import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.participant.spi.ParticipantIdMapper;
 import org.eclipse.edc.policy.model.Policy;
-import org.eclipse.edc.policy.model.PolicyType;
 import org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants;
 import org.eclipse.edc.spi.monitor.Monitor;
-import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.types.domain.DataAddress;
+import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
 import org.seamware.edc.domain.*;
 import org.seamware.edc.tmf.AgreementApiClient;
 import org.seamware.edc.tmf.ParticipantResolver;
-import org.seamware.tmforum.agreement.model.AgreementItemVO;
 import org.seamware.tmforum.agreement.model.CharacteristicVO;
-import org.seamware.tmforum.agreement.model.ProductRefVO;
 import org.seamware.tmforum.agreement.model.RelatedPartyVO;
 import org.seamware.tmforum.party.model.OrganizationVO;
 import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 import org.seamware.tmforum.productorder.model.ProductOrderUpdateVO;
 import org.seamware.tmforum.productorder.model.ProductOrderVO;
 import org.seamware.tmforum.quote.model.ProductOfferingRefVO;
-import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
 import org.seamware.tmforum.usage.model.RatedProductUsageVO;
 import org.seamware.tmforum.usage.model.UsageCharacteristicVO;
 import org.seamware.tmforum.usage.model.UsageStatusTypeVO;
 
+import java.io.StringReader;
 import java.util.*;
 
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.CONSUMER;
@@ -60,7 +62,7 @@ public class TMFEdcMapper {
     public static final String UPSTREAM_ADDRESS_KEY = "upstreamAddress";
     public static final String TMF_ID_KEY = "tmfId";
     public static final String PRODUCT_SPEC_CHAR_VALUE = "productSpecCharacteristicValue";
-    public static final String UID_KEY = "odrl:uid";
+    public static final String UID_KEY = "http://www.w3.org/ns/odrl/2/uid";
     public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
     public static final String USAGE_CHARACTERISTIC_CORRELATION_ID = "correlation-id";
     public static final String USAGE_CHARACTERISTIC_PROTOCOL = "protocol";
@@ -91,11 +93,15 @@ public class TMFEdcMapper {
     private final ObjectMapper objectMapper;
     private final TMFObjectMapper tmfObjectMapper;
     private final ParticipantResolver participantResolver;
+    private final TypeTransformerRegistry typeTransformerRegistry;
+    private final JsonLd jsonLd;
 
-    public TMFEdcMapper(Monitor monitor, ObjectMapper objectMapper, ParticipantResolver participantResolver) {
+    public TMFEdcMapper(Monitor monitor, ObjectMapper objectMapper, ParticipantResolver participantResolver, TypeTransformerRegistry typeTransformerRegistry, JsonLd jsonLd) {
         this.monitor = monitor;
         this.objectMapper = objectMapper;
         this.participantResolver = participantResolver;
+        this.typeTransformerRegistry = typeTransformerRegistry;
+        this.jsonLd = jsonLd;
         this.tmfObjectMapper = new TMFObjectMapperImpl();
     }
 
@@ -112,7 +118,7 @@ public class TMFEdcMapper {
                 .addEngagedPartyItem(new RelatedPartyVO().id(providerId).role(PROVIDER_ROLE));
         agreementVO.addCharacteristicItem(toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_ASSET_ID, contractAgreement.getAssetId()))
                 .addCharacteristicItem(toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_PROVIDER_ID, contractAgreement.getProviderId()))
-                .addCharacteristicItem(toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_POLICY, contractAgreement.getPolicy()))
+                .addCharacteristicItem(toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_POLICY, fromEdcPolicy(contractAgreement.getPolicy())))
                 .addCharacteristicItem(toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CONSUMER_ID, contractAgreement.getConsumerId()))
                 .addCharacteristicItem(toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()));
         return agreementVO;
@@ -131,7 +137,7 @@ public class TMFEdcMapper {
                         case AGREEMENT_CHARACTERISTIC_PROVIDER_ID -> agreementBuilder.providerId((String) c.getValue());
                         case AGREEMENT_CHARACTERISTIC_CONSUMER_ID -> agreementBuilder.consumerId((String) c.getValue());
                         case AGREEMENT_CHARACTERISTIC_ASSET_ID -> agreementBuilder.assetId((String) c.getValue());
-                        case AGREEMENT_CHARACTERISTIC_POLICY -> agreementBuilder.policy(objectMapper.convertValue(c.getValue(), Policy.class));
+                        case AGREEMENT_CHARACTERISTIC_POLICY -> agreementBuilder.policy(fromOdrl(c.getValue()));
                     }
                 });
         agreementBuilder.id(agreementVO.getExternalId());
@@ -141,35 +147,49 @@ public class TMFEdcMapper {
     public Dataset datasetFromProductOffering(ExtendableProductOffering extendableProductOffering, Optional<ExtendableProductSpecification> productSpecification) {
         Policy contractPolicy = getContractPolicyFromOfferTerm(getContractDefinitionTerm(extendableProductOffering));
 
-        Optional<Distribution> distribution = getDataService(productSpecification)
-                .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build());
 
         Dataset.Builder datasetBuilder = Dataset.Builder.newInstance()
                 .offer(extendableProductOffering.getExternalId(), contractPolicy);
         productSpecification.ifPresent(pS -> datasetBuilder.id(pS.getExternalId()));
-
-        distribution.ifPresent(datasetBuilder::distribution);
+        
+        getDataService(productSpecification)
+                .stream()
+                .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
+                .forEach(datasetBuilder::distribution);
         return datasetBuilder.build();
     }
 
+    private record DataServiceChar(String id, String endpointUrl) {
+    }
 
-    public Optional<DataService> getDataService(Optional<ExtendableProductSpecification> productSpecification) {
-        DataService.Builder dataserviceBuilder = DataService.Builder.newInstance();
+    ;
+
+    public List<DataService> getDataService(Optional<ExtendableProductSpecification> productSpecification) {
+        DataService.Builder defaultDataserviceBuilder = DataService.Builder.newInstance();
 
         if (productSpecification.isEmpty()) {
-            return Optional.empty();
+            return List.of();
         }
-
+        List<DataServiceChar> endpoints = new ArrayList<>();
         productSpecification.map(ExtendableProductSpecification::getProductSpecCharacteristic)
                 .orElse(List.of())
                 .forEach(spec -> {
-                    switch (spec.getId()) {
-                        case ENDPOINT_URL_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(dataserviceBuilder::endpointUrl);
-                        case ENDPOINT_DESCRIPTION_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(dataserviceBuilder::endpointDescription);
+                    switch (spec.getValueType()) {
+                        case ENDPOINT_URL_KEY -> {
+                            getValue(spec.getProductSpecCharacteristicValue()).map(endpointUrl -> new DataServiceChar(spec.getId(), endpointUrl)).ifPresent(endpoints::add);
+                        }
+                        case ENDPOINT_DESCRIPTION_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(defaultDataserviceBuilder::endpointDescription);
                     }
                 });
-        dataserviceBuilder.id(productSpecification.get().getExternalId());
-        return Optional.of(dataserviceBuilder.build());
+        String endpointDescription = defaultDataserviceBuilder.build().getEndpointDescription();
+
+        return endpoints.stream()
+                .map(endpoint -> DataService.Builder.newInstance()
+                        .endpointUrl(endpoint.endpointUrl())
+                        .endpointDescription(endpointDescription)
+                        .id(endpoint.id())
+                        .build())
+                .toList();
     }
 
     private List<CharValue> getSpecCharValue(Map<String, Object> specChar) {
@@ -297,7 +317,7 @@ public class TMFEdcMapper {
     public ContractOffer fromQuoteItem(ExtendableQuoteItemVO quoteItemVO) {
         ContractOffer.Builder contractOfferBuilder = ContractOffer.Builder.newInstance();
         if (quoteItemVO.getPolicy() != null) {
-            contractOfferBuilder.policy(quoteItemVO.getPolicy());
+            contractOfferBuilder.policy(fromOdrl(quoteItemVO.getPolicy()));
         }
 
         return contractOfferBuilder
@@ -318,7 +338,7 @@ public class TMFEdcMapper {
         extendableQuoteItemVO.setId(itemUid);
         extendableQuoteItemVO.setDatasetId(contractOffer.getAssetId());
         extendableQuoteItemVO.setExternalId(contractOffer.getId());
-        extendableQuoteItemVO.setPolicy(contractOffer.getPolicy());
+        extendableQuoteItemVO.setPolicy(fromEdcPolicy(contractOffer.getPolicy()));
         extendableQuoteItemVO.setState(negotiationState);
         extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
         return extendableQuoteItemVO;
@@ -337,7 +357,7 @@ public class TMFEdcMapper {
         extendableQuoteItemVO.setExternalId(contractOfferId.asDecoded());
         extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
         offerTmfId.ifPresent(offerId -> extendableQuoteItemVO.productOffering(new ProductOfferingRefVO().id(offerId)));
-        extendableQuoteItemVO.setPolicy(contractOffer.getPolicy());
+        extendableQuoteItemVO.setPolicy(fromEdcPolicy(contractOffer.getPolicy()));
         extendableQuoteItemVO.setState(negotiationState);
         return extendableQuoteItemVO;
     }
@@ -360,6 +380,35 @@ public class TMFEdcMapper {
                 .filter(String.class::isInstance)
                 .map(String.class::cast)
                 .findFirst();
+    }
+
+    public Optional<Asset> assetFromProductSpec(ExtendableProductSpecification productSpecification) {
+        DataAddress.Builder dataAddressBuilder = DataAddress.Builder.newInstance()
+                .type(FDSC_DATA_ADDRESS_TYPE);
+        List<ProductSpecificationCharacteristicVO> specChars = productSpecification.getProductSpecCharacteristic();
+        Optional<String> upstreamAddressKey = specChars.stream()
+                .map(ProductSpecificationCharacteristicVO::getId)
+                .filter(UPSTREAM_ADDRESS_KEY::equals)
+                .findAny();
+        if (upstreamAddressKey.isEmpty()) {
+            monitor.info("The given product specification cannot be used for DSP, since it does not contain an upstreamAddress.");
+            return Optional.empty();
+        }
+        specChars
+                .forEach(spec -> {
+                    switch (spec.getId()) {
+                        case ENDPOINT_URL_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(url -> dataAddressBuilder.property(ENDPOINT_URL_KEY, url));
+                        case ENDPOINT_DESCRIPTION_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(desc -> dataAddressBuilder.property(ENDPOINT_DESCRIPTION_KEY, desc));
+                    }
+                });
+
+        return Optional.of(Asset.Builder.newInstance()
+                .id(productSpecification.getExternalId())
+                .version(productSpecification.getVersion())
+                .name(productSpecification.getName())
+                .description(productSpecification.getDescription())
+                .dataAddress(dataAddressBuilder.build())
+                .build());
     }
 
     public Optional<Asset> assetFromProductOffering(ExtendableProductOffering productOffering, Optional<ExtendableProductSpecification> productSpecification) {
@@ -397,25 +446,69 @@ public class TMFEdcMapper {
                 .build());
     }
 
+    public JsonObject jsonObjectFromEdcPolicy(Policy policy) {
+        JsonObject jsonObject = typeTransformerRegistry.transform(policy, JsonObject.class)
+                .orElseThrow(f -> new IllegalArgumentException(String.format("Was not able to transform the policy. Failure: %s.", f.getFailureDetail())));
+
+        return jsonLd.expand(jsonObject).orElseThrow(f -> new IllegalArgumentException(String.format("Was not able to expand the policy. Failure: %s", f.getFailureDetail())));
+    }
+
+    public Map<String, Object> fromEdcPolicy(Policy policy) {
+        try {
+            return objectMapper.readValue(jsonObjectFromEdcPolicy(policy).toString(), new TypeReference<Map<String, Object>>() {
+            });
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Did not receive a valid edc policy.", e);
+        }
+    }
+
+    public Policy fromOdrl(Object policy) {
+        // convert to string
+        try {
+            String jsonString = objectMapper.writeValueAsString(policy);
+            try (JsonReader reader = Json.createReader(new StringReader(jsonString))) {
+                JsonObject expandedInput = jsonLd.expand(reader.readObject())
+                        .orElseThrow(f -> new IllegalArgumentException(String.format("Was not able to expand the json-ld input. Failure: %s.", f.getFailureDetail())));
+
+                return typeTransformerRegistry.transform(expandedInput, Policy.class)
+                        .orElseThrow(f -> new IllegalArgumentException(String.format("Was not able to transform input to a policy. Failure: %s.", f.getFailureDetail())));
+            }
+        } catch (JsonProcessingException e) {
+            throw new IllegalArgumentException("Contract definition does not contain a contract policy.");
+        }
+
+    }
+
     private Policy getContractPolicyFromOfferTerm(ExtendableProductOfferingTerm extendableProductOfferingTerm) {
 
         Map<String, Object> additionalProperties = extendableProductOfferingTerm.getAdditionalProperties();
 
         if (additionalProperties.containsKey(CONTRACT_POLICY_KEY)) {
-            return objectMapper.convertValue(additionalProperties.get(CONTRACT_POLICY_KEY), Policy.class);
-
+            return fromOdrl(additionalProperties.get(CONTRACT_POLICY_KEY));
         } else {
             throw new IllegalArgumentException("Contract definition does not contain a contract policy.");
         }
     }
 
+    private static class NoopParticipantIdMapper implements ParticipantIdMapper {
+
+        @Override
+        public String toIri(String s) {
+            return s;
+        }
+
+        @Override
+        public String fromIri(String s) {
+            return s;
+        }
+    }
 
     private Policy getAccessPolicyFromOfferTerm(ExtendableProductOfferingTerm extendableProductOfferingTerm) {
 
         Map<String, Object> additionalProperties = extendableProductOfferingTerm.getAdditionalProperties();
 
         if (additionalProperties.containsKey(ACCESS_POLICY_KEY)) {
-            return objectMapper.convertValue(additionalProperties.get(ACCESS_POLICY_KEY), Policy.class);
+            return fromOdrl(additionalProperties.get(ACCESS_POLICY_KEY));
 
         } else {
             throw new IllegalArgumentException("Contract definition does not contain an access policy.");
@@ -439,16 +532,10 @@ public class TMFEdcMapper {
     }
 
     public ContractDefinition fromProductOffer(ExtendableProductOffering productOfferingVO) {
-        String assetId = ContractOfferId.parseId(productOfferingVO.getExternalId())
-                .asOptional()
-                .map(ContractOfferId::assetIdPart)
-                .orElse("none");
 
-        Criterion assetCriterion = new Criterion(Asset.PROPERTY_ID, "=", assetId);
         ContractDefinition.Builder contractDefinitionBuilder = ContractDefinition.Builder
                 .newInstance()
-                .id(productOfferingVO.getId())
-                .assetsSelector(List.of(assetCriterion));
+                .id(productOfferingVO.getId());
 
         ExtendableProductOfferingTerm extendableProductOfferingTerm = getContractDefinitionTerm(productOfferingVO);
 

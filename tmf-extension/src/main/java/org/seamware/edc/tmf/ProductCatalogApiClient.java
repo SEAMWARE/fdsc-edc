@@ -14,6 +14,7 @@ import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.domain.ExtendableProductOfferingTerm;
 import org.seamware.edc.domain.ExtendableProductSpecification;
 import org.seamware.edc.store.ContractOfferIdParser;
+import org.seamware.edc.store.TMFEdcMapper;
 import org.seamware.tmforum.productcatalog.model.ProductSpecificationVO;
 
 import java.io.IOException;
@@ -35,11 +36,13 @@ public class ProductCatalogApiClient extends ApiClient {
 
     private final String baseUrl;
     private final ObjectMapper objectMapper;
+    private final TMFEdcMapper tmfEdcMapper;
 
-    public ProductCatalogApiClient(Monitor monitor, OkHttpClient okHttpClient, String baseUrl, ObjectMapper objectMapper) {
+    public ProductCatalogApiClient(Monitor monitor, OkHttpClient okHttpClient, String baseUrl, ObjectMapper objectMapper, TMFEdcMapper tmfEdcMapper) {
         super(monitor, okHttpClient);
         this.baseUrl = baseUrl;
         this.objectMapper = objectMapper;
+        this.tmfEdcMapper = tmfEdcMapper;
     }
 
     /**
@@ -63,7 +66,7 @@ public class ProductCatalogApiClient extends ApiClient {
     /**
      * Get all product specifications, supporting pagination
      */
-    public List<ProductSpecificationVO> getProductSpecifications(int offset, int limit) {
+    public List<ExtendableProductSpecification> getProductSpecifications(int offset, int limit) {
         HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
         urlBuilder.addPathSegment(PRODUCT_SPECIFICATION_PATH);
         urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
@@ -71,7 +74,7 @@ public class ProductCatalogApiClient extends ApiClient {
         Request request = new Request.Builder().url(urlBuilder.build()).build();
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper
-                    .readValue(responseBody.bytes(), new TypeReference<>() {
+                    .readValue(responseBody.bytes(), new TypeReference<List<ExtendableProductSpecification>>() {
                     });
         } catch (IOException e) {
             throw new IllegalArgumentException("Was not able to get product specifications.", e);
@@ -99,7 +102,6 @@ public class ProductCatalogApiClient extends ApiClient {
      * Get the policy by its id. Policies are stored inside product-offerings
      */
     public Policy getByPolicyId(String policyId) {
-        monitor.warning("GET PO");
 
         Optional<Policy> optionalPolicy = Optional.empty();
         boolean posAvailable = true;
@@ -147,7 +149,7 @@ public class ProductCatalogApiClient extends ApiClient {
     private Optional<Policy> getPolicyByIdAndType(ExtendableProductOfferingTerm extendableProductOfferingTerm, String policyId, String policyType) {
         return Optional.ofNullable(extendableProductOfferingTerm.getAdditionalProperties())
                 .map(ap -> ap.get(policyType))
-                .map(cps -> objectMapper.convertValue(cps, Policy.class))
+                .map(tmfEdcMapper::fromOdrl)
                 .map(p -> {
                     if (Optional.ofNullable(p.getExtensibleProperties())
                             .map(eP -> eP.get(UID_KEY))

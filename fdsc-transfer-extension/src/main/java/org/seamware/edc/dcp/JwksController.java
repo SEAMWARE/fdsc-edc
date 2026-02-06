@@ -17,12 +17,12 @@ import static org.seamware.edc.FDSCTransferControlExtension.KEY_NAME;
 
 @Produces(APPLICATION_JSON)
 @Path("/.well-known/jwks")
-public class DiscoveryController {
+public class JwksController {
 
     private final Vault vault;
     private final Monitor monitor;
 
-    public DiscoveryController(Vault vault, Monitor monitor) {
+    public JwksController(Vault vault, Monitor monitor) {
         this.vault = vault;
         this.monitor = monitor;
     }

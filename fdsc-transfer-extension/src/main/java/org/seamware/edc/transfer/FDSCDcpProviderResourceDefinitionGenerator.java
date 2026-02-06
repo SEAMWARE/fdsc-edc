@@ -1,3 +1,4 @@
+
 package org.seamware.edc.transfer;
 
 import org.eclipse.edc.connector.controlplane.transfer.spi.provision.ProviderResourceDefinitionGenerator;
@@ -9,6 +10,7 @@ import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.jetbrains.annotations.Nullable;
 
 import static org.seamware.edc.FDSCTransferControlExtension.TRANSFER_TYPE_HTTP_PULL;
+
 
 public class FDSCDcpProviderResourceDefinitionGenerator implements ProviderResourceDefinitionGenerator {
 
@@ -23,7 +25,7 @@ public class FDSCDcpProviderResourceDefinitionGenerator implements ProviderResou
 
         monitor.debug("Generate resource definition for " + transferProcess.getAssetId() + " - " + transferProcess.getCorrelationId());
 
-        return FDSCOID4VPProviderResourceDefinition.Builder.newInstance()
+        return FDSCDcpProviderResourceDefinition.Builder.newInstance()
                 .assetId(transferProcess.getAssetId())
                 .id(transferProcess.getCorrelationId())
                 .transferProcessId(transferProcess.getId())

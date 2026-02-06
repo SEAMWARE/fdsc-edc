@@ -10,11 +10,11 @@ import org.jetbrains.annotations.Nullable;
 
 import static org.seamware.edc.FDSCTransferControlExtension.TRANSFER_TYPE_HTTP_PULL;
 
-public class FDSCProviderResourceDefinitionGenerator implements ProviderResourceDefinitionGenerator {
+public class FDSCOID4VPProviderResourceDefinitionGenerator implements ProviderResourceDefinitionGenerator {
 
     private final Monitor monitor;
 
-    public FDSCProviderResourceDefinitionGenerator(Monitor monitor) {
+    public FDSCOID4VPProviderResourceDefinitionGenerator(Monitor monitor) {
         this.monitor = monitor;
     }
 

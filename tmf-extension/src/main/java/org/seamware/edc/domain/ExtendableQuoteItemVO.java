@@ -7,6 +7,7 @@ import org.seamware.edc.SchemaBaseUriHolder;
 import org.seamware.tmforum.quote.model.QuoteItemVO;
 
 import java.net.URI;
+import java.util.Map;
 
 public class ExtendableQuoteItemVO extends QuoteItemVO {
 
@@ -25,7 +26,7 @@ public class ExtendableQuoteItemVO extends QuoteItemVO {
     }
 
     @JsonProperty("policy")
-    private Policy policy;
+    private Object policy;
 
     /**
      * Corresponds to the (dsp)offer id
@@ -39,11 +40,11 @@ public class ExtendableQuoteItemVO extends QuoteItemVO {
     @JsonProperty("datasetId")
     private String datasetId;
 
-    public Policy getPolicy() {
+    public Object getPolicy() {
         return policy;
     }
 
-    public ExtendableQuoteItemVO setPolicy(Policy policy) {
+    public ExtendableQuoteItemVO setPolicy(Object policy) {
         this.policy = policy;
         return this;
     }

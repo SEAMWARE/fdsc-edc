@@ -4,6 +4,9 @@ import org.eclipse.edc.connector.controlplane.catalog.spi.Catalog;
 import org.eclipse.edc.connector.controlplane.catalog.spi.CatalogRequestMessage;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Dataset;
 import org.eclipse.edc.connector.controlplane.services.spi.catalog.CatalogProtocolService;
+import org.eclipse.edc.connector.controlplane.services.spi.protocol.ProtocolTokenValidator;
+import org.eclipse.edc.participant.spi.ParticipantAgent;
+import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
 import org.eclipse.edc.spi.iam.TokenRepresentation;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.ServiceResult;
@@ -22,16 +25,22 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
     private final ProductCatalogApiClient productCatalogApi;
     private final String participantId;
     private final Monitor monitor;
+    private final ProtocolTokenValidator protocolTokenValidator;
 
-    public TMForumBackedCatalogProtocolService(TMFEdcMapper tmfEdcMapper, ProductCatalogApiClient productCatalogApi, String participantId, Monitor monitor) {
+    public TMForumBackedCatalogProtocolService(TMFEdcMapper tmfEdcMapper, ProductCatalogApiClient productCatalogApi, String participantId, Monitor monitor, ProtocolTokenValidator protocolTokenValidator) {
         this.tmfEdcMapper = tmfEdcMapper;
         this.productCatalogApi = productCatalogApi;
         this.participantId = participantId;
         this.monitor = monitor;
+        this.protocolTokenValidator = protocolTokenValidator;
     }
 
     @Override
     public @NotNull ServiceResult<Catalog> getCatalog(CatalogRequestMessage catalogRequestMessage, TokenRepresentation tokenRepresentation) {
+        ServiceResult<ParticipantAgent> validatedToken = protocolTokenValidator.verify(tokenRepresentation, RequestCatalogPolicyContext::new, catalogRequestMessage);
+        if (validatedToken.failed()) {
+            return ServiceResult.unauthorized("Request not authorized.");
+        }
         List<ExtendableProductOffering> productOfferingVOList = productCatalogApi.getProductOfferings(catalogRequestMessage.getQuerySpec().getOffset(), catalogRequestMessage.getQuerySpec().getLimit());
         Catalog.Builder catalogBuilder = Catalog.Builder.newInstance();
         catalogBuilder.participantId(participantId);
@@ -40,8 +49,7 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
                 .stream()
                 .map(this::getProductSpec)
                 .map(tmfEdcMapper::getDataService)
-                .filter(Optional::isPresent)
-                .map(Optional::get)
+                .flatMap(List::stream)
                 .forEach(catalogBuilder::dataService);
         productOfferingVOList
                 .stream()

@@ -4,6 +4,7 @@ public class ContractNegotiationState {
 
     private boolean isPending;
     private boolean isLeased;
+    private String controlplane;
     private String state;
     private String correlationId;
     private String counterPartyAddress;
@@ -41,6 +42,15 @@ public class ContractNegotiationState {
 
     public ContractNegotiationState setCorrelationId(String correlationId) {
         this.correlationId = correlationId;
+        return this;
+    }
+
+    public String getControlplane() {
+        return controlplane;
+    }
+
+    public ContractNegotiationState setControlplane(String controlplane) {
+        this.controlplane = controlplane;
         return this;
     }
 

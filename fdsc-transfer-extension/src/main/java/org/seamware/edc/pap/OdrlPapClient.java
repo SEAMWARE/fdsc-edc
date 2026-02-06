@@ -1,23 +1,14 @@
 package org.seamware.edc.pap;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
-import org.eclipse.edc.policy.model.Action;
-import org.eclipse.edc.policy.model.Policy;
-import org.eclipse.edc.policy.model.PolicyType;
-import org.eclipse.edc.policy.model.Rule;
 import org.eclipse.edc.spi.monitor.Monitor;
-import org.seamware.credentials.model.ServiceVO;
 import org.seamware.edc.BaseClient;
-import org.seamware.edc.domain.ExtendableAgreementVO;
 import org.seamware.pap.model.PolicyPathVO;
-import org.seamware.pap.model.PolicyVO;
 import org.seamware.pap.model.ServiceCreateVO;
 
 import java.io.IOException;
-import java.util.Map;
 import java.util.Optional;
 
 public class OdrlPapClient extends BaseClient {
@@ -25,13 +16,9 @@ public class OdrlPapClient extends BaseClient {
     private static final String SERVICE_PATH = "service";
     private static final String POLICY_PATH = "policy";
 
+
     public OdrlPapClient(Monitor monitor, OkHttpClient okHttpClient, String baseUrl, ObjectMapper objectMapper) {
-        // use a copy to not manipulate the overall mapper
-        super(monitor, okHttpClient, baseUrl, objectMapper.copy());
-        super.objectMapper.addMixIn(Policy.class, PolicyMixin.class);
-        super.objectMapper.addMixIn(Rule.class, RuleMixin.class);
-        super.objectMapper.addMixIn(Action.class, ActionMixin.class);
-        super.objectMapper.addMixIn(PolicyType.class, PolicyTypeMixin.class);
+        super(monitor, okHttpClient, baseUrl, objectMapper);
     }
 
     public PolicyPathVO createService(ServiceCreateVO serviceCreate) {
