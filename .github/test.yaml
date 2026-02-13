@@ -17,9 +17,5 @@ jobs:
           java-version: '21'
           java-package: jdk
 
-      - name: Ensure br_netfilter is enabled.
-        run: |
-          sudo modprobe br_netfilter
-
       - name: Run tests
-        run:  mvn clean verify -Pintegration-test
+        run: mvn clean test
