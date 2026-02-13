@@ -147,7 +147,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
 
     public TMFEdcMapper tmfEdcMapper(TMFConfig config) {
         if (tmfEdcMapper == null) {
-            tmfEdcMapper = new TMFEdcMapper(monitor, objectMapper(), participantResolver(config), typeTransformerRegistry, jsonLd);
+            tmfEdcMapper = new TMFEdcMapper(monitor, objectMapper(), participantResolver(config), typeTransformerRegistry, jsonLd, clock);
         }
         return tmfEdcMapper;
     }

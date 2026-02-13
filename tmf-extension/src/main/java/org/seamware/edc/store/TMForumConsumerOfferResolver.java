@@ -31,7 +31,7 @@ public class TMForumConsumerOfferResolver implements ConsumerOfferResolver {
         Optional<ContractOfferId> optionalContractOfferId = ContractOfferId.parseId(offeringId)
                 .asOptional();
         return optionalContractOfferId.map(contractOfferId -> productCatalogApiClient.getProductOfferingByExternalId(offeringId)
-                .map(epo -> tmfEdcMapper.consumerOfferFromProductOffering(epo, contractOfferId))
+                .flatMap(epo -> tmfEdcMapper.consumerOfferFromProductOffering(epo, contractOfferId))
                 .map(ServiceResult::success)
                 .orElse(ServiceResult.notFound(String.format("Was not able to resolve offering %s.", offeringId)))).orElseGet(() -> ServiceResult.badRequest(String.format("Offering id %s is not valid.", offeringId)));
     }

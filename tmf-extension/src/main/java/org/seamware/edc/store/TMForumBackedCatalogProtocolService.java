@@ -53,15 +53,9 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
                 .forEach(catalogBuilder::dataService);
         productOfferingVOList
                 .stream()
-                .map(po -> {
-                    try {
-                        return tmfEdcMapper.datasetFromProductOffering(po, getProductSpec(po));
-                    } catch (RuntimeException e) {
-                        monitor.info("Offering does not support DSP.", e);
-                        return null;
-                    }
-                })
-                .filter(Objects::nonNull)
+                .map(po -> tmfEdcMapper.datasetFromProductOffering(po, getProductSpec(po)))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
                 .forEach(catalogBuilder::dataset);
         return ServiceResult.success(catalogBuilder.build());
 
@@ -71,7 +65,7 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
     public @NotNull ServiceResult<Dataset> getDataset(String datasetId, TokenRepresentation tokenRepresentation, String protocol) {
 
         return productCatalogApi.getProductOfferingByExternalId(datasetId)
-                .map(po -> tmfEdcMapper.datasetFromProductOffering(po, getProductSpec(po)))
+                .flatMap(po -> tmfEdcMapper.datasetFromProductOffering(po, getProductSpec(po)))
                 .map(ServiceResult::success)
                 .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
     }

@@ -1,5 +1,6 @@
 package org.seamware.edc;
 
+import lombok.EqualsAndHashCode;
 import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.system.configuration.Config;
 
@@ -13,6 +14,7 @@ import java.util.function.Supplier;
 /**
  * Configuration of the TMForum Extension.
  */
+@EqualsAndHashCode
 public class TMFConfig {
 
     private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";

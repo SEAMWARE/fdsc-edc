@@ -1,15 +1,11 @@
 package org.seamware.edc.domain;
 
-import com.fasterxml.jackson.annotation.JacksonInject;
-import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.SchemaBaseUriHolder;
 import org.seamware.tmforum.agreement.model.AgreementVO;
 
 import java.net.URI;
-
-import static org.seamware.edc.TMFContractNegotiationExtension.SCHEMA_BASE_URI_PROP;
 
 public class ExtendableAgreementVO extends AgreementVO {
 
@@ -26,7 +22,6 @@ public class ExtendableAgreementVO extends AgreementVO {
         }
         return current;
     }
-
 
     @JsonProperty("externalId")
     private String externalId;
@@ -51,4 +46,5 @@ public class ExtendableAgreementVO extends AgreementVO {
         this.externalId = externalId;
         return this;
     }
+
 }

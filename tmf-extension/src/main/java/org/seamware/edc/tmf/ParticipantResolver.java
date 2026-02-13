@@ -24,12 +24,12 @@ public class ParticipantResolver {
         this.organizationApi = new OrganizationApiClient(monitor, okHttpClient, organizationApiBaseUrl, objectMapper);
     }
 
-    public OrganizationVO getOrganization(String tmfId) {
-        return organizationApi.getOrganization(tmfId);
-    }
-
-    public String getDid(String tmfId) {
-        return getDidFromOrganization(organizationApi.getOrganization(tmfId));
+    public Optional<OrganizationVO> getOrganization(String tmfId) {
+        try {
+            return Optional.ofNullable(organizationApi.getOrganization(tmfId));
+        } catch (IllegalArgumentException iae) {
+            return Optional.empty();
+        }
     }
 
     public String getTmfId(String did) {
@@ -48,7 +48,7 @@ public class ParticipantResolver {
     }
 
 
-    public static String getDidFromOrganization(OrganizationVO organizationVO) {
+    public static Optional<String> getDidFromOrganization(OrganizationVO organizationVO) {
         return Optional.ofNullable(organizationVO
                         .getPartyCharacteristic())
                 .orElse(List.of())
@@ -57,8 +57,7 @@ public class ParticipantResolver {
                 .map(CharacteristicVO::getValue)
                 .filter(String.class::isInstance)
                 .map(String.class::cast)
-                .findAny()
-                .orElseThrow(() -> new IllegalArgumentException(String.format("The organization %s does not contain a did.", organizationVO.getId())));
+                .findAny();
     }
 
     public static String getAddressFromOrganization(OrganizationVO organizationVO) {

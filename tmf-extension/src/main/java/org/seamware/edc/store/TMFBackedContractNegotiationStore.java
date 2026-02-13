@@ -16,7 +16,6 @@ import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.CriterionOperatorRegistry;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.StoreResult;
-import org.eclipse.edc.spi.types.domain.callback.CallbackAddress;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.AutomaticUnlockingLockManager;
@@ -244,6 +243,74 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             acquireLease(contractNegotiation.getId());
             ContractNegotiationStates negotiationState = ContractNegotiationStates.from(contractNegotiation.getState());
             switch (negotiationState) {
+                case INITIAL, REQUESTING -> {
+
+                    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
+                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.REQUESTING));
+                    if (activeQuote.isEmpty()) {
+                        // in case of counter-offers, we will have a quote in approved or accepted and need to cancel them
+                        getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERING, ContractNegotiationStates.OFFERED))
+                                .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
+                        // create the new quote
+                        createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
+                    } else {
+                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
+                    }
+                }
+                case REQUESTED -> {
+                    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
+                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.OFFERED, ContractNegotiationStates.REQUESTED, ContractNegotiationStates.REQUESTING));
+                    if (activeQuote.isEmpty()) {
+                        monitor.info("Create quote in requested - existing quotes " + objectMapper.writeValueAsString(quotes));
+                        // in case of counter-offers, we will have a quote in approved or accepted and need to cancel them
+                        getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERED))
+                                .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
+                        ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
+                        // we need to create and update, since state changes are only able by patch
+                        updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
+                    } else {
+                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
+                    }
+                }
+                case OFFERING, OFFERED -> {
+                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.REQUESTED, ContractNegotiationStates.INITIAL, ContractNegotiationStates.OFFERING, ContractNegotiationStates.OFFERED));
+                    if (activeQuote.isEmpty()) {
+                        monitor.info("Create quote in offered");
+                        ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.APPROVED);
+                        // we need to create and update, since state changes are only able by patch
+                        updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
+                    } else {
+                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
+                    }
+                }
+                case ACCEPTED, ACCEPTING -> {
+                    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
+                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERED, ContractNegotiationStates.ACCEPTING, ContractNegotiationStates.ACCEPTED));
+                    Optional<ExtendableQuoteVO> terminatingQuote = quotes.stream().filter(q -> tmfEdcMapper.getContractNegotiationState(q) == ContractNegotiationStates.TERMINATING).findAny();
+                    if (activeQuote.isEmpty() && terminatingQuote.isEmpty()) {
+                        monitor.info("Create quote in accepted - existing quotes " + objectMapper.writeValueAsString(quotes));
+                        // if the first offer is directly accepted, no quote might exist
+                        ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+                        // we need to create and update, since state changes are only able by patch
+                        updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+                    } else if (activeQuote.isPresent()) {
+                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+                    } else {
+                        // negotiation is currently in terminating, dont do anything.
+                    }
+                }
+                case AGREEING, AGREED -> {
+                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.AGREEING, ContractNegotiationStates.AGREED, ContractNegotiationStates.ACCEPTED, ContractNegotiationStates.REQUESTED));
+                    if (activeQuote.isEmpty()) {
+                        // we cannot throw something here, since it somehow kills an internal edc worker...
+                        monitor.warning(String.format("Cannot save transition to %s for %s.", negotiationState.name(), contractNegotiation.getId()));
+                    } else {
+                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+                        if (contractNegotiation.getContractAgreement() != null) {
+                            createAgreement(contractNegotiation);
+                        }
+                    }
+                }
                 case VERIFIED, VERIFYING -> {
 
                     Optional<ExtendableQuoteVO> extendableQuoteVO = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.AGREED, ContractNegotiationStates.VERIFYING, ContractNegotiationStates.VERIFIED));
@@ -286,74 +353,6 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                     }
                     finalizeOrder(contractNegotiation, extendableQuoteVO.get());
 
-                }
-                case ACCEPTED, ACCEPTING -> {
-                    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
-                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERED, ContractNegotiationStates.ACCEPTING, ContractNegotiationStates.ACCEPTED));
-                    Optional<ExtendableQuoteVO> terminatingQuote = quotes.stream().filter(q -> tmfEdcMapper.getContractNegotiationState(q) == ContractNegotiationStates.TERMINATING).findAny();
-                    if (activeQuote.isEmpty() && terminatingQuote.isEmpty()) {
-                        monitor.info("Create quote in accepted - existing quotes " + objectMapper.writeValueAsString(quotes));
-                        // if the first offer is directly accepted, no quote might exist
-                        ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-                        // we need to create and update, since state changes are only able by patch
-                        updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-                    } else if (activeQuote.isPresent()) {
-                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-                    } else {
-                        // negotiation is currently in terminating, dont do anything.
-                    }
-                }
-                case AGREEING, AGREED -> {
-                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.AGREEING, ContractNegotiationStates.AGREED, ContractNegotiationStates.ACCEPTED, ContractNegotiationStates.REQUESTED));
-                    if (activeQuote.isEmpty()) {
-                        // we cannot throw something here, since it somehow kills an internal edc worker...
-                        monitor.warning(String.format("Cannot save transition to %s for %s.", negotiationState.name(), contractNegotiation.getId()));
-                    } else {
-                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-                        if (contractNegotiation.getContractAgreement() != null) {
-                            createAgreement(contractNegotiation);
-                        }
-                    }
-                }
-                case OFFERING, OFFERED -> {
-                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.REQUESTED, ContractNegotiationStates.INITIAL, ContractNegotiationStates.OFFERING, ContractNegotiationStates.OFFERED));
-                    if (activeQuote.isEmpty()) {
-                        monitor.info("Create quote in offered");
-                        ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.APPROVED);
-                        // we need to create and update, since state changes are only able by patch
-                        updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
-                    } else {
-                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
-                    }
-                }
-                case REQUESTED -> {
-                    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
-                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.OFFERED, ContractNegotiationStates.REQUESTED, ContractNegotiationStates.REQUESTING));
-                    if (activeQuote.isEmpty()) {
-                        monitor.info("Create quote in requested - existing quotes " + objectMapper.writeValueAsString(quotes));
-                        // in case of counter-offers, we will have a quote in approved or accepted and need to cancel them
-                        getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERED))
-                                .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
-                        ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
-                        // we need to create and update, since state changes are only able by patch
-                        updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
-                    } else {
-                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
-                    }
-                }
-                case INITIAL, REQUESTING -> {
-
-                    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
-                    Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.REQUESTING));
-                    if (activeQuote.isEmpty()) {
-                        // in case of counter-offers, we will have a quote in approved or accepted and need to cancel them
-                        getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERING, ContractNegotiationStates.OFFERED))
-                                .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
-                        // create the new quote
-                        createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
-                    } else {
-                        updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
-                    }
                 }
                 case TERMINATED, TERMINATING -> {
                     quoteApi.findByNegotiationId(contractNegotiation.getId())
@@ -545,9 +544,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
     private Optional<String> getTmfOfferId(ContractOffer contractOffer) {
 
-        return ContractOfferIdParser.parseId(contractOffer.getId())
+        return ContractOfferId.parseId(contractOffer.getId())
                 .asOptional()
-                .map(ContractOfferIdParser.ContractOfferWithUid::contractOfferId)
                 .map(ContractOfferId::definitionPart)
                 .flatMap(productCatalogApi::getProductOfferingByExternalId)
                 .map(ExtendableProductOffering::getId);

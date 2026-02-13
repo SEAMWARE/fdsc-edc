@@ -35,7 +35,6 @@ public class TMFBackedAssetIndex implements AssetIndex {
 
     @Override
     public Stream<Asset> queryAssets(QuerySpec querySpec) {
-        // TODO: implement
         throw new UnsupportedOperationException("Querying for assets currently is not supported");
     }
 
@@ -49,22 +48,13 @@ public class TMFBackedAssetIndex implements AssetIndex {
                 .orElseThrow(() -> new IllegalArgumentException(String.format("Asset %s does not exist.", s)));
     }
 
-    private Optional<ExtendableProductSpecification> getProductSpec(ExtendableProductOffering offeringVO) {
-        if (offeringVO.getExtendableProductSpecification() == null) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(productCatalogApiClient.getProductSpecification(offeringVO.getExtendableProductSpecification().getId()));
-    }
-
     @Override
     public StoreResult<Void> create(Asset asset) {
-        // TODO: implement
         throw new UnsupportedOperationException();
     }
 
     @Override
     public StoreResult<Asset> deleteById(String s) {
-        // TODO: implement
         throw new UnsupportedOperationException();
     }
 
@@ -97,7 +87,6 @@ public class TMFBackedAssetIndex implements AssetIndex {
 
     @Override
     public StoreResult<Asset> updateAsset(Asset asset) {
-        // TODO: implement
         throw new UnsupportedOperationException();
     }
 

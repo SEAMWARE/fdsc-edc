@@ -41,6 +41,7 @@ import org.seamware.tmforum.usage.model.UsageCharacteristicVO;
 import org.seamware.tmforum.usage.model.UsageStatusTypeVO;
 
 import java.io.StringReader;
+import java.time.Clock;
 import java.util.*;
 
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.CONSUMER;
@@ -95,13 +96,15 @@ public class TMFEdcMapper {
     private final ParticipantResolver participantResolver;
     private final TypeTransformerRegistry typeTransformerRegistry;
     private final JsonLd jsonLd;
+    private final Clock clock;
 
-    public TMFEdcMapper(Monitor monitor, ObjectMapper objectMapper, ParticipantResolver participantResolver, TypeTransformerRegistry typeTransformerRegistry, JsonLd jsonLd) {
+    public TMFEdcMapper(Monitor monitor, ObjectMapper objectMapper, ParticipantResolver participantResolver, TypeTransformerRegistry typeTransformerRegistry, JsonLd jsonLd, Clock clock) {
         this.monitor = monitor;
         this.objectMapper = objectMapper;
         this.participantResolver = participantResolver;
         this.typeTransformerRegistry = typeTransformerRegistry;
         this.jsonLd = jsonLd;
+        this.clock = clock;
         this.tmfObjectMapper = new TMFObjectMapperImpl();
     }
 
@@ -144,25 +147,31 @@ public class TMFEdcMapper {
         return agreementBuilder.build();
     }
 
-    public Dataset datasetFromProductOffering(ExtendableProductOffering extendableProductOffering, Optional<ExtendableProductSpecification> productSpecification) {
-        Policy contractPolicy = getContractPolicyFromOfferTerm(getContractDefinitionTerm(extendableProductOffering));
+    public Optional<Dataset> datasetFromProductOffering(ExtendableProductOffering extendableProductOffering, Optional<ExtendableProductSpecification> productSpecification) {
+        try {
+            Optional<ExtendableProductOfferingTerm> optionalTerm = getContractDefinitionTerm(extendableProductOffering);
+            if (optionalTerm.isEmpty()) {
+                return Optional.empty();
+            }
+            Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
 
+            Dataset.Builder datasetBuilder = Dataset.Builder.newInstance()
+                    .offer(extendableProductOffering.getExternalId(), contractPolicy);
+            productSpecification.ifPresent(pS -> datasetBuilder.id(pS.getExternalId()));
 
-        Dataset.Builder datasetBuilder = Dataset.Builder.newInstance()
-                .offer(extendableProductOffering.getExternalId(), contractPolicy);
-        productSpecification.ifPresent(pS -> datasetBuilder.id(pS.getExternalId()));
-        
-        getDataService(productSpecification)
-                .stream()
-                .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
-                .forEach(datasetBuilder::distribution);
-        return datasetBuilder.build();
+            getDataService(productSpecification)
+                    .stream()
+                    .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
+                    .forEach(datasetBuilder::distribution);
+            return Optional.of(datasetBuilder.build());
+        } catch (RuntimeException e) {
+            monitor.debug(String.format("Cannot convert offering %s to dataset. Offering does not support the DSP.", extendableProductOffering.getId()), e);
+            return Optional.empty();
+        }
     }
 
     private record DataServiceChar(String id, String endpointUrl) {
     }
-
-    ;
 
     public List<DataService> getDataService(Optional<ExtendableProductSpecification> productSpecification) {
         DataService.Builder defaultDataserviceBuilder = DataService.Builder.newInstance();
@@ -192,39 +201,12 @@ public class TMFEdcMapper {
                 .toList();
     }
 
-    private List<CharValue> getSpecCharValue(Map<String, Object> specChar) {
-        if (specChar.containsKey(PRODUCT_SPEC_CHAR_VALUE)) {
-            if (specChar.get(PRODUCT_SPEC_CHAR_VALUE) instanceof List<?>) {
-                return objectMapper.convertValue(specChar.get(PRODUCT_SPEC_CHAR_VALUE), new TypeReference<List<CharValue>>() {
-                });
-            } else {
-                return List.of(objectMapper.convertValue(specChar.get(PRODUCT_SPEC_CHAR_VALUE), new TypeReference<CharValue>() {
-                }));
-            }
-        }
-        return List.of();
-    }
-
-    private Optional<String> getStringValueFromChars(List<CharValue> charValues) {
-        if (charValues == null || charValues.isEmpty()) {
-            return Optional.empty();
-        }
-        for (CharValue charValue : charValues) {
-            if (charValue.isDefault() && charValue.getTmfValue() instanceof String stringValue) {
-                return Optional.of(stringValue);
-            }
-        }
-        // if no default available, just pick the first one
-        Object firstValue = charValues.getFirst().getTmfValue();
-        if (firstValue instanceof String stringValue) {
-            return Optional.of(stringValue);
-        }
-        return Optional.empty();
-    }
 
     public ContractNegotiation toContractNegotiation(List<ExtendableQuoteVO> quoteVOs, AgreementApiClient agreementApiClient, ParticipantResolver participantResolver, String participantId) {
 
-        ContractNegotiation.Builder contractNegotiationBuilder = ContractNegotiation.Builder.newInstance();
+        ContractNegotiation.Builder contractNegotiationBuilder = ContractNegotiation.Builder
+                .newInstance()
+                .clock(clock);
 
         if (quoteVOs.isEmpty()) {
             monitor.warning("Tried to map an empty list to a contract negotiation.");
@@ -235,15 +217,26 @@ public class TMFEdcMapper {
         ExtendableQuoteVO newestQuoteVo = getNewest(quoteVOs);
         ContractNegotiationStates cnState = getContractNegotiationState(newestQuoteVo);
 
-        contractNegotiationBuilder.id(newestQuoteVo.getExternalId());
+        String externalId = Optional.ofNullable(newestQuoteVo.getExternalId()).orElseThrow(() -> new IllegalArgumentException("The quote does not contain an external Id."));
+
+        contractNegotiationBuilder.id(externalId);
         contractNegotiationBuilder.state(cnState.code());
 
         NegotiationParticipants negotiationParticipants = new NegotiationParticipants();
         Optional.ofNullable(newestQuoteVo.getRelatedParty())
                 .orElse(List.of())
                 .forEach(rp -> {
-                    OrganizationVO organizationVO = participantResolver.getOrganization(rp.getId());
-                    String did = ParticipantResolver.getDidFromOrganization(organizationVO);
+                    Optional<OrganizationVO> optionalOrganization = participantResolver.getOrganization(rp.getId());
+                    if (optionalOrganization.isEmpty()) {
+                        monitor.warning(String.format("Quote contains related party %s that cannot be resolved.", rp.getId()));
+                        return;
+                    }
+                    Optional<String> optionalDid = ParticipantResolver.getDidFromOrganization(optionalOrganization.get());
+                    if (optionalDid.isEmpty()) {
+                        monitor.debug(String.format("The organization %s does not have a did.", rp.getId()));
+                        return;
+                    }
+                    String did = optionalDid.get();
                     String role = rp.getRole();
                     if (role == null) {
                         monitor.warning("Received a related party without a role.");
@@ -311,7 +304,10 @@ public class TMFEdcMapper {
     }
 
     public ContractNegotiationStates getContractNegotiationState(ExtendableQuoteVO quoteVO) {
-        return toState(quoteVO.getContractNegotiationState().getState());
+        String state = Optional.ofNullable(quoteVO.getContractNegotiationState())
+                .map(ContractNegotiationState::getState)
+                .orElseThrow(() -> new IllegalArgumentException("The quote does not contain a negotiation state."));
+        return toState(state);
     }
 
     public ContractOffer fromQuoteItem(ExtendableQuoteItemVO quoteItemVO) {
@@ -328,14 +324,11 @@ public class TMFEdcMapper {
 
     public ExtendableQuoteItemVO fromConsumerContractOffer(ContractOffer contractOffer, String negotiationState) {
 
-
-        String itemUid = ContractOfferIdParser.parseId(contractOffer.getId())
-                .asOptional()
-                .map(ContractOfferIdParser.ContractOfferWithUid::uuid)
-                .orElse(UUID.randomUUID().toString());
+        ContractOfferIdParser.ContractOfferWithUid contractOfferId = ContractOfferIdParser.parseId(contractOffer.getId())
+                .orElseThrow(f -> new IllegalArgumentException(f.getFailureDetail() + " id was " + contractOffer.getId()));
 
         ExtendableQuoteItemVO extendableQuoteItemVO = new ExtendableQuoteItemVO();
-        extendableQuoteItemVO.setId(itemUid);
+        extendableQuoteItemVO.setId(contractOfferId.uuid());
         extendableQuoteItemVO.setDatasetId(contractOffer.getAssetId());
         extendableQuoteItemVO.setExternalId(contractOffer.getId());
         extendableQuoteItemVO.setPolicy(fromEdcPolicy(contractOffer.getPolicy()));
@@ -349,7 +342,6 @@ public class TMFEdcMapper {
         ContractOfferIdParser.ContractOfferWithUid contractOfferId = ContractOfferIdParser.parseId(contractOffer.getId())
                 .orElseThrow(f -> new IllegalArgumentException(f.getFailureDetail() + " id was " + contractOffer.getId()));
 
-        monitor.info("Offer uid is " + contractOfferId.uuid());
 
         ExtendableQuoteItemVO extendableQuoteItemVO = new ExtendableQuoteItemVO();
         extendableQuoteItemVO.setId(contractOfferId.uuid());
@@ -394,54 +386,24 @@ public class TMFEdcMapper {
             monitor.info("The given product specification cannot be used for DSP, since it does not contain an upstreamAddress.");
             return Optional.empty();
         }
+        if (productSpecification.getExternalId() == null) {
+            monitor.info("The given product specification cannot be used for DSP, since it does not contain an externalId.");
+            return Optional.empty();
+        }
         specChars
                 .forEach(spec -> {
-                    switch (spec.getId()) {
+                    switch (spec.getValueType()) {
                         case ENDPOINT_URL_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(url -> dataAddressBuilder.property(ENDPOINT_URL_KEY, url));
                         case ENDPOINT_DESCRIPTION_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(desc -> dataAddressBuilder.property(ENDPOINT_DESCRIPTION_KEY, desc));
                     }
                 });
 
         return Optional.of(Asset.Builder.newInstance()
+                .clock(clock)
                 .id(productSpecification.getExternalId())
                 .version(productSpecification.getVersion())
                 .name(productSpecification.getName())
                 .description(productSpecification.getDescription())
-                .dataAddress(dataAddressBuilder.build())
-                .build());
-    }
-
-    public Optional<Asset> assetFromProductOffering(ExtendableProductOffering productOffering, Optional<ExtendableProductSpecification> productSpecification) {
-        Optional<ContractOfferId> optionalContractOfferId = ContractOfferId.parseId(productOffering.getExternalId()).asOptional();
-
-        DataAddress.Builder dataAddressBuilder = DataAddress.Builder.newInstance()
-                .type(FDSC_DATA_ADDRESS_TYPE);
-
-
-        List<ProductSpecificationCharacteristicVO> specChars = productSpecification.map(ExtendableProductSpecification::getProductSpecCharacteristic)
-                .orElse(List.of());
-        Optional<String> upstreamAddressKey = specChars.stream()
-                .map(ProductSpecificationCharacteristicVO::getId)
-                .filter(UPSTREAM_ADDRESS_KEY::equals)
-                .findAny();
-        if (upstreamAddressKey.isEmpty()) {
-            monitor.info("The given product specification cannot be used for DSP, since it does not contain an upstreamAddress.");
-            return Optional.empty();
-        }
-
-        specChars
-                .forEach(spec -> {
-                    switch (spec.getId()) {
-                        case ENDPOINT_URL_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(url -> dataAddressBuilder.property(ENDPOINT_URL_KEY, url));
-                        case ENDPOINT_DESCRIPTION_KEY -> getValue(spec.getProductSpecCharacteristicValue()).ifPresent(desc -> dataAddressBuilder.property(ENDPOINT_DESCRIPTION_KEY, desc));
-                    }
-                });
-
-        return optionalContractOfferId.map(contractOfferId -> Asset.Builder.newInstance()
-                .id(contractOfferId.assetIdPart())
-                .name(productOffering.getName())
-                .description(productOffering.getDescription())
-                .version(productOffering.getVersion())
                 .dataAddress(dataAddressBuilder.build())
                 .build());
     }
@@ -490,38 +452,23 @@ public class TMFEdcMapper {
         }
     }
 
-    private static class NoopParticipantIdMapper implements ParticipantIdMapper {
-
-        @Override
-        public String toIri(String s) {
-            return s;
-        }
-
-        @Override
-        public String fromIri(String s) {
-            return s;
-        }
-    }
-
     private Policy getAccessPolicyFromOfferTerm(ExtendableProductOfferingTerm extendableProductOfferingTerm) {
 
         Map<String, Object> additionalProperties = extendableProductOfferingTerm.getAdditionalProperties();
 
         if (additionalProperties.containsKey(ACCESS_POLICY_KEY)) {
             return fromOdrl(additionalProperties.get(ACCESS_POLICY_KEY));
-
         } else {
             throw new IllegalArgumentException("Contract definition does not contain an access policy.");
         }
     }
 
-    private ExtendableProductOfferingTerm getContractDefinitionTerm(ExtendableProductOffering extendableProductOffering) {
+    private Optional<ExtendableProductOfferingTerm> getContractDefinitionTerm(ExtendableProductOffering extendableProductOffering) {
 
         return extendableProductOffering.getExtendableProductOfferingTerm()
                 .stream()
                 .filter(pot -> pot.getName().equals(POT_NAME_CONTRACT_DEFINITION))
-                .findAny()
-                .orElseThrow(() -> new IllegalArgumentException("Offering does not contain a contract definition."));
+                .findAny();
     }
 
     public static String getIdFromPolicy(Policy policy) {
@@ -531,38 +478,63 @@ public class TMFEdcMapper {
                 .orElseThrow(() -> new IllegalArgumentException("Policy does not contain a uid."));
     }
 
-    public ContractDefinition fromProductOffer(ExtendableProductOffering productOfferingVO) {
-
+    public Optional<ContractDefinition> fromProductOffer(ExtendableProductOffering productOfferingVO) {
+        if (productOfferingVO.getExternalId() == null) {
+            return Optional.empty();
+        }
         ContractDefinition.Builder contractDefinitionBuilder = ContractDefinition.Builder
                 .newInstance()
-                .id(productOfferingVO.getId());
+                .clock(clock)
+                .id(productOfferingVO.getExternalId());
 
-        ExtendableProductOfferingTerm extendableProductOfferingTerm = getContractDefinitionTerm(productOfferingVO);
+        Optional<ExtendableProductOfferingTerm> optionalTerm = getContractDefinitionTerm(productOfferingVO);
+        if (optionalTerm.isEmpty()) {
+            return Optional.empty();
+        }
+        try {
 
-        Policy contractPolicy = getContractPolicyFromOfferTerm(extendableProductOfferingTerm);
-        contractDefinitionBuilder.contractPolicyId(getIdFromPolicy(contractPolicy));
+            Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
+            contractDefinitionBuilder.contractPolicyId(getIdFromPolicy(contractPolicy));
 
-        Policy accessPolicy = getAccessPolicyFromOfferTerm(extendableProductOfferingTerm);
-        contractDefinitionBuilder.accessPolicyId(getIdFromPolicy(accessPolicy));
+            Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
+            contractDefinitionBuilder.accessPolicyId(getIdFromPolicy(accessPolicy));
 
-        return contractDefinitionBuilder.build();
+            return Optional.of(contractDefinitionBuilder.build());
+        } catch (IllegalArgumentException e) {
+            monitor.debug("Was not able to read the policy.", e);
+            return Optional.empty();
+        }
+
+
     }
 
-    public ValidatableConsumerOffer consumerOfferFromProductOffering(ExtendableProductOffering productOfferingVO, ContractOfferId offerId) {
+    public Optional<ValidatableConsumerOffer> consumerOfferFromProductOffering(ExtendableProductOffering productOfferingVO, ContractOfferId offerId) {
         ValidatableConsumerOffer.Builder consumerOfferBuilder = ValidatableConsumerOffer.Builder.newInstance();
 
-        ContractDefinition contractDefinition = fromProductOffer(productOfferingVO);
+        Optional<ContractDefinition> optionalContractDefinition = fromProductOffer(productOfferingVO);
+        if (optionalContractDefinition.isEmpty()) {
+            return Optional.empty();
+        }
 
-        ExtendableProductOfferingTerm extendableProductOfferingTerm = getContractDefinitionTerm(productOfferingVO);
-        Policy accessPolicy = getAccessPolicyFromOfferTerm(extendableProductOfferingTerm);
-        Policy contractPolicy = getContractPolicyFromOfferTerm(extendableProductOfferingTerm);
+        Optional<ExtendableProductOfferingTerm> optionalTerm = getContractDefinitionTerm(productOfferingVO);
+        if (optionalTerm.isEmpty()) {
+            return Optional.empty();
+        }
 
-        return consumerOfferBuilder
-                .offerId(offerId)
-                .contractPolicy(contractPolicy)
-                .accessPolicy(accessPolicy)
-                .contractDefinition(contractDefinition)
-                .build();
+        try {
+            Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
+            Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
+
+            return Optional.of(consumerOfferBuilder
+                    .offerId(offerId)
+                    .contractPolicy(contractPolicy)
+                    .accessPolicy(accessPolicy)
+                    .contractDefinition(optionalContractDefinition.get())
+                    .build());
+        } catch (IllegalArgumentException e) {
+            monitor.debug("Was not able to read the policy.", e);
+            return Optional.empty();
+        }
     }
 
     public ExtendableAgreementCreateVO toCreate(ExtendableAgreementVO extendableAgreementVO) {

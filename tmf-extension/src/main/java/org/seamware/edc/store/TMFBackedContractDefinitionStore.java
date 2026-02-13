@@ -30,7 +30,7 @@ public class TMFBackedContractDefinitionStore implements ContractDefinitionStore
     @Override
     public ContractDefinition findById(String s) {
         return productCatalogApi.getProductOfferingByExternalId(s)
-                .map(tmfEdcMapper::fromProductOffer)
+                .flatMap(tmfEdcMapper::fromProductOffer)
                 .orElseThrow(() -> new IllegalArgumentException(String.format("No offering for %s does exist.", s)));
     }
 

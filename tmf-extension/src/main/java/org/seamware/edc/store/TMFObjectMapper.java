@@ -13,6 +13,7 @@ public interface TMFObjectMapper {
     ProductOrderUpdateVO map(ProductOrderVO productOrderVO);
 
     ExtendableAgreementCreateVO map(ExtendableAgreementVO extendableAgreementVO);
+
     ExtendableAgreementUpdateVO mapToUpdate(ExtendableAgreementVO extendableAgreementVO);
 
 
@@ -39,7 +40,7 @@ public interface TMFObjectMapper {
             case "FINALIZED" -> ContractNegotiationStates.FINALIZED;
             case "TERMINATING" -> ContractNegotiationStates.TERMINATING;
             case "TERMINATED" -> ContractNegotiationStates.TERMINATED;
-            default -> throw new IllegalArgumentException(String.format("State %s is not a valid negotiation state."));
+            default -> throw new IllegalArgumentException(String.format("State %s is not a valid negotiation state.", state));
         };
     }
 
@@ -68,7 +69,7 @@ public interface TMFObjectMapper {
             case "DEPROVISIONING" -> TransferProcessStates.DEPROVISIONING;
             case "DEPROVISIONING_REQUESTED" -> TransferProcessStates.DEPROVISIONING_REQUESTED;
             case "DEPROVISIONED" -> TransferProcessStates.DEPROVISIONED;
-            default -> throw new IllegalArgumentException(String.format("State %s is not a valid transfer state."));
+            default -> throw new IllegalArgumentException(String.format("State %s is not a valid transfer state.", state));
         };
     }
 }

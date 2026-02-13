@@ -6,7 +6,6 @@
     "profiles":     { "@id": "profiles",     "@container": "@set" },
     "duties":       { "@id": "duties",       "@container": "@set" },
     "constraints":  { "@id": "constraints",  "@container": "@set" },
-    "type_values":  { "@id": "type_values",  "@container": "@set" },
     "credentials": {"@id": "credentials", "@container": "@set"},
     "claims": {"@id": "claims", "@container": "@set"},
     "path": {"@id": "path", "@container": "@set"},
