@@ -18,8 +18,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 public class TMFConfigTest {
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
     @ParameterizedTest(name = "Config from {0}")
     @MethodSource("getValidConfig")
     public void testValidConfig(String testFile, TMFConfig expectedConfig) throws IOException {

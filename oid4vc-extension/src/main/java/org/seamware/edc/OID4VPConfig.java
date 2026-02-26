@@ -1,5 +1,6 @@
 package org.seamware.edc;
 
+import lombok.EqualsAndHashCode;
 import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.system.configuration.Config;
 
@@ -9,6 +10,7 @@ import java.util.function.Supplier;
 /**
  * Configuration to support OID4VP when interacting between connectors
  */
+@EqualsAndHashCode
 public class OID4VPConfig {
 
     private static final String OID4VP_CONFIG_PATH = "oid4vp";
@@ -98,7 +100,7 @@ public class OID4VPConfig {
         KeyConfig.Builder keyConfigBuilder = new KeyConfig.Builder();
         getNullSafeFromConfig(() -> holderKeyConfig.getString("type")).ifPresent(keyConfigBuilder::type);
         getNullSafeFromConfig(() -> holderKeyConfig.getString("path")).ifPresent(keyConfigBuilder::path);
-        holderConfigBuilder.keyConfig(keyConfigBuilder.build());
+        holderConfigBuilder.keyConfigBuilder(keyConfigBuilder);
 
 
         Config proxyConfig = config.getConfig(OID4VP_PROXY_CONFIG_PATH);
@@ -125,6 +127,7 @@ public class OID4VPConfig {
             private String id;
             private String kid;
             private KeyConfig keyConfig;
+            private KeyConfig.Builder keyConfigBuilder;
             private String signatureAlgorithm = "ECDH-ES";
 
             public Builder id(String id) {
@@ -147,9 +150,19 @@ public class OID4VPConfig {
                 return this;
             }
 
+
+            public Builder keyConfigBuilder(KeyConfig.Builder keyConfBuilder) {
+                this.keyConfigBuilder = keyConfBuilder;
+                return this;
+            }
+
+
             public HolderConfig build() {
                 Objects.requireNonNull(id, "When using OID4VP, the holder-id needs to be configured.");
                 Objects.requireNonNull(signatureAlgorithm, "When using OID4VP, a valid signature algorithm has to be configured for the holder.");
+                if (keyConfig == null && keyConfigBuilder != null) {
+                    keyConfig = keyConfigBuilder.build();
+                }
                 Objects.requireNonNull(keyConfig, "When using OID4VP, the holder-key needs to be configured.");
 
                 if (kid == null) {
@@ -217,8 +230,8 @@ public class OID4VPConfig {
             }
 
             public KeyConfig build() {
-                Objects.requireNonNull("For OID4VP, a valid key type needs to be configured.");
-                Objects.requireNonNull("For OID4VP, a valid key path needs to be configured.");
+                Objects.requireNonNull(type, "For OID4VP, a valid key type needs to be configured.");
+                Objects.requireNonNull(path, "For OID4VP, a valid key path needs to be configured.");
                 return new KeyConfig(type, path);
             }
         }

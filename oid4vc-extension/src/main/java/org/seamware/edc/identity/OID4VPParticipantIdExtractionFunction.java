@@ -36,7 +36,7 @@ public class OID4VPParticipantIdExtractionFunction implements DefaultParticipant
             }
             Object currentValue = currentClaims.get(currentPath);
             if (i == claimPath.size() - 1 && currentValue instanceof String issuerString) {
-                monitor.info(String.format("The participant is %s.", issuerString));
+                monitor.debug(String.format("The participant is %s.", issuerString));
                 return issuerString;
             }
             if (i < claimPath.size() - 1 && currentValue instanceof Map<?, ?> claimMap) {

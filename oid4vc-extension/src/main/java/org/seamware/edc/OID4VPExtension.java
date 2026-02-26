@@ -36,6 +36,7 @@ import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.seamware.edc.identity.CounterPartyAddressAudienceResolver;
 import org.seamware.edc.identity.OID4VPIdentityService;
 import org.seamware.edc.identity.OID4VPParticipantIdExtractionFunction;
+import org.seamware.edc.identity.OID4VPTokenProvider;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -188,7 +189,7 @@ public class OID4VPExtension implements ServiceExtension {
             return null;
         }
         if (identityService == null) {
-            identityService = new OID4VPIdentityService(monitor, objectMapper, oid4VPClient(context), config.getClientId(), config.getScope());
+            identityService = new OID4VPIdentityService(monitor, new OID4VPTokenProvider(oid4VPClient(context)), config.getClientId(), config.getScope());
         }
         return identityService;
     }

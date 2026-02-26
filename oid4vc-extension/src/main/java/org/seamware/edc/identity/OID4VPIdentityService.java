@@ -1,11 +1,11 @@
 package org.seamware.edc.identity;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jwt.JWT;
 import com.nimbusds.jwt.JWTParser;
 import io.github.wistefan.oid4vp.OID4VPClient;
 import io.github.wistefan.oid4vp.config.RequestParameters;
 import io.github.wistefan.oid4vp.exception.Oid4VPException;
+import io.github.wistefan.oid4vp.model.TokenResponse;
 import org.eclipse.edc.spi.iam.ClaimToken;
 import org.eclipse.edc.spi.iam.TokenParameters;
 import org.eclipse.edc.spi.iam.TokenRepresentation;
@@ -27,17 +27,16 @@ import java.util.concurrent.ExecutionException;
 public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentityService {
 
     private static final String AUD_PARAMETER = "aud";
+    private static final String BEARER_PREFIX = "Bearer ";
 
     private final Monitor monitor;
-    private final ObjectMapper objectMapper;
-    private final OID4VPClient oid4VPClient;
+    private final TokenProvider tokenProvider;
     private final String clientId;
     private final Set<String> scope;
 
-    public OID4VPIdentityService(Monitor monitor, ObjectMapper objectMapper, OID4VPClient oid4VPClient, String clientId, Set<String> scope) {
+    public OID4VPIdentityService(Monitor monitor, TokenProvider tokenProvider, String clientId, Set<String> scope) {
         this.monitor = monitor;
-        this.objectMapper = objectMapper;
-        this.oid4VPClient = oid4VPClient;
+        this.tokenProvider = tokenProvider;
         this.clientId = clientId;
         this.scope = scope;
     }
@@ -50,9 +49,15 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
         try {
             URI audURI = URI.create(aud);
             RequestParameters requestParameters = new RequestParameters(URI.create(audURI.getScheme() + "://" + audURI.getAuthority()), "", clientId, scope);
-            return oid4VPClient.getAccessToken(requestParameters)
+            return tokenProvider.getAccessToken(requestParameters)
+                    .thenApply(tr -> {
+                        if (!validTokenResponse(tr)) {
+                            throw new Oid4VPException("Token response does not contain mandatory fields.");
+                        }
+                        return tr;
+                    })
                     .thenApply(tr -> TokenRepresentation.Builder.newInstance()
-                            .token("Bearer " + tr.getAccessToken())
+                            .token(BEARER_PREFIX + tr.getAccessToken())
                             .expiresIn(tr.getExpiresIn())
                             .build())
                     .thenApply(Result::success)
@@ -66,6 +71,10 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
         }
     }
 
+    private boolean validTokenResponse(TokenResponse tokenResponse) {
+        return tokenResponse.getAccessToken() != null && !tokenResponse.getAccessToken().isEmpty() && tokenResponse.getExpiresIn() > 0;
+    }
+
     /**
      * In case of the FIWARE Dataspace Connector, the EDC endpoints are ALWAYS protected by the PEP(e.g. Apisix) which is responsible for verifying the token.
      * The method only has to do the decoding.
@@ -73,15 +82,16 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
     @Override
     public Result<ClaimToken> verifyJwtToken(TokenRepresentation tokenRepresentation, VerificationContext verificationContext) {
         try {
-            String plainToken = tokenRepresentation.getToken().replaceFirst("Bearer ", "");
+            String plainToken = tokenRepresentation.getToken().replaceFirst(BEARER_PREFIX, "");
             JWT jwt = JWTParser.parse(plainToken);
 
             Map<String, Object> claims = jwt.getJWTClaimsSet().getClaims();
             ClaimToken.Builder tokenBuilder = ClaimToken.Builder.newInstance();
             claims.forEach(tokenBuilder::claim);
             return Result.success(tokenBuilder.build());
-        } catch (ParseException e) {
-            return Result.failure("[OID4VPIdentityService] Was not able to read the token " + e.getMessage() + " '" + tokenRepresentation.getToken() + "'");
+        } catch (Exception e) {
+            // all exceptions need to be signaled as Result.failure
+            return Result.failure("[OID4VPIdentityService] Was not able to read the token " + e.getMessage() + " '");
         }
     }
 }
