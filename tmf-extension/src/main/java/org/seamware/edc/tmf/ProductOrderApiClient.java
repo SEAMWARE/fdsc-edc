@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.tmforum.productorder.model.ProductOrderCreateVO;
 import org.seamware.tmforum.productorder.model.ProductOrderUpdateVO;
 import org.seamware.tmforum.productorder.model.ProductOrderVO;
@@ -40,7 +41,8 @@ public class ProductOrderApiClient extends ApiClient {
             return objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {
             });
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get product orders for quote %s", quoteId), e);
+            monitor.warning(String.format("Was not able to get product orders for quote %s", quoteId), e);
+            throw new BadGatewayException(String.format("Was not able to get product orders for quote %s", quoteId));
         }
     }
 
@@ -55,13 +57,15 @@ public class ProductOrderApiClient extends ApiClient {
         try {
             requestBody = RequestBody.create(objectMapper.writeValueAsString(productOrderCreateVO), JSON);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Was not able to serialize product order.", e);
+            monitor.warning("Was not able to serialize product order.", e);
+            throw new BadGatewayException("Was not able to serialize product order.");
         }
         Request request = new Request.Builder().url(urlBuilder.build()).post(requestBody).build();
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), ProductOrderVO.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to read product order creation response.", e);
+            monitor.warning("Was not able to read product order creation response.", e);
+            throw new BadGatewayException("Was not able to read product order creation response.");
         }
     }
 
@@ -78,13 +82,15 @@ public class ProductOrderApiClient extends ApiClient {
             String qc = objectMapper.writeValueAsString(productOrderUpdateVO);
             requestBody = RequestBody.create(qc, JSON);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Was not able to serialize product order update.", e);
+            monitor.warning("Was not able to serialize product order update.", e);
+            throw new BadGatewayException("Was not able to serialize product order update.");
         }
         Request request = new Request.Builder().url(urlBuilder.build()).patch(requestBody).build();
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), ProductOrderVO.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to read product order update response.", e);
+            monitor.warning("Was not able to read product order update response.", e);
+            throw new BadGatewayException("Was not able to read product order update response.");
         }
     }
 }

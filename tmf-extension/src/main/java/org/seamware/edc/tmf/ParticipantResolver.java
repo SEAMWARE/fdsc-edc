@@ -19,15 +19,22 @@ public class ParticipantResolver {
     public static final String CONSUMER_ROLE = "Consumer";
 
     private final OrganizationApiClient organizationApi;
+    private final Monitor monitor;
 
     public ParticipantResolver(Monitor monitor, OkHttpClient okHttpClient, String organizationApiBaseUrl, ObjectMapper objectMapper) {
-        this.organizationApi = new OrganizationApiClient(monitor, okHttpClient, organizationApiBaseUrl, objectMapper);
+        this(monitor, new OrganizationApiClient(monitor, okHttpClient, organizationApiBaseUrl, objectMapper));
+    }
+
+    public ParticipantResolver(Monitor monitor, OrganizationApiClient organizationApiClient) {
+        this.monitor = monitor;
+        this.organizationApi = organizationApiClient;
     }
 
     public Optional<OrganizationVO> getOrganization(String tmfId) {
         try {
             return Optional.ofNullable(organizationApi.getOrganization(tmfId));
-        } catch (IllegalArgumentException iae) {
+        } catch (RuntimeException iae) {
+            monitor.warning("Was not able to get organization.", iae);
             return Optional.empty();
         }
     }
@@ -60,16 +67,4 @@ public class ParticipantResolver {
                 .findAny();
     }
 
-    public static String getAddressFromOrganization(OrganizationVO organizationVO) {
-        return Optional.ofNullable(organizationVO
-                        .getPartyCharacteristic())
-                .orElse(List.of())
-                .stream()
-                .filter(cvo -> cvo.getName().equals(PARTY_CHARACTERISTIC_TCK_ADDRESS))
-                .map(CharacteristicVO::getValue)
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .findAny()
-                .orElseThrow(() -> new IllegalArgumentException(String.format("The organization %s does not contain a tckAddress.", organizationVO.getId())));
-    }
 }

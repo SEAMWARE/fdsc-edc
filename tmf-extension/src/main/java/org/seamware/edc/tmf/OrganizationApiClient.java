@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.tmforum.party.model.CharacteristicVO;
 import org.seamware.tmforum.party.model.OrganizationCreateVO;
@@ -41,7 +42,8 @@ public class OrganizationApiClient extends ApiClient {
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), OrganizationVO.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get organization for %s", tmfId), e);
+            monitor.warning(String.format("Was not able to get organization for %s", tmfId), e);
+            throw new BadGatewayException(String.format("Was not able to get organization for %s", tmfId));
         }
     }
 
@@ -63,7 +65,8 @@ public class OrganizationApiClient extends ApiClient {
                     )
                     .findAny();
         } catch (IOException e) {
-            return Optional.empty();
+            monitor.warning("Was not able to get the organization by did.", e);
+            throw new BadGatewayException("Was not able to get the organization by did.");
         }
     }
 
@@ -84,7 +87,8 @@ public class OrganizationApiClient extends ApiClient {
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), OrganizationVO.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to read organization creation response.", e);
+            monitor.warning("Was not able to read organization creation response.", e);
+            throw new BadGatewayException("Was not able to read organization creation response.");
         }
     }
 

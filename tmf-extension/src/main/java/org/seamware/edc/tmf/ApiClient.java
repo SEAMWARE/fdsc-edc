@@ -2,6 +2,7 @@ package org.seamware.edc.tmf;
 
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 
 import java.io.IOException;
 
@@ -28,12 +29,12 @@ public abstract class ApiClient {
             if (response.isSuccessful()) {
                 return response.body();
             } else {
-                monitor.warning(String.format("Was not able to get as successful response for %s. Was: %s - %s", request.url(), response.code(), response.body().string()));
-                throw new IllegalArgumentException(String.format("Was not able to get as successful response for %s. Was: %s - %s", request.url(), response.code(), response.body().string()));
+                monitor.warning(String.format("Was not able to get as successful response for %s. Was: %s", request.url(), response.code()));
+                throw new BadGatewayException(String.format("Was not able to get as successful response for %s. Was: %s", request.url(), response.code()));
             }
         } catch (IOException e) {
-            monitor.warning(String.format("Was not able to get response for %s", request.url()));
-            throw new IllegalArgumentException(String.format("Was not able to get response for %s", request.url()), e);
+            monitor.warning(String.format("Was not able to get response for %s", request.url()), e);
+            throw new BadGatewayException(String.format("Was not able to get response for %s", request.url()));
         }
     }
 }

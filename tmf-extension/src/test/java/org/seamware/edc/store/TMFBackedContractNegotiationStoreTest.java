@@ -26,6 +26,7 @@ import org.seamware.edc.domain.ContractNegotiationState;
 import org.seamware.edc.domain.ExtendableAgreementVO;
 import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.edc.tmf.*;
+import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
 
 import java.net.URI;
 import java.time.Clock;
@@ -43,7 +44,9 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
 
     protected static final String TEST_AGREEMENT_ID = "test-agreement";
     protected static final String TEST_PROVIDER_ID = "provider-id";
+    protected static final String TMF_TEST_PROVIDER_ID = "tmf-provider-id";
     protected static final String TEST_CONSUMER_ID = "consumer-id";
+    protected static final String TMF_TEST_CONSUMER_ID = "tmf-consumer-id";
     protected static final String TEST_ASSET_ID = "asset-id";
     protected static final String TEST_POLICY_ID = "policy-id";
     protected static final String TEST_COUNTER_PARTY_ID = "counter-party-id";
@@ -62,6 +65,7 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
     protected CriterionOperatorRegistry criterionOperatorRegistry;
     protected LeaseHolder leaseHolder;
     protected LockManager lockManager;
+    protected ObjectMapper objectMapper;
     protected TMFBackedContractNegotiationStore tmfBackedContractNegotiationStore;
 
     @BeforeEach
@@ -69,7 +73,7 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
 
         SchemaBaseUriHolder.configure(URI.create("http://my-base.schema"));
 
-        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper = new ObjectMapper();
         objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         objectMapper.addMixIn(Policy.Builder.class, UnknownPropertyMixin.class);
         objectMapper.registerModule(new JavaTimeModule());
@@ -157,7 +161,7 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
                 });
     }
 
-    protected static ContractNegotiation getValidNegotiationWithIdOfferAndType(String id, List<ContractOffer> offers, ContractNegotiation.Type type, ContractNegotiationStates state) {
+    protected static ContractNegotiation getValidNegotiationWithIdOfferAndType(String id, List<ContractOffer> offers, ContractNegotiation.Type type, ContractNegotiationStates state, String counterPartyId) {
         return ContractNegotiation.Builder
                 .newInstance()
                 .type(type)
@@ -165,10 +169,38 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
                 .clock(Clock.fixed(Instant.EPOCH, TimeZone.getDefault().toZoneId()))
                 .id(id)
                 .counterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
-                .counterPartyId(TEST_COUNTER_PARTY_ID)
+                .counterPartyId(counterPartyId)
                 .protocol(TEST_PROTOCOL)
                 .contractOffers(offers)
                 .build();
+    }
+
+    protected static ContractNegotiation getValidNegotiationWithIdInState(String id, ContractNegotiationStates state) {
+        return ContractNegotiation.Builder
+                .newInstance()
+                .type(ContractNegotiation.Type.PROVIDER)
+                .state(state.code())
+                .clock(Clock.fixed(Instant.EPOCH, TimeZone.getDefault().toZoneId()))
+                .id(id)
+                .counterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
+                .counterPartyId(TEST_COUNTER_PARTY_ID)
+                .protocol(TEST_PROTOCOL)
+                .build();
+    }
+
+    protected static ContractNegotiation getValidNegotiationWithIdOfferAndType(String id, List<ContractOffer> offers, ContractNegotiation.Type type, ContractNegotiationStates state) {
+        return getValidNegotiationWithIdOfferAndType(id, offers, type, state, TEST_COUNTER_PARTY_ID);
+    }
+
+    protected static ContractNegotiation addAgreement(ContractNegotiation contractNegotiation) {
+        ContractAgreement contractAgreement = ContractAgreement.Builder.newInstance()
+                .providerId(TEST_PROVIDER_ID)
+                .consumerId(TEST_CONSUMER_ID)
+                .assetId(TEST_ASSET_ID)
+                .policy(getTestPolicy())
+                .build();
+        contractNegotiation.setContractAgreement(contractAgreement);
+        return contractNegotiation;
     }
 
     protected static ContractNegotiation getValidNegotiationWithId(String id) {
@@ -541,15 +573,44 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
     }
 
     protected static List<ExtendableQuoteVO> getQuotes(String negotiationId, String controlPlane, int numQuotes) {
+
         List<ExtendableQuoteVO> extendableQuoteVOS = new ArrayList<>();
         for (int i = 0; i < numQuotes; i++) {
             ExtendableQuoteVO extendableQuoteVO = new ExtendableQuoteVO();
             extendableQuoteVO.setExternalId(negotiationId);
-            extendableQuoteVO.setContractNegotiationState(new ContractNegotiationState().setControlplane(controlPlane));
+            extendableQuoteVO.setContractNegotiationState(
+                    new ContractNegotiationState()
+                            .setControlplane(controlPlane));
             extendableQuoteVOS.add(extendableQuoteVO);
         }
 
         return extendableQuoteVOS;
+    }
+
+
+    protected static List<ExtendableQuoteVO> getQuotes(String negotiationId, String controlPlane, int numQuotes, QuoteStateTypeVO state) {
+        List<ExtendableQuoteVO> extendableQuoteVOS = new ArrayList<>();
+        for (int i = 0; i < numQuotes; i++) {
+            extendableQuoteVOS.add(getQuote("id-" + i, negotiationId, controlPlane, state));
+        }
+
+        return extendableQuoteVOS;
+    }
+
+    protected static ExtendableQuoteVO getQuote(String quoteId, String negotiationId, String controlPlane, QuoteStateTypeVO state) {
+        return getQuote(quoteId, negotiationId, controlPlane, state, ContractNegotiationStates.INITIAL);
+    }
+
+    protected static ExtendableQuoteVO getQuote(String quoteId, String negotiationId, String controlPlane, QuoteStateTypeVO state, ContractNegotiationStates negotiationState) {
+        ExtendableQuoteVO extendableQuoteVO = new ExtendableQuoteVO();
+        extendableQuoteVO.setId(quoteId);
+        extendableQuoteVO.setExternalId(negotiationId);
+        extendableQuoteVO.setState(state);
+        extendableQuoteVO.setContractNegotiationState(
+                new ContractNegotiationState()
+                        .setState(negotiationState.name())
+                        .setControlplane(controlPlane));
+        return extendableQuoteVO;
     }
 
 

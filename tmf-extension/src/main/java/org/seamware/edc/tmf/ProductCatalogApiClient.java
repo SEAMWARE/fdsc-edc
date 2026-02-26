@@ -9,6 +9,7 @@ import okhttp3.ResponseBody;
 import org.eclipse.edc.connector.controlplane.contract.spi.ContractOfferId;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.SchemaBaseUriHolder;
 import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.domain.ExtendableProductOfferingTerm;
@@ -59,7 +60,8 @@ public class ProductCatalogApiClient extends ApiClient {
                     .readValue(responseBody.bytes(), new TypeReference<>() {
                     });
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to get product offerings.", e);
+            monitor.warning("Was not able to get product offerings.", e);
+            throw new BadGatewayException("Was not able to get product offerings.");
         }
     }
 
@@ -77,7 +79,8 @@ public class ProductCatalogApiClient extends ApiClient {
                     .readValue(responseBody.bytes(), new TypeReference<List<ExtendableProductSpecification>>() {
                     });
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to get product specifications.", e);
+            monitor.warning("Was not able to get product specifications.", e);
+            throw new BadGatewayException("Was not able to get product specifications.");
         }
     }
 
@@ -93,7 +96,8 @@ public class ProductCatalogApiClient extends ApiClient {
             return objectMapper
                     .readValue(responseBody.bytes(), ExtendableProductSpecification.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get product specification %s.", specId), e);
+            monitor.warning(String.format("Was not able to get product specification %s.", specId), e);
+            throw new BadGatewayException(String.format("Was not able to get product specification %s.", specId));
         }
     }
 
@@ -117,22 +121,27 @@ public class ProductCatalogApiClient extends ApiClient {
             try (ResponseBody responseBody = executeRequest(request)) {
                 List<ExtendableProductOffering> extendableProductOfferings = objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {
                 });
-                optionalPolicy = extendableProductOfferings
+                List<Policy> policies = extendableProductOfferings
                         .stream()
                         .map(ExtendableProductOffering::getExtendableProductOfferingTerm)
+                        .filter(Objects::nonNull)
                         .flatMap(List::stream)
-                        .filter(extendableProductOfferingTerm -> extendableProductOfferingTerm.getName().equals(POT_NAME_CONTRACT_DEFINITION))
+                        .filter(extendableProductOfferingTerm -> Optional.ofNullable(extendableProductOfferingTerm.getName()).filter(n -> n.equals(POT_NAME_CONTRACT_DEFINITION)).isPresent())
                         .map(epot -> getFromOfferingTerm(epot, policyId).orElse(null))
                         .filter(Objects::nonNull)
-                        .findAny();
+                        .toList();
+                if (policies.size() > 1) {
+                    throw new BadGatewayException("The policies need to be unique.");
+                }
+                if (!policies.isEmpty()) {
+                    optionalPolicy = Optional.of(policies.getFirst());
+                }
                 posAvailable = extendableProductOfferings.size() == 100;
                 offset += 100;
             } catch (IOException e) {
-                throw new IllegalArgumentException("Was not able to get product offerings.", e);
+                monitor.warning("Was not able to get the policy by id.", e);
+                throw new BadGatewayException("Was not able to get the policy by id.");
             }
-        }
-        if (optionalPolicy.isEmpty()) {
-            throw new IllegalArgumentException("No policy found.");
         }
         return optionalPolicy;
     }
@@ -142,14 +151,15 @@ public class ProductCatalogApiClient extends ApiClient {
         if (optionalContractPolicy.isPresent()) {
             return optionalContractPolicy;
         }
-
         return getPolicyByIdAndType(extendableProductOfferingTerm, policyId, ACCESS_POLICY_KEY);
     }
 
     private Optional<Policy> getPolicyByIdAndType(ExtendableProductOfferingTerm extendableProductOfferingTerm, String policyId, String policyType) {
         return Optional.ofNullable(extendableProductOfferingTerm.getAdditionalProperties())
                 .map(ap -> ap.get(policyType))
-                .map(tmfEdcMapper::fromOdrl)
+                .map(p -> {
+                    return tmfEdcMapper.fromOdrl(p);
+                })
                 .map(p -> {
                     if (Optional.ofNullable(p.getExtensibleProperties())
                             .map(eP -> eP.get(UID_KEY))
@@ -171,58 +181,19 @@ public class ProductCatalogApiClient extends ApiClient {
         urlBuilder.addQueryParameter("externalId", externalId);
         Request request = new Request.Builder().url(urlBuilder.build()).build();
         try (ResponseBody responseBody = executeRequest(request)) {
-            List<ExtendableProductSpecification> productSpecificationVOS = objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableProductSpecification>>() {
+            List<ExtendableProductSpecification> productSpecificationVOS = objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {
             });
             if (productSpecificationVOS.size() > 1) {
-                throw new IllegalArgumentException(String.format("Multiple specifications for id %s exist. External Ids need to be unique.", externalId));
+                throw new BadGatewayException(String.format("Multiple specifications for id %s exist. External Ids need to be unique.", externalId));
             }
             if (productSpecificationVOS.isEmpty()) {
                 return Optional.empty();
             }
             return Optional.of(productSpecificationVOS.getFirst());
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get specifications for external id %s", externalId), e);
+            monitor.warning(String.format("Was not able to get specifications for external id %s", externalId), e);
+            throw new BadGatewayException(String.format("Was not able to get specifications for external id %s", externalId));
         }
-    }
-
-
-    /**
-     * Return a product offering by its the asset-id. The asset-id is embedded in the externalId(the offering-id) and therefor all offerings need to be checked.
-     */
-    public Optional<ExtendableProductOffering> getProductOfferingByAssetId(String assetId) {
-        monitor.info("Get offering for asset id " + assetId);
-        boolean offeringsAvailable = true;
-        int offset = 0;
-        while (offeringsAvailable) {
-
-            HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
-            urlBuilder.addPathSegment(PRODUCT_OFFERING_PATH);
-            urlBuilder.addQueryParameter("atSchemaLocation", SchemaBaseUriHolder.get().resolve(EXTERNAL_ID_SCHEMA).toString());
-            urlBuilder.addQueryParameter(LIMIT_PARAM, "100");
-            urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
-            Request request = new Request.Builder().url(urlBuilder.build()).build();
-            try (ResponseBody responseBody = executeRequest(request)) {
-                List<ExtendableProductOffering> extendableProductOfferings = objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableProductOffering>>() {
-                });
-                Optional<ExtendableProductOffering> optionalExtendableProductOffering = extendableProductOfferings
-                        .stream()
-                        .filter(extendableProductOffering -> ContractOfferIdParser.parseId(extendableProductOffering.getExternalId())
-                                .asOptional()
-                                .map(ContractOfferIdParser.ContractOfferWithUid::contractOfferId)
-                                .map(ContractOfferId::assetIdPart)
-                                .orElse("invalid").equals(assetId))
-                        .findFirst();
-                if (optionalExtendableProductOffering.isPresent()) {
-                    return optionalExtendableProductOffering;
-                }
-                offeringsAvailable = extendableProductOfferings.size() == 100;
-                offset += 100;
-            } catch (
-                    IOException e) {
-                throw new IllegalArgumentException("Failed to fetch offerings", e);
-            }
-        }
-        return Optional.empty();
     }
 
     /**
@@ -238,14 +209,15 @@ public class ProductCatalogApiClient extends ApiClient {
             List<ExtendableProductOffering> extendableProductOfferings = objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableProductOffering>>() {
             });
             if (extendableProductOfferings.size() > 1) {
-                throw new IllegalArgumentException(String.format("Multiple offerings for id %s exist. External Ids need to be unique.", externalId));
+                throw new BadGatewayException(String.format("Multiple offerings for id %s exist. External Ids need to be unique.", externalId));
             }
             if (extendableProductOfferings.isEmpty()) {
                 return Optional.empty();
             }
             return Optional.of(extendableProductOfferings.getFirst());
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get offering for external id %s", externalId), e);
+            monitor.warning(String.format("Was not able to get offering for external id %s", externalId), e);
+            throw new BadGatewayException(String.format("Was not able to get offering for external id %s", externalId));
         }
     }
 

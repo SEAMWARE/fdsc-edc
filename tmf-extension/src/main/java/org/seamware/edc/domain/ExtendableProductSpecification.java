@@ -12,7 +12,6 @@ import static org.seamware.edc.domain.ExtendableProduct.EXTERNAL_ID_SCHEMA;
 
 public class ExtendableProductSpecification extends ProductSpecificationVO {
 
-
     @Override
     public @Nullable URI getAtSchemaLocation() {
         URI current = super.getAtSchemaLocation();

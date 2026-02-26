@@ -6,6 +6,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.domain.ExtendableQuoteUpdateVO;
 import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.tmforum.quote.model.QuoteCreateVO;
@@ -19,12 +20,15 @@ import java.util.List;
 public class QuoteApiClient extends ApiClient {
 
     private static final String QUOTE_PATH = "quote";
+    public static final String CONTROL_PLANE_ID_PARAM = "contractNegotiation.controlplane";
 
+    private final String controlPlaneId;
     private final String baseUrl;
     private final ObjectMapper objectMapper;
 
-    public QuoteApiClient(Monitor monitor, OkHttpClient okHttpClient, String baseUrl, ObjectMapper objectMapper) {
+    public QuoteApiClient(Monitor monitor, OkHttpClient okHttpClient, String controlPlaneId, String baseUrl, ObjectMapper objectMapper) {
         super(monitor, okHttpClient);
+        this.controlPlaneId = controlPlaneId;
         this.baseUrl = baseUrl;
         this.objectMapper = objectMapper.copy().setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
@@ -38,13 +42,15 @@ public class QuoteApiClient extends ApiClient {
         urlBuilder.addPathSegment(QUOTE_PATH);
         urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
         urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(limit));
+        // only get quotes that we are responsible for
+        urlBuilder.addQueryParameter(CONTROL_PLANE_ID_PARAM, controlPlaneId);
         Request request = new Request.Builder().url(urlBuilder.build()).build();
         try (ResponseBody responseBody = executeRequest(request)) {
-            return objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableQuoteVO>>() {
+            return objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {
             });
         } catch (Exception e) {
             monitor.warning("Was not able to get quotes.", e);
-            return List.of();
+            throw new BadGatewayException("Was not able to get quotes.");
         }
     }
 
@@ -61,14 +67,15 @@ public class QuoteApiClient extends ApiClient {
             String qc = objectMapper.writeValueAsString(quoteUpdateVO);
             requestBody = RequestBody.create(qc, JSON);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Was not able to serialize quote update.", e);
+            monitor.warning("Was not able to serialize quote update.", e);
+            throw new BadGatewayException("Was not able to serialize quote update.");
         }
         Request request = new Request.Builder().url(urlBuilder.build()).patch(requestBody).build();
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), ExtendableQuoteVO.class);
         } catch (IOException e) {
-            monitor.severe("Was not able to read quote creation.", e);
-            throw new IllegalArgumentException("Was not able to read quote creation response.", e);
+            monitor.warning("Was not able to read quote creation.", e);
+            throw new BadGatewayException("Was not able to read quote creation response.");
         }
     }
 
@@ -83,13 +90,15 @@ public class QuoteApiClient extends ApiClient {
         try {
             requestBody = RequestBody.create(objectMapper.writeValueAsString(quoteCreateVO), JSON);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Was not able to serialize quote.", e);
+            monitor.warning("Was not able to serialize quote.", e);
+            throw new BadGatewayException("Was not able to serialize quote.");
         }
         Request request = new Request.Builder().url(urlBuilder.build()).post(requestBody).build();
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), ExtendableQuoteVO.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to read quote creation response.", e);
+            monitor.warning("Was not able to read quote creation response.", e);
+            throw new BadGatewayException("Was not able to read quote creation response.");
         }
     }
 
@@ -105,7 +114,8 @@ public class QuoteApiClient extends ApiClient {
             return objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {
             });
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get quotes for negotiation %s", negotiationId), e);
+            monitor.warning(String.format("Was not able to get quotes for negotiation %s", negotiationId), e);
+            throw new BadGatewayException(String.format("Was not able to get quotes for negotiation %s", negotiationId));
         }
     }
 

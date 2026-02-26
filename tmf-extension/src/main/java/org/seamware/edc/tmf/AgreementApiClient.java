@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.domain.*;
 import org.seamware.tmforum.agreement.model.AgreementVO;
 import org.seamware.tmforum.productinventory.model.ProductCreateVO;
@@ -36,7 +37,8 @@ public class AgreementApiClient extends ApiClient {
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), ExtendableAgreementVO.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get agreement %s.", agreementId), e);
+            monitor.warning("Was not able to get agreement.", e);
+            throw new BadGatewayException(String.format("Was not able to get agreement %s.", agreementId));
         }
     }
 
@@ -48,10 +50,11 @@ public class AgreementApiClient extends ApiClient {
         Request request = new Request.Builder().url(urlBuilder.build()).build();
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper
-                    .readValue(responseBody.bytes(), new TypeReference<List<ExtendableAgreementVO>>() {
+                    .readValue(responseBody.bytes(), new TypeReference<>() {
                     });
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to get agreements.", e);
+            monitor.warning("Was not able to get agreements.", e);
+            throw new BadGatewayException("Was not able to get agreements.");
         }
     }
 
@@ -69,7 +72,8 @@ public class AgreementApiClient extends ApiClient {
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), ExtendableAgreementVO.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to read agreement creation response.", e);
+            monitor.warning("Was not able to read agreement creation response.", e);
+            throw new BadGatewayException("Was not able to read agreement creation response.");
         }
     }
 
@@ -93,7 +97,7 @@ public class AgreementApiClient extends ApiClient {
             return objectMapper.readValue(responseBody.bytes(), ExtendableAgreementVO.class);
         } catch (IOException e) {
             monitor.severe("Was not able to read agreement creation.", e);
-            throw new IllegalArgumentException("Was not able to read agreement creation response.", e);
+            throw new BadGatewayException("Was not able to read agreement creation response.");
         }
     }
 
@@ -106,14 +110,15 @@ public class AgreementApiClient extends ApiClient {
             List<ExtendableAgreementVO> extendableAgreementVOS = objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableAgreementVO>>() {
             });
             if (extendableAgreementVOS.size() > 1) {
-                throw new IllegalArgumentException(String.format("There cannot be more than one agreement per negotiation id. Found multiple for %s.", negotiationId));
+                throw new BadGatewayException(String.format("There cannot be more than one agreement per negotiation id. Found multiple for %s.", negotiationId));
             }
             if (extendableAgreementVOS.isEmpty()) {
                 return Optional.empty();
             }
             return Optional.ofNullable(extendableAgreementVOS.getFirst());
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get agreements for negotiationId %s", negotiationId), e);
+            monitor.warning(String.format("Was not able to get agreements for negotiationId %s", negotiationId), e);
+            throw new BadGatewayException(String.format("Was not able to get agreements for negotiationId %s", negotiationId));
         }
     }
 
@@ -126,14 +131,15 @@ public class AgreementApiClient extends ApiClient {
             List<ExtendableAgreementVO> extendableAgreementVOS = objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableAgreementVO>>() {
             });
             if (extendableAgreementVOS.size() > 1) {
-                throw new IllegalArgumentException(String.format("There cannot be more than one agreement per contract id. Found multiple for %s.", contractId));
+                throw new BadGatewayException(String.format("There cannot be more than one agreement per contract id. Found multiple for %s.", contractId));
             }
             if (extendableAgreementVOS.isEmpty()) {
                 return Optional.empty();
             }
             return Optional.ofNullable(extendableAgreementVOS.getFirst());
         } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get agreements for contractId %s", contractId), e);
+            monitor.warning(String.format("Was not able to get agreements for contractId %s", contractId), e);
+            throw new BadGatewayException(String.format("Was not able to get agreements for contractId %s", contractId));
         }
     }
 }

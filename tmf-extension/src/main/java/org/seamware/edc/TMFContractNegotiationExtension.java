@@ -1,7 +1,7 @@
 package org.seamware.edc;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import jakarta.json.Json;
 import jakarta.json.JsonBuilderFactory;
@@ -42,7 +42,7 @@ import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
  */
 @Requires({CriterionOperatorRegistry.class})
 @Provides({TMFEdcMapper.class, ObjectMapper.class, QuoteApiClient.class, AgreementApiClient.class, ProductOrderApiClient.class,
-        ProductCatalogApiClient.class, ProductInventoryApiClient.class, UsageApiClient.class, ParticipantResolver.class,
+        ProductCatalogApiClient.class, ProductInventoryApiClient.class, ParticipantResolver.class,
         ContractNegotiationStore.class, ContractDefinitionStore.class, PolicyDefinitionStore.class, AssetIndex.class, DataAddressResolver.class})
 public class TMFContractNegotiationExtension implements ServiceExtension {
 
@@ -69,7 +69,6 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
     private ProductOrderApiClient productOrderApi;
     private ParticipantResolver participantResolver;
     private ProductCatalogApiClient productCatalogApi;
-    private UsageApiClient usageApi;
     private ProductInventoryApiClient productInventoryApi;
     private ContractNegotiationStore contractNegotiationStore;
     private TMFEdcMapper tmfEdcMapper;
@@ -131,12 +130,11 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
         SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
         context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
         context.registerService(ObjectMapper.class, objectMapper());
-        context.registerService(QuoteApiClient.class, quoteApi(config));
+        context.registerService(QuoteApiClient.class, quoteApi(context, config));
         context.registerService(AgreementApiClient.class, agreementApi(config));
         context.registerService(ProductOrderApiClient.class, productOrderApi(config));
         context.registerService(ProductCatalogApiClient.class, productCatalogApi(config));
         context.registerService(ProductInventoryApiClient.class, productInventoryApi(config));
-        context.registerService(UsageApiClient.class, usageApi(config));
         context.registerService(ParticipantResolver.class, participantResolver(config));
         context.registerService(ContractNegotiationStore.class, contractNegotiationStore(context, config));
         context.registerService(ContractDefinitionStore.class, contractDefinitionStore(config));
@@ -162,9 +160,10 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
         return objectMapper;
     }
 
-    public QuoteApiClient quoteApi(TMFConfig tmfConfig) {
+    public QuoteApiClient quoteApi(ServiceExtensionContext context, TMFConfig tmfConfig) {
         if (quoteApi == null) {
-            quoteApi = new QuoteApiClient(monitor, okHttpClient, tmfConfig.getQuoteApi().toString(), objectMapper());
+
+            quoteApi = new QuoteApiClient(monitor, okHttpClient, context.getConfig().getString("edc.hostname"), tmfConfig.getQuoteApi().toString(), objectMapper());
         }
         return quoteApi;
     }
@@ -197,12 +196,6 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
         return productInventoryApi;
     }
 
-    public UsageApiClient usageApi(TMFConfig tmfConfig) {
-        if (usageApi == null) {
-            usageApi = new UsageApiClient(monitor, okHttpClient, tmfConfig.getUsageManagementApi().toString(), objectMapper());
-        }
-        return usageApi;
-    }
 
     public ParticipantResolver participantResolver(TMFConfig tmfConfig) {
         if (participantResolver == null) {
@@ -215,7 +208,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
         if (contractNegotiationStore == null) {
 
             String controlplane = serviceExtensionContext.getConfig().getString("edc.hostname");
-            contractNegotiationStore = new TMFBackedContractNegotiationStore(monitor, objectMapper(), quoteApi(tmfConfig), agreementApi(tmfConfig),
+            contractNegotiationStore = new TMFBackedContractNegotiationStore(monitor, objectMapper(), quoteApi(serviceExtensionContext, tmfConfig), agreementApi(tmfConfig),
                     productOrderApi(tmfConfig), productCatalogApi(tmfConfig), productInventoryApi(tmfConfig), participantResolver(tmfConfig),
                     tmfEdcMapper(tmfConfig), serviceExtensionContext.getParticipantId(), controlplane, criterionOperatorRegistry, new HashMapLeaseHolder(monitor, clock));
         }

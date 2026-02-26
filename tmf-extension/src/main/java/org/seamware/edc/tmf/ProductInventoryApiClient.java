@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.domain.ExtendableProduct;
 import org.seamware.edc.domain.ExtendableProductCreate;
 import org.seamware.edc.domain.ExtendableProductOffering;
@@ -45,13 +46,15 @@ public class ProductInventoryApiClient extends ApiClient {
         try {
             requestBody = RequestBody.create(objectMapper.writeValueAsString(productCreateVO), JSON);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Was not able to serialize product.", e);
+            monitor.warning("Was not able to serialize product.", e);
+            throw new BadGatewayException("Was not able to serialize product.");
         }
         Request request = new Request.Builder().url(urlBuilder.build()).post(requestBody).build();
         try (ResponseBody responseBody = executeRequest(request)) {
             return objectMapper.readValue(responseBody.bytes(), ExtendableProduct.class);
         } catch (IOException e) {
-            throw new IllegalArgumentException("Was not able to read product creation response.", e);
+            monitor.warning("Was not able to read product creation response.", e);
+            throw new BadGatewayException("Was not able to read product creation response.");
         }
     }
 
@@ -68,30 +71,8 @@ public class ProductInventoryApiClient extends ApiClient {
                     .readValue(responseBody.bytes(), ExtendableProduct.class));
         } catch (IOException e) {
             monitor.warning(String.format("Was not able to get product %s.", id), e);
-            return Optional.empty();
+            throw new BadGatewayException(String.format("Was not able to get product %s.", id));
         }
     }
 
-    /**
-     * Returns the product by its externalId(the data-set id)
-     */
-    public Optional<ExtendableProduct> getProductByExternalId(String externalId) {
-        HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
-        urlBuilder.addPathSegment(PRODUCT_PATH);
-        urlBuilder.addQueryParameter("externalId", externalId);
-        Request request = new Request.Builder().url(urlBuilder.build()).build();
-        try (ResponseBody responseBody = executeRequest(request)) {
-            List<ExtendableProduct> extendableProducts = objectMapper.readValue(responseBody.bytes(), new TypeReference<List<ExtendableProduct>>() {
-            });
-            if (extendableProducts.size() > 1) {
-                throw new IllegalArgumentException(String.format("Multiple products for id %s exist. External Ids need to be unique.", externalId));
-            }
-            if (extendableProducts.isEmpty()) {
-                return Optional.empty();
-            }
-            return Optional.of(extendableProducts.getFirst());
-        } catch (IOException e) {
-            throw new IllegalArgumentException(String.format("Was not able to get products for external id %s", externalId), e);
-        }
-    }
 }
