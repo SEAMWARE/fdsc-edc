@@ -19,6 +19,7 @@
 
         <version.org.openapitools.generator-maven-plugin>7.10.0</version.org.openapitools.generator-maven-plugin>
         <version.org.codehaus.mojo.build-helper-maven-plugin>3.4.0</version.org.codehaus.mojo.build-helper-maven-plugin>
+        <version.org.codehaus.mojo.license-maven-plugin>2.7.1</version.org.codehaus.mojo.license-maven-plugin>
 
         <version.org.openapitools.jackson-databind-nullable>0.2.8</version.org.openapitools.jackson-databind-nullable>
         <version.com.fasterxml.jackson.datatype>2.19.2</version.com.fasterxml.jackson.datatype>
@@ -186,6 +187,24 @@
                 <artifactId>maven-deploy-plugin</artifactId>
                 <configuration>
                     <skip>true</skip>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>2.43.0</version>
+
+                <configuration>
+                    <java>
+                        <!-- Add license header -->
+                        <licenseHeader>
+                            <file>${session.executionRootDirectory}/license-header.txt</file>
+                            <delimiter>package</delimiter>
+                        </licenseHeader>
+
+                        <!-- Optional but recommended formatting -->
+                        <googleJavaFormat/>
+                    </java>
                 </configuration>
             </plugin>
         </plugins>

@@ -1,7 +1,32 @@
+/*
+ * Copyright 2025 Seamless Middleware Technologies S.L and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.seamware.edc.store;
+
+import static java.util.Comparator.comparingLong;
+import static org.seamware.edc.tmf.ParticipantResolver.CONSUMER_ROLE;
+import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.contract.spi.ContractOfferId;
 import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
@@ -30,643 +55,816 @@ import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
 import org.seamware.tmforum.quote.model.QuoteVO;
 import org.seamware.tmforum.quote.model.RelatedPartyVO;
 
-import java.util.*;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Predicate;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
-
-import static java.util.Comparator.comparingLong;
-import static org.seamware.edc.tmf.ParticipantResolver.CONSUMER_ROLE;
-import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
-
 public class TMFBackedContractNegotiationStore implements ContractNegotiationStore {
 
-    public static final String CUSTOMER_ROLE = "Customer";
-    private final Monitor monitor;
-    private final ObjectMapper objectMapper;
-    private final QuoteApiClient quoteApi;
-    private final AgreementApiClient agreementApi;
-    private final ProductOrderApiClient productOrderApi;
-    private final ProductCatalogApiClient productCatalogApi;
-    private final ProductInventoryApiClient productInventoryApi;
-    private final ParticipantResolver participantResolver;
-    private final TMFEdcMapper tmfEdcMapper;
-    private final String participantId;
-    private final String controlplane;
+  public static final String CUSTOMER_ROLE = "Customer";
+  private final Monitor monitor;
+  private final ObjectMapper objectMapper;
+  private final QuoteApiClient quoteApi;
+  private final AgreementApiClient agreementApi;
+  private final ProductOrderApiClient productOrderApi;
+  private final ProductCatalogApiClient productCatalogApi;
+  private final ProductInventoryApiClient productInventoryApi;
+  private final ParticipantResolver participantResolver;
+  private final TMFEdcMapper tmfEdcMapper;
+  private final String participantId;
+  private final String controlplane;
 
-    private final CriterionOperatorRegistry criterionOperatorRegistry;
+  private final CriterionOperatorRegistry criterionOperatorRegistry;
 
-    private final String lockId;
-    private final LockManager lockManager;
-    private final LeaseHolder leaseHolder;
+  private final String lockId;
+  private final LockManager lockManager;
+  private final LeaseHolder leaseHolder;
 
-    public TMFBackedContractNegotiationStore(Monitor monitor, ObjectMapper objectMapper, QuoteApiClient quoteApi,
-                                             AgreementApiClient agreementApi, ProductOrderApiClient productOrderApi,
-                                             ProductCatalogApiClient productCatalogApi, ProductInventoryApiClient productInventoryApi,
-                                             ParticipantResolver participantResolver, TMFEdcMapper tmfEdcMapper, String participantId,
-                                             String controlplane, CriterionOperatorRegistry criterionOperatorRegistry, LeaseHolder leaseHolder) {
-        this(monitor, objectMapper,
-                quoteApi, agreementApi,
-                productOrderApi, productCatalogApi,
-                productInventoryApi, participantResolver,
-                tmfEdcMapper, participantId,
-                controlplane, criterionOperatorRegistry,
-                leaseHolder, new AutomaticUnlockingLockManager(new ReentrantReadWriteLock(true), 10500, monitor));
+  public TMFBackedContractNegotiationStore(
+      Monitor monitor,
+      ObjectMapper objectMapper,
+      QuoteApiClient quoteApi,
+      AgreementApiClient agreementApi,
+      ProductOrderApiClient productOrderApi,
+      ProductCatalogApiClient productCatalogApi,
+      ProductInventoryApiClient productInventoryApi,
+      ParticipantResolver participantResolver,
+      TMFEdcMapper tmfEdcMapper,
+      String participantId,
+      String controlplane,
+      CriterionOperatorRegistry criterionOperatorRegistry,
+      LeaseHolder leaseHolder) {
+    this(
+        monitor,
+        objectMapper,
+        quoteApi,
+        agreementApi,
+        productOrderApi,
+        productCatalogApi,
+        productInventoryApi,
+        participantResolver,
+        tmfEdcMapper,
+        participantId,
+        controlplane,
+        criterionOperatorRegistry,
+        leaseHolder,
+        new AutomaticUnlockingLockManager(new ReentrantReadWriteLock(true), 10500, monitor));
+  }
+
+  public TMFBackedContractNegotiationStore(
+      Monitor monitor,
+      ObjectMapper objectMapper,
+      QuoteApiClient quoteApi,
+      AgreementApiClient agreementApi,
+      ProductOrderApiClient productOrderApi,
+      ProductCatalogApiClient productCatalogApi,
+      ProductInventoryApiClient productInventoryApi,
+      ParticipantResolver participantResolver,
+      TMFEdcMapper tmfEdcMapper,
+      String participantId,
+      String controlplane,
+      CriterionOperatorRegistry criterionOperatorRegistry,
+      LeaseHolder leaseHolder,
+      LockManager lockManager) {
+    this.monitor = monitor;
+    this.objectMapper = objectMapper;
+    this.quoteApi = quoteApi;
+    this.agreementApi = agreementApi;
+    this.productOrderApi = productOrderApi;
+    this.productCatalogApi = productCatalogApi;
+    this.productInventoryApi = productInventoryApi;
+    this.participantResolver = participantResolver;
+    this.tmfEdcMapper = tmfEdcMapper;
+    this.participantId = participantId;
+    this.leaseHolder = leaseHolder;
+    this.controlplane = controlplane;
+    this.criterionOperatorRegistry = criterionOperatorRegistry;
+    this.lockId = UUID.randomUUID().toString();
+    this.lockManager = lockManager;
+  }
+
+  @Override
+  public @Nullable ContractAgreement findContractAgreement(String s) {
+    monitor.debug("Find agreement " + s);
+    try {
+
+      return agreementApi
+          .findByContractId(s)
+          // only "AGREED" agreements can be considered as agreement in the terms of DSP
+          .filter(agreement -> agreement.getStatus() != null)
+          .filter(agreement -> agreement.getStatus().equals(AgreementState.AGREED.getValue()))
+          .map(tmfEdcMapper::toContractAgreement)
+          .orElse(null);
+    } catch (RuntimeException e) {
+      monitor.warning(String.format("Was not able to map agreement %s.", s), e);
+      return null;
     }
+  }
 
-    public TMFBackedContractNegotiationStore(Monitor monitor, ObjectMapper objectMapper, QuoteApiClient quoteApi,
-                                             AgreementApiClient agreementApi, ProductOrderApiClient productOrderApi,
-                                             ProductCatalogApiClient productCatalogApi, ProductInventoryApiClient productInventoryApi,
-                                             ParticipantResolver participantResolver, TMFEdcMapper tmfEdcMapper, String participantId,
-                                             String controlplane, CriterionOperatorRegistry criterionOperatorRegistry, LeaseHolder leaseHolder, LockManager lockManager) {
-        this.monitor = monitor;
-        this.objectMapper = objectMapper;
-        this.quoteApi = quoteApi;
-        this.agreementApi = agreementApi;
-        this.productOrderApi = productOrderApi;
-        this.productCatalogApi = productCatalogApi;
-        this.productInventoryApi = productInventoryApi;
-        this.participantResolver = participantResolver;
-        this.tmfEdcMapper = tmfEdcMapper;
-        this.participantId = participantId;
-        this.leaseHolder = leaseHolder;
-        this.controlplane = controlplane;
-        this.criterionOperatorRegistry = criterionOperatorRegistry;
-        this.lockId = UUID.randomUUID().toString();
-        this.lockManager = lockManager;
-    }
+  @Override
+  public StoreResult<Void> deleteById(String s) {
+    throw new UnsupportedOperationException("Deletion is currently not supported.");
+  }
 
-    @Override
-    public @Nullable ContractAgreement findContractAgreement(String s) {
-        monitor.debug("Find agreement " + s);
-        try {
+  @Override
+  public @NotNull Stream<ContractNegotiation> queryNegotiations(QuerySpec querySpec) {
 
-            return agreementApi.findByContractId(s)
-                    // only "AGREED" agreements can be considered as agreement in the terms of DSP
-                    .filter(agreement -> agreement.getStatus() != null)
-                    .filter(agreement -> agreement.getStatus().equals(AgreementState.AGREED.getValue()))
-                    .map(tmfEdcMapper::toContractAgreement)
-                    .orElse(null);
-        } catch (RuntimeException e) {
-            monitor.warning(String.format("Was not able to map agreement %s.", s), e);
-            return null;
-        }
-    }
+    List<ContractNegotiation> negotiations = getNegotiations(querySpec.getFilterExpression());
 
-    @Override
-    public StoreResult<Void> deleteById(String s) {
-        throw new UnsupportedOperationException("Deletion is currently not supported.");
-    }
+    int fromIndex = Math.min(querySpec.getOffset(), negotiations.size());
+    int toIndex = Math.min(querySpec.getOffset() + querySpec.getLimit(), negotiations.size());
+    return negotiations.subList(fromIndex, toIndex).stream();
+  }
 
-    @Override
-    public @NotNull Stream<ContractNegotiation> queryNegotiations(QuerySpec querySpec) {
+  @Override
+  public @NotNull Stream<ContractAgreement> queryAgreements(QuerySpec querySpec) {
+    monitor.debug("Query agreements " + querySpec.toString());
+    return getFilteredStream(querySpec.getFilterExpression())
+        .sorted((a1, a2) -> Comparator.<String>naturalOrder().compare(a1.getId(), a2.getId()))
+        .skip(querySpec.getOffset())
+        .limit(querySpec.getLimit());
+  }
 
-        List<ContractNegotiation> negotiations = getNegotiations(querySpec.getFilterExpression());
+  private Stream<ContractAgreement> getFilteredStream(List<Criterion> criteria) {
+    monitor.debug("getFilteredStream");
+    Predicate<ContractAgreement> filterPredicate =
+        criteria.stream()
+            .map(criterionOperatorRegistry::<ContractAgreement>toPredicate)
+            .reduce(x -> true, Predicate::and);
 
-        int fromIndex = Math.min(querySpec.getOffset(), negotiations.size());
-        int toIndex = Math.min(querySpec.getOffset() + querySpec.getLimit(), negotiations.size());
-        return negotiations.subList(fromIndex, toIndex).stream();
-    }
-
-    @Override
-    public @NotNull Stream<ContractAgreement> queryAgreements(QuerySpec querySpec) {
-        monitor.debug("Query agreements " + querySpec.toString());
-        return getFilteredStream(querySpec.getFilterExpression())
-                .sorted((a1, a2) -> Comparator.<String>naturalOrder().compare(a1.getId(), a2.getId()))
-                .skip(querySpec.getOffset())
-                .limit(querySpec.getLimit());
-    }
-
-    private Stream<ContractAgreement> getFilteredStream(List<Criterion> criteria) {
-        monitor.debug("getFilteredStream");
-        Predicate<ContractAgreement> filterPredicate = criteria.stream()
-                .map(criterionOperatorRegistry::<ContractAgreement>toPredicate)
-                .reduce(x -> true, Predicate::and);
-
-        List<ContractAgreement> contractAgreements = new ArrayList<>();
-        int offset = 0;
-        boolean moreOfferingsAvailable = true;
-        while (moreOfferingsAvailable) {
-            List<ExtendableAgreementVO> agreements = agreementApi.getAgreements(offset, 100);
-            agreements
-                    .stream()
-                    // only "AGREED" agreements can be considered as agreement in the terms of DSP
-                    .filter(agreement -> agreement.getStatus() != null)
-                    .filter(agreement -> agreement.getStatus().equals(AgreementState.AGREED.getValue()))
-                    .map(agreement -> {
-                        try {
-                            return tmfEdcMapper.toContractAgreement(agreement);
-                        } catch (RuntimeException e) {
-                            monitor.warning("Was not able to map agreement.", e);
-                            return null;
-                        }
-                    })
-                    .filter(Objects::nonNull)
-                    .filter(filterPredicate)
-                    .forEach(contractAgreements::add);
-
-            moreOfferingsAvailable = agreements.size() == 100;
-            offset += 100;
-        }
-        return contractAgreements.stream();
-    }
-
-    @Override
-    public @Nullable ContractNegotiation findById(String s) {
-        List<ExtendableQuoteVO> contractNegotiations = quoteApi.findByNegotiationId(s)
-                .stream()
-                // only those that this controlplane is responsible for
-                .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
-                .toList();
-        if (contractNegotiations == null || contractNegotiations.isEmpty()) {
-            return null;
-        }
-        return tmfEdcMapper.toContractNegotiation(new ArrayList<>(contractNegotiations), agreementApi, participantResolver, participantId);
-    }
-
-    private List<ContractNegotiation> getNegotiations(List<Criterion> criteria) {
-        Predicate<ContractNegotiation> filterPredicate = criteria.stream()
-                .map(criterionOperatorRegistry::<ContractNegotiation>toPredicate)
-                .reduce(x -> true, Predicate::and);
-        // we want no duplicates
-        Map<String, List<ExtendableQuoteVO>> negotiations = new HashMap<>();
-        int offset = 0;
-        boolean moreQuotesAvailable = true;
-        int limit = 100;
-        // a negotiation might consist of multiple quotes, thus first fetch the ids and then reduce
-        // the multi calls need to be improved, current solution is bad performance
-        while (moreQuotesAvailable) {
-            List<ExtendableQuoteVO> extendableQuoteVOS = quoteApi.getQuotes(offset, limit);
-            extendableQuoteVOS
-                    .stream()
-                    .filter(eqv -> eqv.getContractNegotiationState() != null)
-                    // only those that this controlplane is responsible for
-                    .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
-                    .forEach(eqv -> {
-                        if (negotiations.containsKey(eqv.getExternalId())) {
-                            negotiations.get(eqv.getExternalId()).add(eqv);
-                        } else {
-                            negotiations.put(eqv.getExternalId(), new ArrayList<>(List.of(eqv)));
-                        }
-                    });
-            moreQuotesAvailable = extendableQuoteVOS.size() == limit;
-            offset += limit;
-        }
-        return negotiations
-                .entrySet()
-                .stream()
-                .map(entry -> {
-                    try {
-                        return tmfEdcMapper.toContractNegotiation(entry.getValue(), agreementApi, participantResolver, participantId);
-                    } catch (RuntimeException e) {
-                        monitor.warning(String.format("Was not able to read negotiation %s from quotes.", entry.getKey()), e);
-                        return null;
-                    }
-                })
-                .filter(Objects::nonNull)
-                .filter(filterPredicate)
-                .sorted(comparingLong(StatefulEntity::getStateTimestamp))
-                .toList();
-    }
-
-    @Override
-    public @NotNull List<ContractNegotiation> nextNotLeased(int max, Criterion... criteria) {
-        try {
-            return lockManager.writeLock(() -> getNegotiations(Arrays.asList(criteria))
-                    .stream()
-                    .filter(e -> !leaseHolder.isLeased(e.getId()))
-                    .filter(cn -> {
-                        try {
-                            leaseHolder.acquireLease(cn.getId(), lockId);
-                            return true;
-                        } catch (Exception e) {
-                            monitor.info(String.format("Was not able to lease %s", cn.getId()), e);
-                            return false;
-                        }
-                    })
-                    .limit(max)
-                    .toList());
-        } catch (Exception e) {
-            monitor.warning("Failed to get", e);
-            throw new EdcPersistenceException(e);
-        }
-    }
-
-    @Override
-    public StoreResult<ContractNegotiation> findByIdAndLease(String s) {
-        try {
-            return lockManager.writeLock(() -> {
-                monitor.info("Find by Id and Lease " + s);
-                ContractNegotiation contractNegotiation = findById(s);
-                if (contractNegotiation == null) {
-                    return StoreResult.notFound(String.format("Negotiation %s does not exist.", s));
-                }
+    List<ContractAgreement> contractAgreements = new ArrayList<>();
+    int offset = 0;
+    boolean moreOfferingsAvailable = true;
+    while (moreOfferingsAvailable) {
+      List<ExtendableAgreementVO> agreements = agreementApi.getAgreements(offset, 100);
+      agreements.stream()
+          // only "AGREED" agreements can be considered as agreement in the terms of DSP
+          .filter(agreement -> agreement.getStatus() != null)
+          .filter(agreement -> agreement.getStatus().equals(AgreementState.AGREED.getValue()))
+          .map(
+              agreement -> {
                 try {
-                    leaseHolder.acquireLease(s, lockId);
-                    return StoreResult.success(contractNegotiation);
-                } catch (IllegalStateException e) {
-                    return StoreResult.alreadyLeased(String.format("%s is already leased.", s));
+                  return tmfEdcMapper.toContractAgreement(agreement);
+                } catch (RuntimeException e) {
+                  monitor.warning("Was not able to map agreement.", e);
+                  return null;
                 }
+              })
+          .filter(Objects::nonNull)
+          .filter(filterPredicate)
+          .forEach(contractAgreements::add);
+
+      moreOfferingsAvailable = agreements.size() == 100;
+      offset += 100;
+    }
+    return contractAgreements.stream();
+  }
+
+  @Override
+  public @Nullable ContractNegotiation findById(String s) {
+    List<ExtendableQuoteVO> contractNegotiations =
+        quoteApi.findByNegotiationId(s).stream()
+            // only those that this controlplane is responsible for
+            .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
+            .toList();
+    if (contractNegotiations == null || contractNegotiations.isEmpty()) {
+      return null;
+    }
+    return tmfEdcMapper.toContractNegotiation(
+        new ArrayList<>(contractNegotiations), agreementApi, participantResolver, participantId);
+  }
+
+  private List<ContractNegotiation> getNegotiations(List<Criterion> criteria) {
+    Predicate<ContractNegotiation> filterPredicate =
+        criteria.stream()
+            .map(criterionOperatorRegistry::<ContractNegotiation>toPredicate)
+            .reduce(x -> true, Predicate::and);
+    // we want no duplicates
+    Map<String, List<ExtendableQuoteVO>> negotiations = new HashMap<>();
+    int offset = 0;
+    boolean moreQuotesAvailable = true;
+    int limit = 100;
+    // a negotiation might consist of multiple quotes, thus first fetch the ids and then reduce
+    // the multi calls need to be improved, current solution is bad performance
+    while (moreQuotesAvailable) {
+      List<ExtendableQuoteVO> extendableQuoteVOS = quoteApi.getQuotes(offset, limit);
+      extendableQuoteVOS.stream()
+          .filter(eqv -> eqv.getContractNegotiationState() != null)
+          // only those that this controlplane is responsible for
+          .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
+          .forEach(
+              eqv -> {
+                if (negotiations.containsKey(eqv.getExternalId())) {
+                  negotiations.get(eqv.getExternalId()).add(eqv);
+                } else {
+                  negotiations.put(eqv.getExternalId(), new ArrayList<>(List.of(eqv)));
+                }
+              });
+      moreQuotesAvailable = extendableQuoteVOS.size() == limit;
+      offset += limit;
+    }
+    return negotiations.entrySet().stream()
+        .map(
+            entry -> {
+              try {
+                return tmfEdcMapper.toContractNegotiation(
+                    entry.getValue(), agreementApi, participantResolver, participantId);
+              } catch (RuntimeException e) {
+                monitor.warning(
+                    String.format(
+                        "Was not able to read negotiation %s from quotes.", entry.getKey()),
+                    e);
+                return null;
+              }
+            })
+        .filter(Objects::nonNull)
+        .filter(filterPredicate)
+        .sorted(comparingLong(StatefulEntity::getStateTimestamp))
+        .toList();
+  }
+
+  @Override
+  public @NotNull List<ContractNegotiation> nextNotLeased(int max, Criterion... criteria) {
+    try {
+      return lockManager.writeLock(
+          () ->
+              getNegotiations(Arrays.asList(criteria)).stream()
+                  .filter(e -> !leaseHolder.isLeased(e.getId()))
+                  .filter(
+                      cn -> {
+                        try {
+                          leaseHolder.acquireLease(cn.getId(), lockId);
+                          return true;
+                        } catch (Exception e) {
+                          monitor.info(String.format("Was not able to lease %s", cn.getId()), e);
+                          return false;
+                        }
+                      })
+                  .limit(max)
+                  .toList());
+    } catch (Exception e) {
+      monitor.warning("Failed to get", e);
+      throw new EdcPersistenceException(e);
+    }
+  }
+
+  @Override
+  public StoreResult<ContractNegotiation> findByIdAndLease(String s) {
+    try {
+      return lockManager.writeLock(
+          () -> {
+            monitor.info("Find by Id and Lease " + s);
+            ContractNegotiation contractNegotiation = findById(s);
+            if (contractNegotiation == null) {
+              return StoreResult.notFound(String.format("Negotiation %s does not exist.", s));
+            }
+            try {
+              leaseHolder.acquireLease(s, lockId);
+              return StoreResult.success(contractNegotiation);
+            } catch (IllegalStateException e) {
+              return StoreResult.alreadyLeased(String.format("%s is already leased.", s));
+            }
+          });
+    } catch (Exception e) {
+      monitor.warning("Failed to find", e);
+      return StoreResult.generalError(e.getMessage());
+    }
+  }
+
+  @Override
+  public void save(ContractNegotiation contractNegotiation) {
+    try {
+      leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
+      ContractNegotiationStates negotiationState =
+          ContractNegotiationStates.from(contractNegotiation.getState());
+      switch (negotiationState) {
+        case INITIAL, REQUESTING -> handleInitialStates(contractNegotiation);
+        case REQUESTED -> handleRequestedState(contractNegotiation);
+        case OFFERING, OFFERED -> handleOfferStates(contractNegotiation);
+        case ACCEPTED, ACCEPTING -> handleAcceptStates(contractNegotiation);
+        case AGREEING, AGREED -> handleAgreeStates(contractNegotiation, negotiationState);
+        case VERIFIED, VERIFYING -> handleVerificationStates(contractNegotiation);
+        case FINALIZING, FINALIZED -> handleFinalStates(contractNegotiation);
+        case TERMINATED, TERMINATING -> handleTerminationStates(contractNegotiation);
+        default -> monitor.warning(String.format("State not supported: %s", negotiationState));
+      }
+    } catch (Exception e) {
+      monitor.warning(
+          String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
+      throw new EdcPersistenceException(
+          String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
+    } finally {
+      // always give up the lock
+      leaseHolder.freeLease(contractNegotiation.getId(), "Finally saved.");
+    }
+  }
+
+  private void handleTerminationStates(ContractNegotiation contractNegotiation) {
+    quoteApi.findByNegotiationId(contractNegotiation.getId()).stream()
+        .filter(eq -> eq.getState() != QuoteStateTypeVO.CANCELLED)
+        .forEach(
+            cn -> {
+              updateQuote(cn, contractNegotiation, QuoteStateTypeVO.CANCELLED);
+              cancelProductOrder(cn);
             });
-        } catch (Exception e) {
-            monitor.warning("Failed to find", e);
-            return StoreResult.generalError(e.getMessage());
-        }
+    cancelAgreements(contractNegotiation.getId());
+  }
+
+  private void handleFinalStates(ContractNegotiation contractNegotiation) {
+    Optional<ExtendableQuoteVO> extendableQuoteVO =
+        getActiveQuote(
+            getQuotes(contractNegotiation),
+            contractNegotiation,
+            List.of(
+                ContractNegotiationStates.VERIFIED,
+                ContractNegotiationStates.FINALIZING,
+                ContractNegotiationStates.FINALIZED));
+
+    if (extendableQuoteVO.isEmpty()) {
+      throw new IllegalArgumentException("In state verified, an accepted Quote needs to exist.");
+    }
+    finalizeOrder(contractNegotiation, extendableQuoteVO.get());
+  }
+
+  private void handleVerificationStates(ContractNegotiation contractNegotiation) {
+    Optional<ExtendableQuoteVO> extendableQuoteVO =
+        getActiveQuote(
+            getQuotes(contractNegotiation),
+            contractNegotiation,
+            List.of(
+                ContractNegotiationStates.AGREED,
+                ContractNegotiationStates.VERIFYING,
+                ContractNegotiationStates.VERIFIED));
+
+    if (extendableQuoteVO.isEmpty()) {
+      throw new IllegalArgumentException("In state verified, an accepted Quote needs to exist.");
     }
 
-    @Override
-    public void save(ContractNegotiation contractNegotiation) {
-        try {
-            leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
-            ContractNegotiationStates negotiationState = ContractNegotiationStates.from(contractNegotiation.getState());
-            switch (negotiationState) {
-                case INITIAL, REQUESTING -> handleInitialStates(contractNegotiation);
-                case REQUESTED -> handleRequestedState(contractNegotiation);
-                case OFFERING, OFFERED -> handleOfferStates(contractNegotiation);
-                case ACCEPTED, ACCEPTING -> handleAcceptStates(contractNegotiation);
-                case AGREEING, AGREED -> handleAgreeStates(contractNegotiation, negotiationState);
-                case VERIFIED, VERIFYING -> handleVerificationStates(contractNegotiation);
-                case FINALIZING, FINALIZED -> handleFinalStates(contractNegotiation);
-                case TERMINATED, TERMINATING -> handleTerminationStates(contractNegotiation);
-                default -> monitor.warning(String.format("State not supported: %s", negotiationState));
-            }
-        } catch (Exception e) {
-            monitor.warning(String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
-            throw new EdcPersistenceException(String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
-        } finally {
-            // always give up the lock
-            leaseHolder.freeLease(contractNegotiation.getId(), "Finally saved.");
-        }
+    ExtendableQuoteVO quoteVO = extendableQuoteVO.get();
+    if (getProductOrder(quoteVO.getId()).isPresent()) {
+      monitor.info("The order is already created.");
+      // update the quote anyway to reflect the current state.
+      updateQuote(quoteVO, contractNegotiation, quoteVO.getState());
+      return;
     }
 
-    private void handleTerminationStates(ContractNegotiation contractNegotiation) {
-        quoteApi.findByNegotiationId(contractNegotiation.getId())
-                .stream()
-                .filter(eq -> eq.getState() != QuoteStateTypeVO.CANCELLED)
-                .forEach(cn -> {
-                    updateQuote(cn, contractNegotiation, QuoteStateTypeVO.CANCELLED);
-                    cancelProductOrder(cn);
-                });
-        cancelAgreements(contractNegotiation.getId());
+    ProductOrderCreateVO productOrderCreateVO = new ProductOrderCreateVO();
+    getFromNegotiation(contractNegotiation).stream()
+        .map(
+            p ->
+                new org.seamware.tmforum.productorder.model.RelatedPartyVO()
+                    .id(p.partyId())
+                    .role(p.role()))
+        .forEach(
+            pr -> {
+              if (pr.getRole() != null && pr.getRole().equals(CONSUMER_ROLE)) {
+                productOrderCreateVO.addRelatedPartyItem(pr);
+                // Customer is the role expected by the Contract-Management
+                productOrderCreateVO.addRelatedPartyItem(
+                    new org.seamware.tmforum.productorder.model.RelatedPartyVO()
+                        .id(pr.getId())
+                        .role(CUSTOMER_ROLE));
+              } else {
+                productOrderCreateVO.addRelatedPartyItem(pr);
+              }
+            });
+    productOrderCreateVO.quote(List.of(new QuoteRefVO().id(quoteVO.getId())));
+
+    productOrderApi.createProductOrder(productOrderCreateVO);
+    updateQuote(quoteVO, contractNegotiation, quoteVO.getState());
+  }
+
+  private void handleAgreeStates(
+      ContractNegotiation contractNegotiation, ContractNegotiationStates negotiationState) {
+    Optional<ExtendableQuoteVO> activeQuote =
+        getActiveQuote(
+            getQuotes(contractNegotiation),
+            contractNegotiation,
+            List.of(
+                ContractNegotiationStates.AGREEING,
+                ContractNegotiationStates.AGREED,
+                ContractNegotiationStates.ACCEPTED,
+                ContractNegotiationStates.REQUESTED));
+    if (activeQuote.isEmpty()) {
+      monitor.warning(
+          String.format(
+              "Cannot save transition to %s for %s.",
+              negotiationState.name(), contractNegotiation.getId()));
+      throw new IllegalArgumentException("In state agreed, an active Quote needs to exist.");
+    } else {
+      updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+      if (contractNegotiation.getContractAgreement() != null) {
+        createAgreement(contractNegotiation);
+      }
+    }
+  }
+
+  private void handleAcceptStates(ContractNegotiation contractNegotiation)
+      throws JsonProcessingException {
+    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
+    Optional<ExtendableQuoteVO> activeQuote =
+        getActiveQuote(
+            quotes,
+            contractNegotiation,
+            List.of(
+                ContractNegotiationStates.OFFERED,
+                ContractNegotiationStates.ACCEPTING,
+                ContractNegotiationStates.ACCEPTED));
+    Optional<ExtendableQuoteVO> terminatingQuote =
+        quotes.stream()
+            .filter(
+                q ->
+                    TMFEdcMapper.getContractNegotiationState(q)
+                        == ContractNegotiationStates.TERMINATING)
+            .findAny();
+    if (activeQuote.isEmpty() && terminatingQuote.isEmpty()) {
+      monitor.debug(
+          "Create quote in accepted - existing quotes " + objectMapper.writeValueAsString(quotes));
+      // if the first offer is directly accepted, no quote might exist
+      ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+      // we need to create and update, since state changes are only able by patch
+      updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+    } else if (activeQuote.isPresent()) {
+      updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+    } else {
+      // negotiation is currently in terminating, don't do anything.
+    }
+  }
+
+  private void handleOfferStates(ContractNegotiation contractNegotiation) {
+    Optional<ExtendableQuoteVO> activeQuote =
+        getActiveQuote(
+            getQuotes(contractNegotiation),
+            contractNegotiation,
+            List.of(
+                ContractNegotiationStates.REQUESTED,
+                ContractNegotiationStates.INITIAL,
+                ContractNegotiationStates.OFFERING,
+                ContractNegotiationStates.OFFERED));
+    if (activeQuote.isEmpty()) {
+      monitor.info("Create quote in offered");
+      ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.APPROVED);
+      // we need to create and update, since state changes are only able by patch
+      updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
+    } else {
+      updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
+    }
+  }
+
+  private void handleRequestedState(ContractNegotiation contractNegotiation)
+      throws JsonProcessingException {
+    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
+    // TODO: check why requested was part of the active states
+    Optional<ExtendableQuoteVO> activeQuote =
+        getActiveQuote(
+            quotes,
+            contractNegotiation,
+            List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.REQUESTING));
+    if (activeQuote.isEmpty()) {
+      monitor.debug(
+          "Create quote in requested - existing quotes " + objectMapper.writeValueAsString(quotes));
+      // in case of counter-offers, we will have a quote in approved or accepted and need to cancel
+      // them
+      getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERED))
+          .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
+      ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
+      // we need to create and update, since state changes are only able by patch
+      updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
+    } else {
+      updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
+    }
+  }
+
+  private void handleInitialStates(ContractNegotiation contractNegotiation) {
+    List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
+    Optional<ExtendableQuoteVO> activeQuote =
+        getActiveQuote(
+            quotes,
+            contractNegotiation,
+            List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.REQUESTING));
+    if (activeQuote.isEmpty()) {
+      // in case of counter-offers, we will have a quote in approved or accepted and need to cancel
+      // them
+      getActiveQuote(
+              quotes,
+              contractNegotiation,
+              List.of(ContractNegotiationStates.OFFERING, ContractNegotiationStates.OFFERED))
+          .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
+      // create the new quote
+      createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
+    } else {
+      updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
+    }
+  }
+
+  private void finalizeOrder(
+      ContractNegotiation contractNegotiation, ExtendableQuoteVO finalQuote) {
+
+    Optional<ProductOrderVO> orderVO = getProductOrder(finalQuote.getId());
+    if (orderVO.isEmpty()) {
+      throw new IllegalArgumentException("When finalizing, an order should already exist.");
     }
 
-    private void handleFinalStates(ContractNegotiation contractNegotiation) {
-        Optional<ExtendableQuoteVO> extendableQuoteVO = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.VERIFIED, ContractNegotiationStates.FINALIZING, ContractNegotiationStates.FINALIZED));
+    updateQuote(finalQuote, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
+    ProductOrderUpdateVO productOrderUpdateVO = tmfEdcMapper.toUpdate(orderVO.get());
+    productOrderUpdateVO.setState(ProductOrderStateTypeVO.COMPLETED);
 
-        if (extendableQuoteVO.isEmpty()) {
-            throw new IllegalArgumentException("In state verified, an accepted Quote needs to exist.");
-        }
-        finalizeOrder(contractNegotiation, extendableQuoteVO.get());
+    ExtendableProductCreate productCreateVO = new ExtendableProductCreate();
+    String providerId =
+        participantResolver.getTmfId(contractNegotiation.getContractAgreement().getProviderId());
+    String consumerId =
+        participantResolver.getTmfId(contractNegotiation.getContractAgreement().getConsumerId());
+    productCreateVO
+        // an asset can be materialized to a product multiple times, thus the agreement id needs to
+        // be included
+        .setExternalId(
+            String.format(
+                "%s-%S",
+                contractNegotiation.getContractAgreement().getId(),
+                contractNegotiation.getContractAgreement().getAssetId()))
+        .status(ProductStatusTypeVO.ACTIVE)
+        .addRelatedPartyItem(
+            new org.seamware.tmforum.productinventory.model.RelatedPartyVO()
+                .id(providerId)
+                .role(PROVIDER_ROLE))
+        .addRelatedPartyItem(
+            new org.seamware.tmforum.productinventory.model.RelatedPartyVO()
+                .id(consumerId)
+                .role(CONSUMER_ROLE));
+    // product will be the reference for the agreement, the asset can only be linked in the provider
+    // side
+    if (contractNegotiation.getType() == ContractNegotiation.Type.PROVIDER) {
+      String productOfferingId =
+          Optional.ofNullable(finalQuote.getExtendableQuoteItem().getLast().getProductOffering())
+              .map(org.seamware.tmforum.quote.model.ProductOfferingRefVO::getId)
+              .orElseThrow(
+                  () ->
+                      new IllegalArgumentException(
+                          "On the provider side, the quote should have a reference to a product offering."));
+      productCreateVO.productOffering(new ProductOfferingRefVO().id(productOfferingId));
+    }
+    ProductVO product = productInventoryApi.createProduct(productCreateVO);
+
+    ExtendableAgreementVO extendableAgreementVO =
+        agreementApi
+            .findByContractId(contractNegotiation.getContractAgreement().getId())
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "An agreement needs to be present at that stage."));
+    extendableAgreementVO.setStatus(AgreementState.AGREED.getValue());
+    AgreementItemVO agreementItemVO =
+        new AgreementItemVO().addProductItem(new ProductRefVO().id(product.getId()));
+    // throw away the old ref, irrelevant by now
+    extendableAgreementVO.agreementItem(List.of(agreementItemVO));
+
+    agreementApi.updateAgreement(
+        extendableAgreementVO.getId(), tmfEdcMapper.toUpdate(extendableAgreementVO));
+    productOrderApi.updateProductOrder(orderVO.get().getId(), productOrderUpdateVO);
+  }
+
+  private void cancelAgreements(String negotiationId) {
+    agreementApi
+        .findByNegotiationId(negotiationId)
+        .ifPresent(
+            ea -> {
+              ea.setStatus(AgreementState.REJECTED.getValue());
+              agreementApi.updateAgreement(ea.getId(), tmfEdcMapper.toUpdate(ea));
+            });
+  }
+
+  private void cancelProductOrder(QuoteVO quoteVO) {
+    productOrderApi.findByQuoteId(quoteVO.getId()).stream()
+        .filter(po -> po.getState() != ProductOrderStateTypeVO.CANCELLED)
+        .forEach(
+            po -> {
+              ProductOrderUpdateVO poUpdate = tmfEdcMapper.toUpdate(po);
+              poUpdate.setState(ProductOrderStateTypeVO.CANCELLED);
+              productOrderApi.updateProductOrder(po.getId(), poUpdate);
+            });
+  }
+
+  private Optional<ProductOrderVO> getProductOrder(String quoteId) {
+    List<ProductOrderVO> productOrderVOS = productOrderApi.findByQuoteId(quoteId);
+    if (productOrderVOS.isEmpty()) {
+      return Optional.empty();
+    }
+    if (productOrderVOS.size() > 1) {
+      throw new IllegalArgumentException("There should only be one order per quote.");
+    }
+    return Optional.ofNullable(productOrderVOS.getFirst());
+  }
+
+  private List<ExtendableQuoteVO> getQuotes(ContractNegotiation contractNegotiation) {
+    return quoteApi.findByNegotiationId(contractNegotiation.getId());
+  }
+
+  private Optional<ExtendableQuoteVO> getActiveQuote(
+      List<ExtendableQuoteVO> quotes,
+      ContractNegotiation contractNegotiation,
+      List<ContractNegotiationStates> possibleStates) {
+    monitor.debug(
+        "Find active quotes for "
+            + contractNegotiation.getId()
+            + " and states "
+            + possibleStates.stream()
+                .map(ContractNegotiationStates::name)
+                .collect(Collectors.joining(",")));
+    List<ExtendableQuoteVO> activeQuoteVOS =
+        quotes.stream()
+            .filter(
+                quoteVO ->
+                    possibleStates.contains(TMFEdcMapper.getContractNegotiationState(quoteVO)))
+            .toList();
+    if (activeQuoteVOS.size() > 1) {
+      monitor.warning(
+          "Multiple active quotes: "
+              + activeQuoteVOS.stream()
+                  .map(ExtendableQuoteVO::getId)
+                  .collect(Collectors.joining(", ")));
+      throw new IllegalArgumentException(
+          "There cannot be more than one active quote per negotiation. Negotiation id was "
+              + contractNegotiation.getId());
+    }
+    if (activeQuoteVOS.isEmpty()) {
+      return Optional.empty();
+    }
+    return Optional.ofNullable(activeQuoteVOS.getFirst());
+  }
+
+  private void terminateQuote(
+      ExtendableQuoteVO orginialQuote,
+      ContractNegotiation contractNegotiation,
+      QuoteStateTypeVO quoteState) {
+    monitor.warning(
+        "Terminate existing quote for negotiation "
+            + contractNegotiation.getId()
+            + " - state "
+            + ContractNegotiationStates.from(contractNegotiation.getState()).name());
+    boolean isConsumer = contractNegotiation.getType() == ContractNegotiation.Type.CONSUMER;
+
+    ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(orginialQuote);
+    quoteUpdateVO.setState(quoteState);
+
+    ContractNegotiationState contractNegotiationState =
+        new ContractNegotiationState()
+            .setControlplane(controlplane)
+            .setPending(contractNegotiation.isPending())
+            .setState(ContractNegotiationStates.TERMINATED.name())
+            .setCorrelationId(contractNegotiation.getCorrelationId())
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+
+    quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
+    quoteUpdateVO.setExtendableQuoteItem(
+        offersToQuoteItems(
+            contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
+
+    quoteApi.updateQuote(orginialQuote.getId(), quoteUpdateVO);
+  }
+
+  private void createAgreement(ContractNegotiation contractNegotiation) {
+    ExtendableAgreementVO agreementVO =
+        tmfEdcMapper.toAgreement(
+            contractNegotiation.getId(), contractNegotiation.getContractAgreement());
+    // refer to the offering, as long as no product exists
+    agreementVO.addAgreementItemItem(
+        new AgreementItemVO()
+            .addTermOrConditionItem(
+                new AgreementTermOrConditionVO().description("Under negotiation")));
+    agreementVO.setStatus(AgreementState.IN_PROCESS.getValue());
+    agreementApi.createAgreement(tmfEdcMapper.toCreate(agreementVO));
+  }
+
+  private void updateQuote(
+      ExtendableQuoteVO originalQuote,
+      ContractNegotiation contractNegotiation,
+      QuoteStateTypeVO quoteState) {
+    monitor.warning(
+        "Update existing quote for negotiation "
+            + contractNegotiation.getId()
+            + " - state "
+            + ContractNegotiationStates.from(contractNegotiation.getState()).name());
+    boolean isConsumer = contractNegotiation.getType() == ContractNegotiation.Type.CONSUMER;
+
+    ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(originalQuote);
+    quoteUpdateVO.setState(quoteState);
+    ContractNegotiationState contractNegotiationState =
+        new ContractNegotiationState()
+            .setControlplane(controlplane)
+            .setPending(contractNegotiation.isPending())
+            .setState(contractNegotiation.stateAsString())
+            .setCorrelationId(contractNegotiation.getCorrelationId())
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+
+    quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
+    quoteUpdateVO.setExtendableQuoteItem(
+        offersToQuoteItems(
+            contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
+
+    quoteApi.updateQuote(originalQuote.getId(), quoteUpdateVO);
+  }
+
+  private List<ExtendableQuoteItemVO> offersToQuoteItems(
+      List<ContractOffer> offers, String negotiationState, boolean isConsumer) {
+    monitor.info(String.format("Got %s offers. Is a consumer: %s", offers.size(), isConsumer));
+    if (offers.isEmpty()) {
+      return List.of();
+    }
+    List<ExtendableQuoteItemVO> quoteItemVOS = new ArrayList<>();
+
+    // copy the list to not manipulate the original one
+    List<ContractOffer> workingOffers = new ArrayList<>(offers);
+
+    // get active offer -> will be the last in the list, all previous are already outdated
+    ContractOffer lastOffer = workingOffers.removeLast();
+
+    if (isConsumer) {
+      quoteItemVOS.add(tmfEdcMapper.fromConsumerContractOffer(lastOffer, negotiationState));
+      workingOffers.stream()
+          .map(
+              co ->
+                  tmfEdcMapper.fromConsumerContractOffer(co, QuoteStateTypeVO.REJECTED.getValue()))
+          .forEach(quoteItemVOS::add);
+    } else {
+      Optional<String> tmfOfferId = getTmfOfferId(lastOffer);
+      monitor.info("Offer id is " + tmfOfferId.orElse("empty"));
+      quoteItemVOS.add(
+          tmfEdcMapper.fromProviderContractOffer(lastOffer, negotiationState, tmfOfferId));
+      workingOffers.stream()
+          .map(
+              co ->
+                  tmfEdcMapper.fromProviderContractOffer(
+                      co, QuoteStateTypeVO.REJECTED.getValue(), getTmfOfferId(co)))
+          .forEach(quoteItemVOS::add);
     }
 
-    private void handleVerificationStates(ContractNegotiation contractNegotiation) {
-        Optional<ExtendableQuoteVO> extendableQuoteVO = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation,
-                List.of(ContractNegotiationStates.AGREED, ContractNegotiationStates.VERIFYING, ContractNegotiationStates.VERIFIED));
+    return quoteItemVOS;
+  }
 
-        if (extendableQuoteVO.isEmpty()) {
-            throw new IllegalArgumentException("In state verified, an accepted Quote needs to exist.");
-        }
+  private Optional<String> getTmfOfferId(ContractOffer contractOffer) {
 
-        ExtendableQuoteVO quoteVO = extendableQuoteVO.get();
-        if (getProductOrder(quoteVO.getId()).isPresent()) {
-            monitor.info("The order is already created.");
-            // update the quote anyway to reflect the current state.
-            updateQuote(quoteVO, contractNegotiation, quoteVO.getState());
-            return;
-        }
+    return ContractOfferId.parseId(contractOffer.getId())
+        .asOptional()
+        .map(ContractOfferId::definitionPart)
+        .flatMap(productCatalogApi::getProductOfferingByExternalId)
+        .map(ExtendableProductOffering::getId);
+  }
 
-        ProductOrderCreateVO productOrderCreateVO = new ProductOrderCreateVO();
-        getFromNegotiation(contractNegotiation)
-                .stream()
-                .map(p -> new org.seamware.tmforum.productorder.model.RelatedPartyVO().id(p.partyId()).role(p.role()))
-                .forEach(pr -> {
-                    if (pr.getRole() != null && pr.getRole().equals(CONSUMER_ROLE)) {
-                        productOrderCreateVO.addRelatedPartyItem(pr);
-                        // Customer is the role expected by the Contract-Management
-                        productOrderCreateVO.addRelatedPartyItem(new org.seamware.tmforum.productorder.model.RelatedPartyVO().id(pr.getId()).role(CUSTOMER_ROLE));
-                    } else {
-                        productOrderCreateVO.addRelatedPartyItem(pr);
-                    }
-                });
-        productOrderCreateVO.quote(
-                List.of(new QuoteRefVO()
-                        .id(quoteVO.getId())));
+  private ExtendableQuoteVO createQuote(
+      ContractNegotiation contractNegotiation, QuoteStateTypeVO quoteState) {
+    monitor.debug("Create a quote for negotiation");
 
-        productOrderApi.createProductOrder(productOrderCreateVO);
-        updateQuote(quoteVO, contractNegotiation, quoteVO.getState());
-    }
+    ExtendableQuoteCreateVO quoteCreateVO = new ExtendableQuoteCreateVO();
 
-    private void handleAgreeStates(ContractNegotiation contractNegotiation, ContractNegotiationStates negotiationState) {
-        Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.AGREEING, ContractNegotiationStates.AGREED, ContractNegotiationStates.ACCEPTED, ContractNegotiationStates.REQUESTED));
-        if (activeQuote.isEmpty()) {
-            monitor.warning(String.format("Cannot save transition to %s for %s.", negotiationState.name(), contractNegotiation.getId()));
-            throw new IllegalArgumentException("In state agreed, an active Quote needs to exist.");
-        } else {
-            updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-            if (contractNegotiation.getContractAgreement() != null) {
-                createAgreement(contractNegotiation);
-            }
-        }
-    }
+    quoteCreateVO.setExternalId(contractNegotiation.getId());
+    quoteCreateVO.setContractNegotiationState(
+        new ContractNegotiationState()
+            .setPending(contractNegotiation.isPending())
+            .setControlplane(controlplane)
+            .setState(contractNegotiation.stateAsString())
+            .setCorrelationId(contractNegotiation.getCorrelationId())
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress()));
 
-    private void handleAcceptStates(ContractNegotiation contractNegotiation) throws JsonProcessingException {
-        List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
-        Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERED, ContractNegotiationStates.ACCEPTING, ContractNegotiationStates.ACCEPTED));
-        Optional<ExtendableQuoteVO> terminatingQuote = quotes.stream().filter(q -> TMFEdcMapper.getContractNegotiationState(q) == ContractNegotiationStates.TERMINATING).findAny();
-        if (activeQuote.isEmpty() && terminatingQuote.isEmpty()) {
-            monitor.debug("Create quote in accepted - existing quotes " + objectMapper.writeValueAsString(quotes));
-            // if the first offer is directly accepted, no quote might exist
-            ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-            // we need to create and update, since state changes are only able by patch
-            updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-        } else if (activeQuote.isPresent()) {
-            updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-        } else {
-            // negotiation is currently in terminating, don't do anything.
-        }
-    }
-
-    private void handleOfferStates(ContractNegotiation contractNegotiation) {
-        Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(getQuotes(contractNegotiation), contractNegotiation, List.of(ContractNegotiationStates.REQUESTED, ContractNegotiationStates.INITIAL, ContractNegotiationStates.OFFERING, ContractNegotiationStates.OFFERED));
-        if (activeQuote.isEmpty()) {
-            monitor.info("Create quote in offered");
-            ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.APPROVED);
-            // we need to create and update, since state changes are only able by patch
-            updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
-        } else {
-            updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
-        }
-    }
-
-    private void handleRequestedState(ContractNegotiation contractNegotiation) throws JsonProcessingException {
-        List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
-        // TODO: check why requested was part of the active states
-        Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.REQUESTING));
-        if (activeQuote.isEmpty()) {
-            monitor.debug("Create quote in requested - existing quotes " + objectMapper.writeValueAsString(quotes));
-            // in case of counter-offers, we will have a quote in approved or accepted and need to cancel them
-            getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERED))
-                    .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
-            ExtendableQuoteVO quoteVO = createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
-            // we need to create and update, since state changes are only able by patch
-            updateQuote(quoteVO, contractNegotiation, QuoteStateTypeVO.APPROVED);
-        } else {
-            updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.APPROVED);
-        }
-    }
-
-    private void handleInitialStates(ContractNegotiation contractNegotiation) {
-        List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
-        Optional<ExtendableQuoteVO> activeQuote = getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.REQUESTING));
-        if (activeQuote.isEmpty()) {
-            // in case of counter-offers, we will have a quote in approved or accepted and need to cancel them
-            getActiveQuote(quotes, contractNegotiation, List.of(ContractNegotiationStates.OFFERING, ContractNegotiationStates.OFFERED))
-                    .ifPresent(q -> terminateQuote(q, contractNegotiation, QuoteStateTypeVO.CANCELLED));
-            // create the new quote
-            createQuote(contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
-        } else {
-            updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.IN_PROGRESS);
-        }
-    }
-
-
-    private void finalizeOrder(ContractNegotiation contractNegotiation, ExtendableQuoteVO finalQuote) {
-
-        Optional<ProductOrderVO> orderVO = getProductOrder(finalQuote.getId());
-        if (orderVO.isEmpty()) {
-            throw new IllegalArgumentException("When finalizing, an order should already exist.");
-        }
-
-        updateQuote(finalQuote, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
-        ProductOrderUpdateVO productOrderUpdateVO = tmfEdcMapper.toUpdate(orderVO.get());
-        productOrderUpdateVO.setState(ProductOrderStateTypeVO.COMPLETED);
-
-        ExtendableProductCreate productCreateVO = new ExtendableProductCreate();
-        String providerId = participantResolver.getTmfId(contractNegotiation.getContractAgreement().getProviderId());
-        String consumerId = participantResolver.getTmfId(contractNegotiation.getContractAgreement().getConsumerId());
-        productCreateVO
-                // an asset can be materialized to a product multiple times, thus the agreement id needs to be included
-                .setExternalId(String.format("%s-%S", contractNegotiation.getContractAgreement().getId(), contractNegotiation.getContractAgreement().getAssetId()))
-                .status(ProductStatusTypeVO.ACTIVE)
-                .addRelatedPartyItem(new org.seamware.tmforum.productinventory.model.RelatedPartyVO().id(providerId).role(PROVIDER_ROLE))
-                .addRelatedPartyItem(new org.seamware.tmforum.productinventory.model.RelatedPartyVO().id(consumerId).role(CONSUMER_ROLE));
-        // product will be the reference for the agreement, the asset can only be linked in the provider side
-        if (contractNegotiation.getType() == ContractNegotiation.Type.PROVIDER) {
-            String productOfferingId = Optional.ofNullable(
-                            finalQuote.getExtendableQuoteItem().getLast()
-                                    .getProductOffering())
-                    .map(org.seamware.tmforum.quote.model.ProductOfferingRefVO::getId)
-                    .orElseThrow(() -> new IllegalArgumentException("On the provider side, the quote should have a reference to a product offering."));
-            productCreateVO.productOffering(new ProductOfferingRefVO().id(productOfferingId));
-        }
-        ProductVO product = productInventoryApi.createProduct(productCreateVO);
-
-        ExtendableAgreementVO extendableAgreementVO = agreementApi.findByContractId(contractNegotiation.getContractAgreement().getId())
-                .orElseThrow(() -> new IllegalArgumentException("An agreement needs to be present at that stage."));
-        extendableAgreementVO.setStatus(AgreementState.AGREED.getValue());
-        AgreementItemVO agreementItemVO = new AgreementItemVO()
-                .addProductItem(new ProductRefVO().id(product.getId()));
-        // throw away the old ref, irrelevant by now
-        extendableAgreementVO.agreementItem(List.of(agreementItemVO));
-
-        agreementApi.updateAgreement(extendableAgreementVO.getId(), tmfEdcMapper.toUpdate(extendableAgreementVO));
-        productOrderApi.updateProductOrder(orderVO.get().getId(), productOrderUpdateVO);
-    }
-
-    private void cancelAgreements(String negotiationId) {
-        agreementApi.findByNegotiationId(negotiationId)
-                .ifPresent(ea -> {
-                    ea.setStatus(AgreementState.REJECTED.getValue());
-                    agreementApi.updateAgreement(ea.getId(), tmfEdcMapper.toUpdate(ea));
-                });
-    }
-
-    private void cancelProductOrder(QuoteVO quoteVO) {
-        productOrderApi.findByQuoteId(quoteVO.getId())
-                .stream()
-                .filter(po -> po.getState() != ProductOrderStateTypeVO.CANCELLED)
-                .forEach(po -> {
-                    ProductOrderUpdateVO poUpdate = tmfEdcMapper.toUpdate(po);
-                    poUpdate.setState(ProductOrderStateTypeVO.CANCELLED);
-                    productOrderApi.updateProductOrder(po.getId(), poUpdate);
-                });
-    }
-
-    private Optional<ProductOrderVO> getProductOrder(String quoteId) {
-        List<ProductOrderVO> productOrderVOS = productOrderApi.findByQuoteId(quoteId);
-        if (productOrderVOS.isEmpty()) {
-            return Optional.empty();
-        }
-        if (productOrderVOS.size() > 1) {
-            throw new IllegalArgumentException("There should only be one order per quote.");
-        }
-        return Optional.ofNullable(productOrderVOS.getFirst());
-    }
-
-    private List<ExtendableQuoteVO> getQuotes(ContractNegotiation contractNegotiation) {
-        return quoteApi.findByNegotiationId(contractNegotiation.getId());
-    }
-
-    private Optional<ExtendableQuoteVO> getActiveQuote(List<ExtendableQuoteVO> quotes, ContractNegotiation contractNegotiation, List<ContractNegotiationStates> possibleStates) {
-        monitor.debug("Find active quotes for " + contractNegotiation.getId() + " and states " + possibleStates.stream().map(ContractNegotiationStates::name).collect(Collectors.joining(",")));
-        List<ExtendableQuoteVO> activeQuoteVOS = quotes
-                .stream()
-                .filter(quoteVO -> possibleStates.contains(TMFEdcMapper.getContractNegotiationState(quoteVO)))
-                .toList();
-        if (activeQuoteVOS.size() > 1) {
-            monitor.warning("Multiple active quotes: " + activeQuoteVOS.stream().map(ExtendableQuoteVO::getId).collect(Collectors.joining(", ")));
-            throw new IllegalArgumentException("There cannot be more than one active quote per negotiation. Negotiation id was " + contractNegotiation.getId());
-        }
-        if (activeQuoteVOS.isEmpty()) {
-            return Optional.empty();
-        }
-        return Optional.ofNullable(activeQuoteVOS.getFirst());
-    }
-
-    private void terminateQuote(ExtendableQuoteVO orginialQuote, ContractNegotiation contractNegotiation, QuoteStateTypeVO quoteState) {
-        monitor.warning("Terminate existing quote for negotiation " + contractNegotiation.getId() + " - state " + ContractNegotiationStates.from(contractNegotiation.getState()).name());
-        boolean isConsumer = contractNegotiation.getType() == ContractNegotiation.Type.CONSUMER;
-
-        ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(orginialQuote);
-        quoteUpdateVO.setState(quoteState);
-
-        ContractNegotiationState contractNegotiationState = new ContractNegotiationState()
-                .setControlplane(controlplane)
-                .setPending(contractNegotiation.isPending())
-                .setState(ContractNegotiationStates.TERMINATED.name())
-                .setCorrelationId(contractNegotiation.getCorrelationId())
-                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
-
-        quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
-        quoteUpdateVO.setExtendableQuoteItem(offersToQuoteItems(contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
-
-        quoteApi.updateQuote(orginialQuote.getId(), quoteUpdateVO);
-    }
-
-    private void createAgreement(ContractNegotiation contractNegotiation) {
-        ExtendableAgreementVO agreementVO = tmfEdcMapper.toAgreement(contractNegotiation.getId(), contractNegotiation.getContractAgreement());
-        // refer to the offering, as long as no product exists
-        agreementVO.addAgreementItemItem(new AgreementItemVO()
-                .addTermOrConditionItem(new AgreementTermOrConditionVO()
-                        .description("Under negotiation")));
-        agreementVO.setStatus(AgreementState.IN_PROCESS.getValue());
-        agreementApi.createAgreement(tmfEdcMapper.toCreate(agreementVO));
-    }
-
-    private void updateQuote(ExtendableQuoteVO originalQuote, ContractNegotiation contractNegotiation, QuoteStateTypeVO quoteState) {
-        monitor.warning("Update existing quote for negotiation " + contractNegotiation.getId() + " - state " + ContractNegotiationStates.from(contractNegotiation.getState()).name());
-        boolean isConsumer = contractNegotiation.getType() == ContractNegotiation.Type.CONSUMER;
-
-        ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(originalQuote);
-        quoteUpdateVO.setState(quoteState);
-        ContractNegotiationState contractNegotiationState = new ContractNegotiationState()
-                .setControlplane(controlplane)
-                .setPending(contractNegotiation.isPending())
-                .setState(contractNegotiation.stateAsString())
-                .setCorrelationId(contractNegotiation.getCorrelationId())
-                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
-
-        quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
-        quoteUpdateVO.setExtendableQuoteItem(offersToQuoteItems(contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
-
-        quoteApi.updateQuote(originalQuote.getId(), quoteUpdateVO);
-    }
-
-    private List<ExtendableQuoteItemVO> offersToQuoteItems(List<ContractOffer> offers, String negotiationState, boolean isConsumer) {
-        monitor.info(String.format("Got %s offers. Is a consumer: %s", offers.size(), isConsumer));
-        if (offers.isEmpty()) {
-            return List.of();
-        }
-        List<ExtendableQuoteItemVO> quoteItemVOS = new ArrayList<>();
-
-        // copy the list to not manipulate the original one
-        List<ContractOffer> workingOffers = new ArrayList<>(offers);
-
-        // get active offer -> will be the last in the list, all previous are already outdated
-        ContractOffer lastOffer = workingOffers.removeLast();
-
-        if (isConsumer) {
-            quoteItemVOS.add(tmfEdcMapper.fromConsumerContractOffer(lastOffer, negotiationState));
-            workingOffers.stream()
-                    .map(co -> tmfEdcMapper.fromConsumerContractOffer(co, QuoteStateTypeVO.REJECTED.getValue()))
-                    .forEach(quoteItemVOS::add);
-        } else {
-            Optional<String> tmfOfferId = getTmfOfferId(lastOffer);
-            monitor.info("Offer id is " + tmfOfferId.orElse("empty"));
-            quoteItemVOS.add(tmfEdcMapper.fromProviderContractOffer(lastOffer, negotiationState, tmfOfferId));
-            workingOffers.stream()
-                    .map(co -> tmfEdcMapper.fromProviderContractOffer(co, QuoteStateTypeVO.REJECTED.getValue(), getTmfOfferId(co)))
-                    .forEach(quoteItemVOS::add);
-        }
-
-        return quoteItemVOS;
-    }
-
-    private Optional<String> getTmfOfferId(ContractOffer contractOffer) {
-
-        return ContractOfferId.parseId(contractOffer.getId())
-                .asOptional()
-                .map(ContractOfferId::definitionPart)
-                .flatMap(productCatalogApi::getProductOfferingByExternalId)
-                .map(ExtendableProductOffering::getId);
-    }
-
-    private ExtendableQuoteVO createQuote(ContractNegotiation contractNegotiation, QuoteStateTypeVO quoteState) {
-        monitor.debug("Create a quote for negotiation");
-
-        ExtendableQuoteCreateVO quoteCreateVO = new ExtendableQuoteCreateVO();
-
-        quoteCreateVO.setExternalId(contractNegotiation.getId());
-        quoteCreateVO.setContractNegotiationState(new ContractNegotiationState().setPending(contractNegotiation.isPending())
-                .setControlplane(controlplane)
-                .setState(contractNegotiation.stateAsString())
-                .setCorrelationId(contractNegotiation.getCorrelationId())
-                .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress()));
-
-        List<ExtendableQuoteItemVO> extendableQuoteItemVOS =
-                switch (contractNegotiation.getType()) {
-                    case PROVIDER -> contractNegotiation.getContractOffers()
-                            .stream()
-                            .map(co -> tmfEdcMapper.fromProviderContractOffer(co, quoteState.getValue(), getTmfOfferId(co)))
-                            .toList();
-                    case CONSUMER -> contractNegotiation.getContractOffers()
-                            .stream()
-                            .map(co -> tmfEdcMapper.fromConsumerContractOffer(co, quoteState.getValue()))
-                            .toList();
-                };
-
-        quoteCreateVO.setExtendableQuoteItem(extendableQuoteItemVOS);
-
-        getFromNegotiation(contractNegotiation)
-                .stream()
-                .map(p -> new RelatedPartyVO().id(p.partyId()).role(p.role()))
-                .forEach(quoteCreateVO::addRelatedPartyItem);
-
-        return quoteApi.createQuote(quoteCreateVO);
-    }
-
-    private List<PartyWithRole> getFromNegotiation(ContractNegotiation contractNegotiation) {
-        if (roleFromNegotiation(contractNegotiation.getType()).equals(PROVIDER_ROLE)) {
-            return List.of(
-                    new PartyWithRole(participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), CONSUMER_ROLE),
-                    new PartyWithRole(participantResolver.getTmfId(participantId), PROVIDER_ROLE));
-        } else {
-            return List.of(
-                    new PartyWithRole(participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), PROVIDER_ROLE),
-                    new PartyWithRole(participantResolver.getTmfId(participantId), CONSUMER_ROLE));
-        }
-    }
-
-    public String roleFromNegotiation(ContractNegotiation.Type type) {
-        return switch (type) {
-            case CONSUMER -> CONSUMER_ROLE;
-            case PROVIDER -> PROVIDER_ROLE;
+    List<ExtendableQuoteItemVO> extendableQuoteItemVOS =
+        switch (contractNegotiation.getType()) {
+          case PROVIDER ->
+              contractNegotiation.getContractOffers().stream()
+                  .map(
+                      co ->
+                          tmfEdcMapper.fromProviderContractOffer(
+                              co, quoteState.getValue(), getTmfOfferId(co)))
+                  .toList();
+          case CONSUMER ->
+              contractNegotiation.getContractOffers().stream()
+                  .map(co -> tmfEdcMapper.fromConsumerContractOffer(co, quoteState.getValue()))
+                  .toList();
         };
+
+    quoteCreateVO.setExtendableQuoteItem(extendableQuoteItemVOS);
+
+    getFromNegotiation(contractNegotiation).stream()
+        .map(p -> new RelatedPartyVO().id(p.partyId()).role(p.role()))
+        .forEach(quoteCreateVO::addRelatedPartyItem);
+
+    return quoteApi.createQuote(quoteCreateVO);
+  }
+
+  private List<PartyWithRole> getFromNegotiation(ContractNegotiation contractNegotiation) {
+    if (roleFromNegotiation(contractNegotiation.getType()).equals(PROVIDER_ROLE)) {
+      return List.of(
+          new PartyWithRole(
+              participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), CONSUMER_ROLE),
+          new PartyWithRole(participantResolver.getTmfId(participantId), PROVIDER_ROLE));
+    } else {
+      return List.of(
+          new PartyWithRole(
+              participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), PROVIDER_ROLE),
+          new PartyWithRole(participantResolver.getTmfId(participantId), CONSUMER_ROLE));
     }
+  }
 
+  public String roleFromNegotiation(ContractNegotiation.Type type) {
+    return switch (type) {
+      case CONSUMER -> CONSUMER_ROLE;
+      case PROVIDER -> PROVIDER_ROLE;
+    };
+  }
 
-    private record PartyWithRole(String partyId, String role) {
-    }
-
+  private record PartyWithRole(String partyId, String role) {}
 }
