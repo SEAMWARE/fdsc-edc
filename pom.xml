@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.seamware.edc</groupId>
-    <artifactId>edc-containers</artifactId>
+    <artifactId>fdsc-edc</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 

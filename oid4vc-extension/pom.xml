@@ -5,7 +5,7 @@
 
     <parent>
         <groupId>org.seamware.edc</groupId>
-        <artifactId>edc-containers</artifactId>
+        <artifactId>fdsc-edc</artifactId>
         <version>0.0.1-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
