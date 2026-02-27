@@ -1,4 +1,40 @@
+/*
+ * Copyright 2025 Seamless Middleware Technologies S.L and/or its affiliates
+ * and other contributors as indicated by the @author tags.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package org.seamware.edc;
+
+/*-
+ * #%L
+ * oid4vc-extension
+ * %%
+ * Copyright (C) 2025 - 2026 Seamless Middleware Technologies S.L
+ * %%
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * #L%
+ */
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
@@ -19,31 +55,9 @@ import io.github.wistefan.oid4vp.credentials.CredentialsRepository;
 import io.github.wistefan.oid4vp.credentials.FileSystemCredentialsRepository;
 import io.github.wistefan.oid4vp.mapping.CredentialFormatDeserializer;
 import io.github.wistefan.oid4vp.mapping.TrustedAuthorityTypeDeserializer;
-import okhttp3.EventListener;
-import okhttp3.OkHttpClient;
-import okhttp3.logging.HttpLoggingInterceptor;
-import okhttp3.logging.LoggingEventListener;
-import org.bouncycastle.jce.provider.BouncyCastleProvider;
-import org.eclipse.edc.protocol.spi.DefaultParticipantIdExtractionFunction;
-import org.eclipse.edc.runtime.metamodel.annotation.Configuration;
-import org.eclipse.edc.runtime.metamodel.annotation.Inject;
-import org.eclipse.edc.runtime.metamodel.annotation.Provider;
-import org.eclipse.edc.spi.iam.AudienceResolver;
-import org.eclipse.edc.spi.iam.IdentityService;
-import org.eclipse.edc.spi.monitor.Monitor;
-import org.eclipse.edc.spi.system.ServiceExtension;
-import org.eclipse.edc.spi.system.ServiceExtensionContext;
-import org.seamware.edc.identity.CounterPartyAddressAudienceResolver;
-import org.seamware.edc.identity.OID4VPIdentityService;
-import org.seamware.edc.identity.OID4VPParticipantIdExtractionFunction;
-
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
-import java.net.Proxy;
 import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -59,259 +73,289 @@ import java.security.cert.*;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import okhttp3.OkHttpClient;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.eclipse.edc.protocol.spi.DefaultParticipantIdExtractionFunction;
+import org.eclipse.edc.runtime.metamodel.annotation.Inject;
+import org.eclipse.edc.runtime.metamodel.annotation.Provider;
+import org.eclipse.edc.spi.iam.AudienceResolver;
+import org.eclipse.edc.spi.iam.IdentityService;
+import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.system.ServiceExtension;
+import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.seamware.edc.identity.CounterPartyAddressAudienceResolver;
+import org.seamware.edc.identity.OID4VPIdentityService;
+import org.seamware.edc.identity.OID4VPParticipantIdExtractionFunction;
+import org.seamware.edc.identity.OID4VPTokenProvider;
 
 public class OID4VPExtension implements ServiceExtension {
 
-    private static final String OID4VC_NAME = "OID4VPExtension";
+  private static final String OID4VC_NAME = "OID4VPExtension";
 
-    @Inject
-    private OkHttpClient okHttpClient;
-    @Inject
-    private ObjectMapper objectMapper;
-    @Inject
-    private Monitor monitor;
+  @Inject private OkHttpClient okHttpClient;
+  @Inject private ObjectMapper objectMapper;
+  @Inject private Monitor monitor;
 
-    private HttpClient httpClient;
-    private OID4VPClient oid4VPClient;
-    private IdentityService identityService;
-    private DefaultParticipantIdExtractionFunction defaultParticipantIdExtractionFunction;
-    private AudienceResolver audienceResolver;
+  private HttpClient httpClient;
+  private OID4VPClient oid4VPClient;
+  private IdentityService identityService;
+  private DefaultParticipantIdExtractionFunction defaultParticipantIdExtractionFunction;
+  private AudienceResolver audienceResolver;
 
-    private OID4VPConfig oid4VPConfig;
+  private OID4VPConfig oid4VPConfig;
 
-    @Override
-    public String name() {
-        return OID4VC_NAME;
+  @Override
+  public String name() {
+    return OID4VC_NAME;
+  }
+
+  public boolean isEnabled() {
+    return oid4VPConfig.getEnabled();
+  }
+
+  @Provider
+  public OID4VPConfig oid4VPConfig(ServiceExtensionContext context) {
+    if (oid4VPConfig == null) {
+      oid4VPConfig = OID4VPConfig.fromConfig(context.getConfig());
+    }
+    return oid4VPConfig;
+  }
+
+  @Provider
+  public HttpClient httpClient(ServiceExtensionContext context) {
+
+    if (httpClient == null) {
+      OID4VPConfig config = oid4VPConfig(context);
+      HttpClient.Builder httpClientBuilder = HttpClient.newBuilder();
+      // required for the authorization flow to work
+      httpClientBuilder.followRedirects(HttpClient.Redirect.NORMAL);
+      if (config.getProxy().enabled()) {
+        ProxySelector proxySelector =
+            ProxySelector.of(
+                new InetSocketAddress(config.getProxy().host(), config.getProxy().port()));
+        httpClientBuilder.proxy(proxySelector);
+      }
+      if (config.getTrustAll()) {
+        monitor.warning(
+            "The OID4VP Client is configured to trust all SSL Certificates. DO NOT USE THIS IN PRODUCTION.");
+        httpClientBuilder.sslContext(trustAll());
+      }
+      httpClient = httpClientBuilder.build();
+    }
+    return httpClient;
+  }
+
+  @Provider
+  public OID4VPClient oid4VPClient(ServiceExtensionContext context) {
+    OID4VPConfig config = oid4VPConfig(context);
+    if (oid4VPClient == null && config.getEnabled()) {
+
+      monitor.info("Enabling OID4VP Client.");
+
+      Security.addProvider(new BouncyCastleProvider());
+
+      ObjectMapper authObjectMapper = objectMapper.copy();
+      authObjectMapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
+      SimpleModule deserializerModule = new SimpleModule();
+      deserializerModule.addDeserializer(
+          CredentialFormat.class, new CredentialFormatDeserializer());
+      deserializerModule.addDeserializer(
+          TrustedAuthorityType.class, new TrustedAuthorityTypeDeserializer());
+      authObjectMapper.registerModule(deserializerModule);
+
+      CredentialsRepository credentialsRepository =
+          new FileSystemCredentialsRepository(config.getCredentialsFolder(), objectMapper);
+
+      // initialize the holder
+      PrivateKey privateKey =
+          loadPrivateKey(
+              config.getHolder().keyConfig().type(), config.getHolder().keyConfig().path());
+      HolderConfiguration holderConfiguration =
+          new HolderConfiguration(
+              URI.create(config.getHolder().id()),
+              config.getHolder().id(),
+              JWEAlgorithm.parse(config.getHolder().signatureAlgorithm()),
+              privateKey);
+      SigningService signingService = new HolderSigningService(holderConfiguration, objectMapper);
+
+      // allows configuration of additional trust anchors
+      Set<TrustAnchor> trustAnchors =
+          Optional.ofNullable(config.getTrustAnchorsFolder())
+              .filter(taf -> !taf.isBlank())
+              .map(OID4VPExtension::loadCertificatesFromFolder)
+              .orElse(List.of())
+              .stream()
+              .map(c -> new TrustAnchor(c, null))
+              .collect(Collectors.toSet());
+
+      X509SanDnsClientResolver clientResolver = new X509SanDnsClientResolver();
+      if (!trustAnchors.isEmpty()) {
+        // if trust anchors are explicitly configured, use them.
+        clientResolver = new X509SanDnsClientResolver(trustAnchors, false);
+      }
+
+      DCQLEvaluator dcqlEvaluator =
+          new DCQLEvaluator(
+              List.of(
+                  new JwtCredentialEvaluator(),
+                  new DcSdJwtCredentialEvaluator(),
+                  new VcSdJwtCredentialEvaluator()));
+
+      oid4VPClient =
+          new OID4VPClient(
+              httpClient(context),
+              holderConfiguration,
+              authObjectMapper,
+              List.of(clientResolver),
+              dcqlEvaluator,
+              credentialsRepository,
+              signingService);
+    }
+    return oid4VPClient;
+  }
+
+  @Provider
+  public IdentityService identityService(ServiceExtensionContext context) {
+    OID4VPConfig config = oid4VPConfig(context);
+    if (!config.getEnabled()) {
+      return null;
+    }
+    if (identityService == null) {
+      identityService =
+          new OID4VPIdentityService(
+              monitor,
+              new OID4VPTokenProvider(oid4VPClient(context)),
+              config.getClientId(),
+              config.getScope());
+    }
+    return identityService;
+  }
+
+  @Provider
+  public DefaultParticipantIdExtractionFunction defaultParticipantIdExtractionFunction(
+      ServiceExtensionContext context) {
+    if (!oid4VPConfig(context).getEnabled()) {
+      return null;
+    }
+    if (defaultParticipantIdExtractionFunction == null) {
+      defaultParticipantIdExtractionFunction =
+          new OID4VPParticipantIdExtractionFunction(
+              monitor, oid4VPConfig(context).getOrganizationClaim());
+    }
+    return defaultParticipantIdExtractionFunction;
+  }
+
+  @Provider
+  public AudienceResolver audienceResolver(ServiceExtensionContext context) {
+    if (!oid4VPConfig(context).getEnabled()) {
+      return null;
+    }
+    if (audienceResolver == null) {
+      audienceResolver = new CounterPartyAddressAudienceResolver();
+    }
+    return audienceResolver;
+  }
+
+  private static PrivateKey loadPrivateKey(String keyType, String filename) {
+
+    try (InputStream is = openInputStream(filename)) {
+      if (is == null) {
+        throw new IllegalArgumentException("Private key not found: " + filename);
+      }
+
+      // Read PEM file content
+      String pem =
+          new String(is.readAllBytes(), StandardCharsets.UTF_8)
+              .replaceAll("-----BEGIN (.*)-----", "")
+              .replaceAll("-----END (.*)-----", "")
+              .replaceAll("\\s", "");
+
+      // Base64 decode
+      byte[] decoded = Base64.getDecoder().decode(pem);
+
+      // Build key spec
+      PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(decoded);
+      KeyFactory keyFactory = KeyFactory.getInstance(keyType); // or "EC"
+      return keyFactory.generatePrivate(keySpec);
+    } catch (IOException | NoSuchAlgorithmException | InvalidKeySpecException e) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Was not able to load the private key with type %s from %s", keyType, filename),
+          e);
+    }
+  }
+
+  private static InputStream openInputStream(String filepath) throws IOException {
+    Path path = Paths.get(filepath);
+    if (Files.isDirectory(path)) {
+      return null;
+    }
+    if (Files.exists(path)) {
+      return Files.newInputStream(path);
+    }
+    return null;
+  }
+
+  private static List<X509Certificate> loadCertificates(Path certificateFile) {
+    try (InputStream is = Files.newInputStream(certificateFile)) {
+
+      CertificateFactory cf = CertificateFactory.getInstance("X.509");
+      Collection<? extends Certificate> certs = cf.generateCertificates(is);
+
+      List<X509Certificate> result = new ArrayList<>(certs.size());
+      for (Certificate cert : certs) {
+        result.add((X509Certificate) cert);
+      }
+      return result;
+
+    } catch (IOException | CertificateException e) {
+      throw new IllegalArgumentException(
+          "Unable to load certificates from file: " + certificateFile, e);
+    }
+  }
+
+  private static List<X509Certificate> loadCertificatesFromFolder(String folderPath) {
+    Path dir = Paths.get(folderPath);
+
+    if (!Files.isDirectory(dir)) {
+      throw new IllegalArgumentException("Not a directory: " + folderPath);
     }
 
-    public boolean isEnabled() {
-        return oid4VPConfig.getEnabled();
+    try (Stream<Path> files = Files.list(dir)) {
+      return files
+          .filter(Files::isRegularFile)
+          .flatMap(path -> loadCertificates(path).stream())
+          .toList();
+    } catch (IOException e) {
+      throw new IllegalArgumentException("Failed to read certificate directory: " + folderPath, e);
     }
+  }
 
-    @Provider
-    public OID4VPConfig oid4VPConfig(ServiceExtensionContext context) {
-        if (oid4VPConfig == null) {
-            oid4VPConfig = OID4VPConfig.fromConfig(context.getConfig());
-        }
-        return oid4VPConfig;
-    }
+  // provides an SSLContext trusting all certificates. DO NOT use this in production environments
+  private SSLContext trustAll() {
+    try {
 
-    @Provider
-    public HttpClient httpClient(ServiceExtensionContext context) {
-
-        if (httpClient == null) {
-            OID4VPConfig config = oid4VPConfig(context);
-            HttpClient.Builder httpClientBuilder = HttpClient.newBuilder();
-            // required for the authorization flow to work
-            httpClientBuilder.followRedirects(HttpClient.Redirect.NORMAL);
-            if (config.getProxy().enabled()) {
-                ProxySelector proxySelector = ProxySelector.of(new InetSocketAddress(config.getProxy().host(), config.getProxy().port()));
-                httpClientBuilder.proxy(proxySelector);
+      TrustManager trm =
+          new X509TrustManager() {
+            public X509Certificate[] getAcceptedIssuers() {
+              return null;
             }
-            if (config.getTrustAll()) {
-                monitor.warning("The OID4VP Client is configured to trust all SSL Certificates. DO NOT USE THIS IN PRODUCTION.");
-                httpClientBuilder.sslContext(trustAll());
-            }
-            httpClient = httpClientBuilder.build();
-        }
-        return httpClient;
+
+            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+
+            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+          };
+
+      SSLContext sc = SSLContext.getInstance("SSL");
+      sc.init(null, new TrustManager[] {trm}, null);
+      return sc;
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
-
-
-    @Provider
-    public OID4VPClient oid4VPClient(ServiceExtensionContext context) {
-        OID4VPConfig config = oid4VPConfig(context);
-        if (oid4VPClient == null && config.getEnabled()) {
-
-            monitor.info("Enabling OID4VP Client.");
-
-            Security.addProvider(new BouncyCastleProvider());
-
-            ObjectMapper authObjectMapper = objectMapper.copy();
-            authObjectMapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-            SimpleModule deserializerModule = new SimpleModule();
-            deserializerModule.addDeserializer(CredentialFormat.class, new CredentialFormatDeserializer());
-            deserializerModule.addDeserializer(TrustedAuthorityType.class, new TrustedAuthorityTypeDeserializer());
-            authObjectMapper.registerModule(deserializerModule);
-
-            CredentialsRepository credentialsRepository = new FileSystemCredentialsRepository(config.getCredentialsFolder(), objectMapper);
-
-            //initialize the holder
-            PrivateKey privateKey = loadPrivateKey(config.getHolder().keyConfig().type(), config.getHolder().keyConfig().path());
-            HolderConfiguration holderConfiguration = new HolderConfiguration(
-                    URI.create(config.getHolder().id()),
-                    config.getHolder().id(),
-                    JWEAlgorithm.parse(config.getHolder().signatureAlgorithm()),
-                    privateKey);
-            SigningService signingService = new HolderSigningService(holderConfiguration, objectMapper);
-
-            // allows configuration of additional trust anchors
-            Set<TrustAnchor> trustAnchors = Optional.ofNullable(config.getTrustAnchorsFolder())
-                    .filter(taf -> !taf.isBlank())
-                    .map(OID4VPExtension::loadCertificatesFromFolder)
-                    .orElse(List.of())
-                    .stream()
-                    .map(c -> new TrustAnchor(c, null))
-                    .collect(Collectors.toSet());
-
-            X509SanDnsClientResolver clientResolver = new X509SanDnsClientResolver();
-            if (!trustAnchors.isEmpty()) {
-                //if trust anchors are explicitly configured, use them.
-                clientResolver = new X509SanDnsClientResolver(trustAnchors, false);
-            }
-
-            DCQLEvaluator dcqlEvaluator = new DCQLEvaluator(List.of(
-                    new JwtCredentialEvaluator(),
-                    new DcSdJwtCredentialEvaluator(),
-                    new VcSdJwtCredentialEvaluator()));
-
-
-            oid4VPClient = new OID4VPClient(
-                    httpClient(context),
-                    holderConfiguration,
-                    authObjectMapper,
-                    List.of(clientResolver),
-                    dcqlEvaluator,
-                    credentialsRepository,
-                    signingService);
-        }
-        return oid4VPClient;
-    }
-
-    @Provider
-    public IdentityService identityService(ServiceExtensionContext context) {
-        OID4VPConfig config = oid4VPConfig(context);
-        if (!config.getEnabled()) {
-            return null;
-        }
-        if (identityService == null) {
-            identityService = new OID4VPIdentityService(monitor, objectMapper, oid4VPClient(context), config.getClientId(), config.getScope());
-        }
-        return identityService;
-    }
-
-    @Provider
-    public DefaultParticipantIdExtractionFunction defaultParticipantIdExtractionFunction(ServiceExtensionContext context) {
-        if (!oid4VPConfig(context).getEnabled()) {
-            return null;
-        }
-        if (defaultParticipantIdExtractionFunction == null) {
-            defaultParticipantIdExtractionFunction = new OID4VPParticipantIdExtractionFunction(monitor, oid4VPConfig(context).getOrganizationClaim());
-        }
-        return defaultParticipantIdExtractionFunction;
-    }
-
-    @Provider
-    public AudienceResolver audienceResolver(ServiceExtensionContext context) {
-        if (!oid4VPConfig(context).getEnabled()) {
-            return null;
-        }
-        if (audienceResolver == null) {
-            audienceResolver = new CounterPartyAddressAudienceResolver();
-        }
-        return audienceResolver;
-    }
-
-    private static PrivateKey loadPrivateKey(String keyType, String filename) {
-
-        try (InputStream is = openInputStream(filename)) {
-            if (is == null) {
-                throw new IllegalArgumentException("Private key not found: " + filename);
-            }
-
-            // Read PEM file content
-            String pem = new String(is.readAllBytes(), StandardCharsets.UTF_8)
-                    .replaceAll("-----BEGIN (.*)-----", "")
-                    .replaceAll("-----END (.*)-----", "")
-                    .replaceAll("\\s", "");
-
-            // Base64 decode
-            byte[] decoded = Base64.getDecoder().decode(pem);
-
-            // Build key spec
-            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(decoded);
-            KeyFactory keyFactory = KeyFactory.getInstance(keyType); // or "EC"
-            return keyFactory.generatePrivate(keySpec);
-        } catch (IOException | NoSuchAlgorithmException | InvalidKeySpecException e) {
-            throw new IllegalArgumentException(String.format("Was not able to load the private key with type %s from %s", keyType, filename), e);
-        }
-    }
-
-
-    private static InputStream openInputStream(String filepath) throws IOException {
-        Path path = Paths.get(filepath);
-        if (Files.isDirectory(path)) {
-            return null;
-        }
-        if (Files.exists(path)) {
-            return Files.newInputStream(path);
-        }
-        return null;
-    }
-
-    private static List<X509Certificate> loadCertificates(Path certificateFile) {
-        try (InputStream is = Files.newInputStream(certificateFile)) {
-
-            CertificateFactory cf = CertificateFactory.getInstance("X.509");
-            Collection<? extends Certificate> certs = cf.generateCertificates(is);
-
-            List<X509Certificate> result = new ArrayList<>(certs.size());
-            for (Certificate cert : certs) {
-                result.add((X509Certificate) cert);
-            }
-            return result;
-
-        } catch (IOException | CertificateException e) {
-            throw new IllegalArgumentException(
-                    "Unable to load certificates from file: " + certificateFile, e
-            );
-        }
-    }
-
-    private static List<X509Certificate> loadCertificatesFromFolder(String folderPath) {
-        Path dir = Paths.get(folderPath);
-
-        if (!Files.isDirectory(dir)) {
-            throw new IllegalArgumentException("Not a directory: " + folderPath);
-        }
-
-        try (Stream<Path> files = Files.list(dir)) {
-            return files
-                    .filter(Files::isRegularFile)
-                    .flatMap(path -> loadCertificates(path).stream())
-                    .toList();
-        } catch (IOException e) {
-            throw new IllegalArgumentException(
-                    "Failed to read certificate directory: " + folderPath, e
-            );
-        }
-    }
-
-    // provides an SSLContext trusting all certificates. DO NOT use this in production environments
-    private SSLContext trustAll() {
-        try {
-
-            TrustManager trm = new X509TrustManager() {
-                public X509Certificate[] getAcceptedIssuers() {
-                    return null;
-                }
-
-                public void checkClientTrusted(X509Certificate[] certs, String authType) {
-
-                }
-
-                public void checkServerTrusted(X509Certificate[] certs, String authType) {
-                }
-            };
-
-            SSLContext sc = SSLContext.getInstance("SSL");
-            sc.init(null, new TrustManager[]{trm}, null);
-            return sc;
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
+  }
 }

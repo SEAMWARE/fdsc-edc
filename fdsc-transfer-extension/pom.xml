@@ -5,14 +5,15 @@
 
     <parent>
         <groupId>org.seamware.edc</groupId>
-        <artifactId>edc-containers</artifactId>
+        <artifactId>fdsc-edc</artifactId>
         <version>0.0.1-SNAPSHOT</version>
-        <relativePath>../pom.xml</relativePath>
     </parent>
 
     <artifactId>fdsc-transfer-extension</artifactId>
 
     <properties>
+        <version.com.nimbusds.nimbus-jose-jwt>10.5</version.com.nimbusds.nimbus-jose-jwt>
+
         <credentials-config-service.api.url>https://raw.githubusercontent.com/FIWARE/credentials-config-service/refs/heads/main/api/credentials-config-service.yaml</credentials-config-service.api.url>
         <odrl-pap.api.url>https://raw.githubusercontent.com/wistefan/odrl-pap/refs/heads/policy-per-service/api/odrl.yaml</odrl-pap.api.url>
     </properties>
@@ -48,6 +49,11 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
+            <artifactId>vault-hashicorp</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
             <artifactId>token-spi</artifactId>
             <version>${edc.version}</version>
         </dependency>
@@ -69,6 +75,11 @@
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>data-plane-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>data-plane-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -97,43 +108,80 @@
             <version>${edc.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>${version.com.nimbusds.nimbus-jose-jwt}</version>
+        </dependency>
 
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp-jvm</artifactId>
-            <version>5.1.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
-            <version>4.12.0</version>
+            <version>${version.com.squareup.okhttp3}</version>
         </dependency>
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>logging-interceptor</artifactId>
-            <version>4.12.0</version>
+            <version>${version.com.squareup.okhttp3}</version>
         </dependency>
 
         <dependency>
             <groupId>javax.annotation</groupId>
             <artifactId>javax.annotation-api</artifactId>
-            <version>1.3.2</version>
+            <version>${version.javax.annotation}</version>
         </dependency><!-- javax nullable -->
         <dependency>
             <groupId>com.google.code.findbugs</groupId>
             <artifactId>jsr305</artifactId>
-            <version>3.0.2</version>
+            <version>${version.com.google.code.findbugs}</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jsr310</artifactId>
-            <version>2.19.2</version>
+            <version>${version.com.fasterxml.jackson.datatype}</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.openapitools</groupId>
             <artifactId>jackson-databind-nullable</artifactId>
-            <version>0.2.8</version>
+            <version>${version.org.openapitools.jackson-databind-nullable}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>${version.org.junit}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>${version.org.junit}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <version>${version.org.junit}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${version.org.mockito}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>${version.org.mockito}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>mockwebserver</artifactId>
+            <version>${version.com.squareup.okhttp3}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
     <build>

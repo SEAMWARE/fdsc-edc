@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.seamware.edc</groupId>
-    <artifactId>edc-containers</artifactId>
+    <artifactId>fdsc-edc</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
 
@@ -19,11 +19,27 @@
 
         <version.org.openapitools.generator-maven-plugin>7.10.0</version.org.openapitools.generator-maven-plugin>
         <version.org.codehaus.mojo.build-helper-maven-plugin>3.4.0</version.org.codehaus.mojo.build-helper-maven-plugin>
+        <version.com.diffplug.spotless>3.2.1</version.com.diffplug.spotless>
 
+        <version.org.openapitools.jackson-databind-nullable>0.2.8</version.org.openapitools.jackson-databind-nullable>
+        <version.com.fasterxml.jackson.datatype>2.19.2</version.com.fasterxml.jackson.datatype>
+        <version.com.google.code.findbugs>3.0.2</version.com.google.code.findbugs>
+        <version.javax.annotation>1.3.2</version.javax.annotation>
+        <version.io.gsonfire>1.9.0</version.io.gsonfire>
+        <version.com.google.code.gson>2.13.2</version.com.google.code.gson>
+        <version.com.squareup.okhttp3>4.12.0</version.com.squareup.okhttp3>
+        <version.com.squareup.okhttp3-jvm>5.1.0</version.com.squareup.okhttp3-jvm>
+
+        <version.org.projectlombok>1.18.36</version.org.projectlombok>
         <version.org.mapstruct>1.4.2.Final</version.org.mapstruct>
+        <version.org.junit>5.13.4</version.org.junit>
+        <version.org.mockito>5.12.0</version.org.mockito>
+
+        <version.org.apache.maven.plugins.maven-surfire-plugin>3.5.3</version.org.apache.maven.plugins.maven-surfire-plugin>
+
         <main.basedir>${project.basedir}</main.basedir>
         <image.registry>quay.io</image.registry>
-        <image.repository>fiware</image.repository>
+        <image.repository>wi_stefan</image.repository>
     </properties>
 
     <modules>
@@ -31,8 +47,9 @@
         <module>oid4vc-extension</module>
         <module>fdsc-transfer-extension</module>
         <module>test-extension</module>
-        <module>controlplane</module>
-        <module>charts</module>
+        <module>dcp-extension</module>
+        <module>controlplane-oid4vc</module>
+        <module>controlplane-dcp</module>
     </modules>
 
     <build>
@@ -45,6 +62,11 @@
                     <source>21</source>
                     <target>21</target>
                     <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${version.org.projectlombok}</version>
+                        </path>
                         <path>
                             <groupId>org.mapstruct</groupId>
                             <artifactId>mapstruct-processor</artifactId>
@@ -73,6 +95,11 @@
                         </configuration>
                     </execution>
                 </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${version.org.apache.maven.plugins.maven-surfire-plugin}</version>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -136,7 +163,7 @@
                     <skip>true</skip>
                     <images>
                         <image>
-                            <name>${image.registry}/${image.repository}/fdsc-edc:${project.version}</name>
+                            <name>${image.registry}/${image.repository}/fdsc-edc-${artifactId}:${project.version}</name>
                             <build>
                                 <dockerFile>Dockerfile</dockerFile>
                                 <contextDir>${project.build.directory}/context</contextDir>
@@ -160,6 +187,24 @@
                 <artifactId>maven-deploy-plugin</artifactId>
                 <configuration>
                     <skip>true</skip>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${version.com.diffplug.spotless}</version>
+
+                <configuration>
+                    <java>
+                        <!-- Add license header -->
+                        <licenseHeader>
+                            <file>${session.executionRootDirectory}/license-header.txt</file>
+                            <delimiter>package</delimiter>
+                        </licenseHeader>
+
+                        <!-- Optional but recommended formatting -->
+                        <googleJavaFormat/>
+                    </java>
                 </configuration>
             </plugin>
         </plugins>
