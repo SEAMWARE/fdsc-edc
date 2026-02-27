@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "quote-item.json",
+  "title": "Quote Item Extension",
+  "description": "Extensions of a quote.",
+  "type": "object",
+  "properties": {
+    "externalId": {
+      "type": "string"
+    },
+    "datasetId": {
+      "type": "string"
+    },
+    "policy": {
+      "type": "object"
+    }
+  },
+  "required": ["externalId"]
+}

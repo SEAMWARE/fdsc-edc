@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agreement.json",
+  "title": "Agreement IDs",
+  "description": "Adds ids to reference edc negotiation and contract.",
+  "type": "object",
+  "properties": {
+    "externalId": {
+      "type": "string"
+    },
+    "negotiationId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "externalId",
+    "negotiationId"
+  ]
+}

@@ -1,0 +1,3 @@
+org.seamware.edc.edc.TckGuardExtension
+org.seamware.edc.services.TestIdentityExtension
+org.seamware.edc.tck.TckControllerExtension
