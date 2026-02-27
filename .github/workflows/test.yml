@@ -21,5 +21,5 @@ jobs:
         run: mvn clean spotless:check
 
       - name: Run tests
-        # dont use test, because modules are reliant on each other
+        # don't use test, because modules are reliant on each other
         run: mvn clean install -Ptest
