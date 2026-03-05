@@ -10,7 +10,7 @@ on:
       - unlabeled
 env:
   REGISTRY: ${{ vars.REGISTRY || 'quay.io' }}
-  REPOSITORY: ${{ vars.REPOSITORY || 'fiware' }}
+  REPOSITORY: ${{ vars.REPOSITORY || 'seamware' }}
 
 jobs:
   generate-version:

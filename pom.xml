@@ -39,7 +39,7 @@
 
         <main.basedir>${project.basedir}</main.basedir>
         <image.registry>quay.io</image.registry>
-        <image.repository>wi_stefan</image.repository>
+        <image.repository>seamware</image.repository>
     </properties>
 
     <modules>
