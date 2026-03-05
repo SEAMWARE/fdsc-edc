@@ -9,5 +9,5 @@ Set of extensions for EDC, supporting:
 
 Two images are published:
 
-* [fdsc-edc-controlplane-oid4vc](https://quay.io/repository/wi_stefan/fdsc-edc-controlplane-oid4vc) to provide integration with TMForum and provisioning at the FIWARE Data Space Connector, secured via OID4VP
-* [fdsc-edc-controlplane-dcp](https://quay.io/repository/wi_stefan/fdsc-edc-controlplane-dcp) to provide integration with TMForum and provisioning at the FIWARE Data Space Connector, secured via DCP
+* [fdsc-edc-controlplane-oid4vc](https://quay.io/repository/seamware/fdsc-edc-controlplane-oid4vc) to provide integration with TMForum and provisioning at the FIWARE Data Space Connector, secured via OID4VP
+* [fdsc-edc-controlplane-dcp](https://quay.io/repository/seamware/fdsc-edc-controlplane-dcp) to provide integration with TMForum and provisioning at the FIWARE Data Space Connector, secured via DCP
