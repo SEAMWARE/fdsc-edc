@@ -21,13 +21,16 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
+import java.util.stream.Collectors;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.domain.ExtendableQuoteUpdateVO;
 import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.tmforum.quote.model.QuoteCreateVO;
+import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
 
 /** Client implementation to interact with the TMForum Usage API */
 public class QuoteApiClient extends ApiClient {
@@ -112,11 +115,34 @@ public class QuoteApiClient extends ApiClient {
     }
   }
 
-  /** Returns all quotes corresponding to the given negotiationId */
+  /** Returns all quotes corresponding to the given negotiationId. */
   public List<ExtendableQuoteVO> findByNegotiationId(String negotiationId) {
     HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
     urlBuilder.addPathSegment(QUOTE_PATH);
     urlBuilder.addQueryParameter("externalId", negotiationId);
+    Request request = new Request.Builder().url(urlBuilder.build()).build();
+    try (ResponseBody responseBody = executeRequest(request)) {
+      return objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {});
+    } catch (IOException e) {
+      monitor.warning(
+          String.format("Was not able to get quotes for negotiation %s", negotiationId), e);
+      throw new BadGatewayException(
+          String.format("Was not able to get quotes for negotiation %s", negotiationId));
+    }
+  }
+
+  /**
+   * Returns quotes for the given negotiationId filtered to only include quotes in the specified
+   * states. Uses TMForum API server-side filtering to reduce data transfer.
+   */
+  public List<ExtendableQuoteVO> findByNegotiationIdAndStates(
+      String negotiationId, Collection<QuoteStateTypeVO> states) {
+    HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
+    urlBuilder.addPathSegment(QUOTE_PATH);
+    urlBuilder.addQueryParameter("externalId", negotiationId);
+    String stateFilter =
+        states.stream().map(QuoteStateTypeVO::getValue).collect(Collectors.joining(","));
+    urlBuilder.addQueryParameter("state", stateFilter);
     Request request = new Request.Builder().url(urlBuilder.build()).build();
     try (ResponseBody responseBody = executeRequest(request)) {
       return objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {});
