@@ -59,6 +59,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
     List<ExtendableQuoteVO> lockableQuotes =
         quotes.stream()
             .filter(q -> q.getContractNegotiationState() != null)
+            .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
             .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
             .toList();
 
@@ -114,6 +115,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
     List<ExtendableQuoteVO> quotes = quoteApi.findByNegotiationId(negotiationId);
     return quotes.stream()
         .filter(q -> q.getContractNegotiationState() != null)
+        .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
         .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
         .anyMatch(
             q -> {
@@ -127,6 +129,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
     List<ExtendableQuoteVO> quotes = quoteApi.findByNegotiationId(negotiationId);
     return quotes.stream()
         .filter(q -> q.getContractNegotiationState() != null)
+        .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
         .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
         .anyMatch(
             q -> {
@@ -142,6 +145,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
     List<ExtendableQuoteVO> quotes = quoteApi.findByNegotiationId(negotiationId);
     quotes.stream()
         .filter(q -> q.getContractNegotiationState() != null)
+        .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
         .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
         .filter(q -> q.getContractNegotiationState().isLeased())
         .forEach(
