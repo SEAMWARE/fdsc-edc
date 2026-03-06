@@ -230,36 +230,38 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         new ArrayList<>(contractNegotiations), agreementApi, participantResolver, participantId);
   }
 
-  private List<ContractNegotiation> getNegotiations(List<Criterion> criteria) {
-    Predicate<ContractNegotiation> filterPredicate =
-        criteria.stream()
-            .map(criterionOperatorRegistry::<ContractNegotiation>toPredicate)
-            .reduce(x -> true, Predicate::and);
-    // we want no duplicates
+  private Map<String, List<ExtendableQuoteVO>> fetchQuotesByNegotiationId() {
     Map<String, List<ExtendableQuoteVO>> negotiations = new HashMap<>();
     int offset = 0;
     boolean moreQuotesAvailable = true;
     int limit = 100;
-    // a negotiation might consist of multiple quotes, thus first fetch the ids and then reduce
-    // the multi calls need to be improved, current solution is bad performance
     while (moreQuotesAvailable) {
       List<ExtendableQuoteVO> extendableQuoteVOS = quoteApi.getQuotes(offset, limit);
       extendableQuoteVOS.stream()
           .filter(eqv -> eqv.getContractNegotiationState() != null)
-          // only those that this controlplane is responsible for
           .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
           .forEach(
-              eqv -> {
-                if (negotiations.containsKey(eqv.getExternalId())) {
-                  negotiations.get(eqv.getExternalId()).add(eqv);
-                } else {
-                  negotiations.put(eqv.getExternalId(), new ArrayList<>(List.of(eqv)));
-                }
-              });
+              eqv ->
+                  negotiations
+                      .computeIfAbsent(eqv.getExternalId(), k -> new ArrayList<>())
+                      .add(eqv));
       moreQuotesAvailable = extendableQuoteVOS.size() == limit;
       offset += limit;
     }
-    return negotiations.entrySet().stream()
+    return negotiations;
+  }
+
+  private List<ContractNegotiation> getNegotiations(List<Criterion> criteria) {
+    return toNegotiations(fetchQuotesByNegotiationId(), criteria);
+  }
+
+  private List<ContractNegotiation> toNegotiations(
+      Map<String, List<ExtendableQuoteVO>> quotesMap, List<Criterion> criteria) {
+    Predicate<ContractNegotiation> filterPredicate =
+        criteria.stream()
+            .map(criterionOperatorRegistry::<ContractNegotiation>toPredicate)
+            .reduce(x -> true, Predicate::and);
+    return quotesMap.entrySet().stream()
         .map(
             entry -> {
               try {
@@ -285,7 +287,6 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       return lockManager.writeLock(
           () ->
               getNegotiations(Arrays.asList(criteria)).stream()
-                  .filter(e -> !leaseHolder.isLeased(e.getId()))
                   .filter(
                       cn -> {
                         try {
@@ -709,6 +710,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setState(ContractNegotiationStates.TERMINATED.name())
             .setCorrelationId(contractNegotiation.getCorrelationId())
             .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+    preserveLeaseFields(orginialQuote.getContractNegotiationState(), contractNegotiationState);
 
     quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
     quoteUpdateVO.setExtendableQuoteItem(
@@ -751,6 +753,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setState(contractNegotiation.stateAsString())
             .setCorrelationId(contractNegotiation.getCorrelationId())
             .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+    preserveLeaseFields(originalQuote.getContractNegotiationState(), contractNegotiationState);
 
     quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
     quoteUpdateVO.setExtendableQuoteItem(
@@ -864,6 +867,15 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       case CONSUMER -> CONSUMER_ROLE;
       case PROVIDER -> PROVIDER_ROLE;
     };
+  }
+
+  private void preserveLeaseFields(
+      ContractNegotiationState source, ContractNegotiationState target) {
+    if (source != null) {
+      target.setLeased(source.isLeased());
+      target.setLeasedBy(source.getLeasedBy());
+      target.setLeaseExpiry(source.getLeaseExpiry());
+    }
   }
 
   private record PartyWithRole(String partyId, String role) {}

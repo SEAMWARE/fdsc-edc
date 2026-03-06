@@ -82,7 +82,7 @@ public class AutomaticUnlockingLockManager implements LockManager {
         executorService.schedule(
             () -> {
               monitor.warning("Unlock stalled write-lock.");
-              lock.readLock().unlock();
+              lock.writeLock().unlock();
             },
             10,
             TimeUnit.SECONDS);

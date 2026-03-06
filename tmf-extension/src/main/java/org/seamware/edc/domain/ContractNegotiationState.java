@@ -22,6 +22,8 @@ public class ContractNegotiationState {
 
   private boolean isPending;
   private boolean isLeased;
+  private String leasedBy;
+  private long leaseExpiry;
   private String controlplane;
   private String state;
   private String correlationId;
@@ -51,6 +53,24 @@ public class ContractNegotiationState {
 
   public ContractNegotiationState setLeased(boolean leased) {
     isLeased = leased;
+    return this;
+  }
+
+  public String getLeasedBy() {
+    return leasedBy;
+  }
+
+  public ContractNegotiationState setLeasedBy(String leasedBy) {
+    this.leasedBy = leasedBy;
+    return this;
+  }
+
+  public long getLeaseExpiry() {
+    return leaseExpiry;
+  }
+
+  public ContractNegotiationState setLeaseExpiry(long leaseExpiry) {
+    this.leaseExpiry = leaseExpiry;
     return this;
   }
 
@@ -88,6 +108,8 @@ public class ContractNegotiationState {
     ContractNegotiationState that = (ContractNegotiationState) o;
     return isPending == that.isPending
         && isLeased == that.isLeased
+        && leaseExpiry == that.leaseExpiry
+        && Objects.equals(leasedBy, that.leasedBy)
         && Objects.equals(controlplane, that.controlplane)
         && Objects.equals(state, that.state)
         && Objects.equals(correlationId, that.correlationId)
@@ -97,6 +119,13 @@ public class ContractNegotiationState {
   @Override
   public int hashCode() {
     return Objects.hash(
-        isPending, isLeased, controlplane, state, correlationId, counterPartyAddress);
+        isPending,
+        isLeased,
+        leasedBy,
+        leaseExpiry,
+        controlplane,
+        state,
+        correlationId,
+        counterPartyAddress);
   }
 }

@@ -432,19 +432,12 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
     negotiationLeases.forEach(
         nl -> {
           negMap.put(nl.contractNegotiation().getId(), nl);
-          if (nl.acquireError()) {
+          if (nl.isLeased() || nl.acquireError()) {
             doThrow(new IllegalStateException())
                 .when(leaseHolder)
                 .acquireLease(eq(nl.contractNegotiation().getId()), any());
           }
         });
-
-    when(leaseHolder.isLeased(any()))
-        .thenAnswer(
-            invocationOnMock -> {
-              String id = invocationOnMock.getArgument(0);
-              return negMap.get(id).isLeased();
-            });
     when(tmfEdcMapper.toContractNegotiation(any(), any(), any(), any()))
         .thenAnswer(
             invocationOnMock -> {
@@ -496,7 +489,6 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
     List<ExtendableQuoteVO> extendableQuoteVOS =
         getQuotes(negotiationId, TEST_CONTROL_PLANE_ID, 10);
 
-    when(leaseHolder.isLeased(eq(negotiationId))).thenReturn(false);
     when(quoteApiClient.findByNegotiationId(eq(negotiationId))).thenReturn(extendableQuoteVOS);
     when(tmfEdcMapper.toContractNegotiation(eq(extendableQuoteVOS), any(), any(), any()))
         .thenReturn(negotiation);
