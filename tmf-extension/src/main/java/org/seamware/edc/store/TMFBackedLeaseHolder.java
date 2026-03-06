@@ -32,12 +32,19 @@ import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
  * stored as metadata on the quote's {@link ContractNegotiationState}, enabling multiple EDC
  * controlplane instances to coordinate access to the same contract negotiation. Uses
  * read-after-write verification to detect race conditions during lease acquisition.
+ *
+ * <p>Queries the TMForum API with server-side state filtering, requesting only quotes in active
+ * (non-terminal) states to reduce data transfer and avoid processing cancelled or rejected quotes.
  */
 public class TMFBackedLeaseHolder implements LeaseHolder {
 
   private static final Duration DEFAULT_LEASE_TIME = Duration.ofSeconds(60);
-  private static final Set<QuoteStateTypeVO> TERMINAL_QUOTE_STATES =
-      Set.of(QuoteStateTypeVO.CANCELLED, QuoteStateTypeVO.REJECTED);
+  private static final Set<QuoteStateTypeVO> ACTIVE_QUOTE_STATES =
+      Set.of(
+          QuoteStateTypeVO.PENDING,
+          QuoteStateTypeVO.IN_PROGRESS,
+          QuoteStateTypeVO.APPROVED,
+          QuoteStateTypeVO.ACCEPTED);
 
   private final QuoteApiClient quoteApi;
   private final String controlplane;
@@ -54,13 +61,13 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
 
   @Override
   public void acquireLease(String negotiationId, String lockId, Duration leaseTime) {
-    List<ExtendableQuoteVO> quotes = quoteApi.findByNegotiationId(negotiationId);
+    List<ExtendableQuoteVO> quotes =
+        quoteApi.findByNegotiationIdAndStates(negotiationId, ACTIVE_QUOTE_STATES);
 
     List<ExtendableQuoteVO> lockableQuotes =
         quotes.stream()
             .filter(q -> q.getContractNegotiationState() != null)
             .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
-            .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
             .toList();
 
     if (lockableQuotes.isEmpty()) {
@@ -82,7 +89,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
 
     long expiry = clock.millis() + leaseTime.toMillis();
 
-    // Acquire lease on all non-terminal quotes
+    // Acquire lease on all active quotes for this controlplane
     for (ExtendableQuoteVO quote : lockableQuotes) {
       ContractNegotiationState updatedState =
           copyStateWithLease(quote.getContractNegotiationState(), true, lockId, expiry);
@@ -112,11 +119,11 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
 
   @Override
   public boolean isLeased(String negotiationId) {
-    List<ExtendableQuoteVO> quotes = quoteApi.findByNegotiationId(negotiationId);
+    List<ExtendableQuoteVO> quotes =
+        quoteApi.findByNegotiationIdAndStates(negotiationId, ACTIVE_QUOTE_STATES);
     return quotes.stream()
         .filter(q -> q.getContractNegotiationState() != null)
         .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
-        .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
         .anyMatch(
             q -> {
               ContractNegotiationState state = q.getContractNegotiationState();
@@ -126,11 +133,11 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
 
   @Override
   public boolean isLeasedBy(String negotiationId, String lockId) {
-    List<ExtendableQuoteVO> quotes = quoteApi.findByNegotiationId(negotiationId);
+    List<ExtendableQuoteVO> quotes =
+        quoteApi.findByNegotiationIdAndStates(negotiationId, ACTIVE_QUOTE_STATES);
     return quotes.stream()
         .filter(q -> q.getContractNegotiationState() != null)
         .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
-        .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
         .anyMatch(
             q -> {
               ContractNegotiationState state = q.getContractNegotiationState();
@@ -142,11 +149,11 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
 
   @Override
   public void freeLease(String negotiationId, String reason) {
-    List<ExtendableQuoteVO> quotes = quoteApi.findByNegotiationId(negotiationId);
+    List<ExtendableQuoteVO> quotes =
+        quoteApi.findByNegotiationIdAndStates(negotiationId, ACTIVE_QUOTE_STATES);
     quotes.stream()
         .filter(q -> q.getContractNegotiationState() != null)
         .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
-        .filter(q -> !TERMINAL_QUOTE_STATES.contains(q.getState()))
         .filter(q -> q.getContractNegotiationState().isLeased())
         .forEach(
             q -> {
