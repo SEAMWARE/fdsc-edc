@@ -23,10 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import jakarta.json.Json;
 import jakarta.json.JsonBuilderFactory;
-
 import java.time.Clock;
 import java.util.Map;
-
 import okhttp3.OkHttpClient;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.AssetIndex;
 import org.eclipse.edc.connector.controlplane.asset.spi.index.DataAddressResolver;
@@ -54,281 +52,271 @@ import org.eclipse.edc.transform.transformer.edc.to.JsonValueToGenericTypeTransf
 import org.seamware.edc.store.*;
 import org.seamware.edc.tmf.*;
 
-/**
- * Extension to store and track ContractNegotiations in TMForum
- */
+/** Extension to store and track ContractNegotiations in TMForum */
 @Requires({CriterionOperatorRegistry.class})
 @Provides({
-        TMFEdcMapper.class,
-        ObjectMapper.class,
-        QuoteApiClient.class,
-        AgreementApiClient.class,
-        ProductOrderApiClient.class,
-        ProductCatalogApiClient.class,
-        ProductInventoryApiClient.class,
-        ParticipantResolver.class,
-        ContractNegotiationStore.class,
-        ContractDefinitionStore.class,
-        PolicyDefinitionStore.class,
-        AssetIndex.class,
-        DataAddressResolver.class,
-        TransactionContext.class
+  TMFEdcMapper.class,
+  ObjectMapper.class,
+  QuoteApiClient.class,
+  AgreementApiClient.class,
+  ProductOrderApiClient.class,
+  ProductCatalogApiClient.class,
+  ProductInventoryApiClient.class,
+  ParticipantResolver.class,
+  ContractNegotiationStore.class,
+  ContractDefinitionStore.class,
+  PolicyDefinitionStore.class,
+  AssetIndex.class,
+  DataAddressResolver.class,
+  TransactionContext.class
 })
 public class TMFContractNegotiationExtension implements ServiceExtension {
 
-    public static final String SCHEMA_BASE_URI_PROP = "schemaBaseUri";
-    private static final String NAME = "TMFExtension";
+  public static final String SCHEMA_BASE_URI_PROP = "schemaBaseUri";
+  private static final String NAME = "TMFExtension";
 
-    @Inject
-    private OkHttpClient okHttpClient;
-    @Inject
-    private DataspaceProfileContextRegistry dataspaceProfileContextRegistry;
-    @Inject
-    private Monitor monitor;
-    @Inject
-    private TypeManager typeManager;
+  @Inject private OkHttpClient okHttpClient;
+  @Inject private DataspaceProfileContextRegistry dataspaceProfileContextRegistry;
+  @Inject private Monitor monitor;
+  @Inject private TypeManager typeManager;
 
-    private ObjectMapper objectMapper;
+  private ObjectMapper objectMapper;
 
-    private ContractDefinitionStore contractDefinitionStore;
-    private PolicyDefinitionStore policyDefinitionStore;
-    private AssetIndex assetIndex;
+  private ContractDefinitionStore contractDefinitionStore;
+  private PolicyDefinitionStore policyDefinitionStore;
+  private AssetIndex assetIndex;
 
-    private QuoteApiClient quoteApi;
-    private AgreementApiClient agreementApi;
-    private ProductOrderApiClient productOrderApi;
-    private ParticipantResolver participantResolver;
-    private ProductCatalogApiClient productCatalogApi;
-    private ProductInventoryApiClient productInventoryApi;
-    private ContractNegotiationStore contractNegotiationStore;
-    private TMFEdcMapper tmfEdcMapper;
-    private TMFTransactionContext tmfTransactionContext;
+  private QuoteApiClient quoteApi;
+  private AgreementApiClient agreementApi;
+  private ProductOrderApiClient productOrderApi;
+  private ParticipantResolver participantResolver;
+  private ProductCatalogApiClient productCatalogApi;
+  private ProductInventoryApiClient productInventoryApi;
+  private ContractNegotiationStore contractNegotiationStore;
+  private TMFEdcMapper tmfEdcMapper;
+  private TMFTransactionContext tmfTransactionContext;
 
-    private TMFConfig tmfConfig;
+  private TMFConfig tmfConfig;
 
-    @Inject
-    private CriterionOperatorRegistry criterionOperatorRegistry;
+  @Inject private CriterionOperatorRegistry criterionOperatorRegistry;
 
-    @Inject
-    private Clock clock;
+  @Inject private Clock clock;
 
-    @Inject
-    private TypeTransformerRegistry typeTransformerRegistry;
+  @Inject private TypeTransformerRegistry typeTransformerRegistry;
 
-    @Inject
-    private JsonLd jsonLd;
+  @Inject private JsonLd jsonLd;
 
-    @Override
-    public String name() {
-        return NAME;
+  @Override
+  public String name() {
+    return NAME;
+  }
+
+  @Provider
+  public TMFConfig tmfConfig(ServiceExtensionContext context) {
+    if (tmfConfig == null) {
+      tmfConfig = TMFConfig.fromConfig(context.getConfig());
     }
+    return tmfConfig;
+  }
 
-    @Provider
-    public TMFConfig tmfConfig(ServiceExtensionContext context) {
-        if (tmfConfig == null) {
-            tmfConfig = TMFConfig.fromConfig(context.getConfig());
-        }
-        return tmfConfig;
+  @Override
+  public void initialize(ServiceExtensionContext context) {
+
+    TMFConfig config = tmfConfig(context);
+    if (!config.isEnabled()) {
+      monitor.info("TMF extension is not enabled.");
+      return;
     }
+    JsonBuilderFactory jsonBuilderFactory = Json.createBuilderFactory(Map.of());
+    ParticipantIdMapper participantIdMapper =
+        new ParticipantIdMapper() {
+          @Override
+          public String toIri(String s) {
+            return s;
+          }
 
-    @Override
-    public void initialize(ServiceExtensionContext context) {
+          @Override
+          public String fromIri(String s) {
+            return s;
+          }
+        };
+    OdrlTransformersFactory.jsonObjectToOdrlTransformers(participantIdMapper)
+        .forEach(typeTransformerRegistry::register);
+    typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
+    typeTransformerRegistry.register(
+        new JsonObjectFromPolicyTransformer(
+            jsonBuilderFactory,
+            participantIdMapper,
+            new JsonObjectFromPolicyTransformer.TransformerConfig(true, true)));
 
-        TMFConfig config = tmfConfig(context);
-        if (!config.isEnabled()) {
-            monitor.info("TMF extension is not enabled.");
-            return;
-        }
-        JsonBuilderFactory jsonBuilderFactory = Json.createBuilderFactory(Map.of());
-        ParticipantIdMapper participantIdMapper =
-                new ParticipantIdMapper() {
-                    @Override
-                    public String toIri(String s) {
-                        return s;
-                    }
+    SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
+    context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
+    context.registerService(ObjectMapper.class, objectMapper());
+    context.registerService(QuoteApiClient.class, quoteApi(context, config));
+    context.registerService(AgreementApiClient.class, agreementApi(config));
+    context.registerService(ProductOrderApiClient.class, productOrderApi(config));
+    context.registerService(ProductCatalogApiClient.class, productCatalogApi(config));
+    context.registerService(ProductInventoryApiClient.class, productInventoryApi(config));
+    context.registerService(ParticipantResolver.class, participantResolver(config));
+    context.registerService(TransactionContext.class, tmfTransactionContext());
+    context.registerService(
+        ContractNegotiationStore.class, contractNegotiationStore(context, config));
+    context.registerService(ContractDefinitionStore.class, contractDefinitionStore(config));
+    context.registerService(PolicyDefinitionStore.class, policyDefinitionStore(config));
+    context.registerService(AssetIndex.class, assetIndex(config));
+    context.registerService(DataAddressResolver.class, dataAddressResolver(config));
+  }
 
-                    @Override
-                    public String fromIri(String s) {
-                        return s;
-                    }
-                };
-        OdrlTransformersFactory.jsonObjectToOdrlTransformers(participantIdMapper)
-                .forEach(typeTransformerRegistry::register);
-        typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
-        typeTransformerRegistry.register(
-                new JsonObjectFromPolicyTransformer(
-                        jsonBuilderFactory,
-                        participantIdMapper,
-                        new JsonObjectFromPolicyTransformer.TransformerConfig(true, true)));
-
-        SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
-        context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
-        context.registerService(ObjectMapper.class, objectMapper());
-        context.registerService(QuoteApiClient.class, quoteApi(context, config));
-        context.registerService(AgreementApiClient.class, agreementApi(config));
-        context.registerService(ProductOrderApiClient.class, productOrderApi(config));
-        context.registerService(ProductCatalogApiClient.class, productCatalogApi(config));
-        context.registerService(ProductInventoryApiClient.class, productInventoryApi(config));
-        context.registerService(ParticipantResolver.class, participantResolver(config));
-        context.registerService(TransactionContext.class, tmfTransactionContext());
-        context.registerService(
-                ContractNegotiationStore.class, contractNegotiationStore(context, config));
-        context.registerService(ContractDefinitionStore.class, contractDefinitionStore(config));
-        context.registerService(PolicyDefinitionStore.class, policyDefinitionStore(config));
-        context.registerService(AssetIndex.class, assetIndex(config));
-        context.registerService(DataAddressResolver.class, dataAddressResolver(config));
+  public TMFEdcMapper tmfEdcMapper(TMFConfig config) {
+    if (tmfEdcMapper == null) {
+      tmfEdcMapper =
+          new TMFEdcMapper(
+              monitor,
+              objectMapper(),
+              participantResolver(config),
+              typeTransformerRegistry,
+              jsonLd,
+              clock);
     }
+    return tmfEdcMapper;
+  }
 
-    public TMFEdcMapper tmfEdcMapper(TMFConfig config) {
-        if (tmfEdcMapper == null) {
-            tmfEdcMapper =
-                    new TMFEdcMapper(
-                            monitor,
-                            objectMapper(),
-                            participantResolver(config),
-                            typeTransformerRegistry,
-                            jsonLd,
-                            clock);
-        }
-        return tmfEdcMapper;
+  public ObjectMapper objectMapper() {
+    if (objectMapper == null) {
+      objectMapper = new ObjectMapper();
+      objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+      objectMapper.addMixIn(Policy.Builder.class, UnknownPropertyMixin.class);
+      objectMapper.registerModule(new JavaTimeModule());
     }
+    return objectMapper;
+  }
 
-    public ObjectMapper objectMapper() {
-        if (objectMapper == null) {
-            objectMapper = new ObjectMapper();
-            objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
-            objectMapper.addMixIn(Policy.Builder.class, UnknownPropertyMixin.class);
-            objectMapper.registerModule(new JavaTimeModule());
-        }
-        return objectMapper;
+  public QuoteApiClient quoteApi(ServiceExtensionContext context, TMFConfig tmfConfig) {
+    if (quoteApi == null) {
+
+      quoteApi =
+          new QuoteApiClient(
+              monitor,
+              okHttpClient,
+              context.getConfig().getString("edc.hostname"),
+              tmfConfig.getQuoteApi().toString(),
+              objectMapper());
     }
+    return quoteApi;
+  }
 
-    public QuoteApiClient quoteApi(ServiceExtensionContext context, TMFConfig tmfConfig) {
-        if (quoteApi == null) {
-
-            quoteApi =
-                    new QuoteApiClient(
-                            monitor,
-                            okHttpClient,
-                            context.getConfig().getString("edc.hostname"),
-                            tmfConfig.getQuoteApi().toString(),
-                            objectMapper());
-        }
-        return quoteApi;
+  public AgreementApiClient agreementApi(TMFConfig tmfConfig) {
+    if (agreementApi == null) {
+      agreementApi =
+          new AgreementApiClient(
+              monitor, okHttpClient, tmfConfig.getAgreementApi().toString(), objectMapper());
     }
+    return agreementApi;
+  }
 
-    public AgreementApiClient agreementApi(TMFConfig tmfConfig) {
-        if (agreementApi == null) {
-            agreementApi =
-                    new AgreementApiClient(
-                            monitor, okHttpClient, tmfConfig.getAgreementApi().toString(), objectMapper());
-        }
-        return agreementApi;
+  public ProductOrderApiClient productOrderApi(TMFConfig tmfConfig) {
+    if (productOrderApi == null) {
+      productOrderApi =
+          new ProductOrderApiClient(
+              monitor, okHttpClient, tmfConfig.getProductOrderApi().toString(), objectMapper());
     }
+    return productOrderApi;
+  }
 
-    public ProductOrderApiClient productOrderApi(TMFConfig tmfConfig) {
-        if (productOrderApi == null) {
-            productOrderApi =
-                    new ProductOrderApiClient(
-                            monitor, okHttpClient, tmfConfig.getProductOrderApi().toString(), objectMapper());
-        }
-        return productOrderApi;
+  public ProductCatalogApiClient productCatalogApi(TMFConfig tmfConfig) {
+    if (productCatalogApi == null) {
+      productCatalogApi =
+          new ProductCatalogApiClient(
+              monitor,
+              okHttpClient,
+              tmfConfig.getProductCatalogApi().toString(),
+              objectMapper(),
+              tmfEdcMapper(tmfConfig));
     }
+    return productCatalogApi;
+  }
 
-    public ProductCatalogApiClient productCatalogApi(TMFConfig tmfConfig) {
-        if (productCatalogApi == null) {
-            productCatalogApi =
-                    new ProductCatalogApiClient(
-                            monitor,
-                            okHttpClient,
-                            tmfConfig.getProductCatalogApi().toString(),
-                            objectMapper(),
-                            tmfEdcMapper(tmfConfig));
-        }
-        return productCatalogApi;
+  public ProductInventoryApiClient productInventoryApi(TMFConfig tmfConfig) {
+    if (productInventoryApi == null) {
+      productInventoryApi =
+          new ProductInventoryApiClient(
+              monitor, okHttpClient, tmfConfig.getProductInventoryApi().toString(), objectMapper());
     }
+    return productInventoryApi;
+  }
 
-    public ProductInventoryApiClient productInventoryApi(TMFConfig tmfConfig) {
-        if (productInventoryApi == null) {
-            productInventoryApi =
-                    new ProductInventoryApiClient(
-                            monitor, okHttpClient, tmfConfig.getProductInventoryApi().toString(), objectMapper());
-        }
-        return productInventoryApi;
+  public ParticipantResolver participantResolver(TMFConfig tmfConfig) {
+    if (participantResolver == null) {
+      participantResolver =
+          new ParticipantResolver(
+              monitor, okHttpClient, tmfConfig.getPartyCatalogApi().toString(), objectMapper());
     }
+    return participantResolver;
+  }
 
-    public ParticipantResolver participantResolver(TMFConfig tmfConfig) {
-        if (participantResolver == null) {
-            participantResolver =
-                    new ParticipantResolver(
-                            monitor, okHttpClient, tmfConfig.getPartyCatalogApi().toString(), objectMapper());
-        }
-        return participantResolver;
+  public TMFTransactionContext tmfTransactionContext() {
+    if (tmfTransactionContext == null) {
+      tmfTransactionContext = new TMFTransactionContext(monitor);
     }
+    return tmfTransactionContext;
+  }
 
-    public TMFTransactionContext tmfTransactionContext() {
-        if (tmfTransactionContext == null) {
-            tmfTransactionContext = new TMFTransactionContext(monitor);
-        }
-        return tmfTransactionContext;
+  public ContractNegotiationStore contractNegotiationStore(
+      ServiceExtensionContext serviceExtensionContext, TMFConfig tmfConfig) {
+    if (contractNegotiationStore == null) {
+
+      String controlplane = serviceExtensionContext.getConfig().getString("edc.hostname");
+      contractNegotiationStore =
+          new TMFBackedContractNegotiationStore(
+              monitor,
+              objectMapper(),
+              quoteApi(serviceExtensionContext, tmfConfig),
+              agreementApi(tmfConfig),
+              productOrderApi(tmfConfig),
+              productCatalogApi(tmfConfig),
+              productInventoryApi(tmfConfig),
+              participantResolver(tmfConfig),
+              tmfEdcMapper(tmfConfig),
+              serviceExtensionContext.getParticipantId(),
+              controlplane,
+              criterionOperatorRegistry,
+              new TMFBackedLeaseHolder(
+                  quoteApi(serviceExtensionContext, tmfConfig), controlplane, clock, monitor),
+              tmfTransactionContext());
     }
+    return contractNegotiationStore;
+  }
 
-    public ContractNegotiationStore contractNegotiationStore(
-            ServiceExtensionContext serviceExtensionContext, TMFConfig tmfConfig) {
-        if (contractNegotiationStore == null) {
-
-            String controlplane = serviceExtensionContext.getConfig().getString("edc.hostname");
-            contractNegotiationStore =
-                    new TMFBackedContractNegotiationStore(
-                            monitor,
-                            objectMapper(),
-                            quoteApi(serviceExtensionContext, tmfConfig),
-                            agreementApi(tmfConfig),
-                            productOrderApi(tmfConfig),
-                            productCatalogApi(tmfConfig),
-                            productInventoryApi(tmfConfig),
-                            participantResolver(tmfConfig),
-                            tmfEdcMapper(tmfConfig),
-                            serviceExtensionContext.getParticipantId(),
-                            controlplane,
-                            criterionOperatorRegistry,
-                            new TMFBackedLeaseHolder(
-                                    quoteApi(serviceExtensionContext, tmfConfig), controlplane, clock, monitor),
-                            tmfTransactionContext());
-        }
-        return contractNegotiationStore;
+  public ContractDefinitionStore contractDefinitionStore(TMFConfig tmfConfig) {
+    if (contractDefinitionStore == null) {
+      contractDefinitionStore =
+          new TMFBackedContractDefinitionStore(
+              monitor, productCatalogApi(tmfConfig), tmfEdcMapper(tmfConfig));
     }
+    return contractDefinitionStore;
+  }
 
-    public ContractDefinitionStore contractDefinitionStore(TMFConfig tmfConfig) {
-        if (contractDefinitionStore == null) {
-            contractDefinitionStore =
-                    new TMFBackedContractDefinitionStore(
-                            monitor, productCatalogApi(tmfConfig), tmfEdcMapper(tmfConfig));
-        }
-        return contractDefinitionStore;
+  public PolicyDefinitionStore policyDefinitionStore(TMFConfig tmfConfig) {
+    if (policyDefinitionStore == null) {
+      policyDefinitionStore =
+          new TMFBackedPolicyDefinitionStore(monitor, productCatalogApi(tmfConfig));
     }
+    return policyDefinitionStore;
+  }
 
-    public PolicyDefinitionStore policyDefinitionStore(TMFConfig tmfConfig) {
-        if (policyDefinitionStore == null) {
-            policyDefinitionStore =
-                    new TMFBackedPolicyDefinitionStore(monitor, productCatalogApi(tmfConfig));
-        }
-        return policyDefinitionStore;
+  public AssetIndex assetIndex(TMFConfig tmfConfig) {
+    if (assetIndex == null) {
+      assetIndex =
+          new TMFBackedAssetIndex(
+              monitor,
+              productCatalogApi(tmfConfig),
+              tmfEdcMapper(tmfConfig),
+              criterionOperatorRegistry);
     }
+    return assetIndex;
+  }
 
-    public AssetIndex assetIndex(TMFConfig tmfConfig) {
-        if (assetIndex == null) {
-            assetIndex =
-                    new TMFBackedAssetIndex(
-                            monitor,
-                            productCatalogApi(tmfConfig),
-                            tmfEdcMapper(tmfConfig),
-                            criterionOperatorRegistry);
-        }
-        return assetIndex;
-    }
-
-    public DataAddressResolver dataAddressResolver(TMFConfig tmfConfig) {
-        return assetIndex(tmfConfig);
-    }
+  public DataAddressResolver dataAddressResolver(TMFConfig tmfConfig) {
+    return assetIndex(tmfConfig);
+  }
 }

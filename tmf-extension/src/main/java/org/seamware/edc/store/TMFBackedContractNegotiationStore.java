@@ -995,7 +995,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
           productOrderApi.updateProductOrder(orderId, revert);
         });
   }
-  
+
   private void preserveLeaseFields(
       ContractNegotiationState source, ContractNegotiationState target) {
     if (source != null) {
