@@ -613,6 +613,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                 () ->
                     new IllegalArgumentException(
                         "An agreement needs to be present at that stage."));
+    String previousAgreementStatus = extendableAgreementVO.getStatus();
     extendableAgreementVO.setStatus(AgreementState.AGREED.getValue());
     AgreementItemVO agreementItemVO =
         new AgreementItemVO().addProductItem(new ProductRefVO().id(product.getId()));
@@ -621,6 +622,10 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
     agreementApi.updateAgreement(
         extendableAgreementVO.getId(), tmfEdcMapper.toUpdate(extendableAgreementVO));
+    registerAgreementCompensation(
+        "revert finalized agreement " + extendableAgreementVO.getId(),
+        extendableAgreementVO.getId(),
+        previousAgreementStatus);
     productOrderApi.updateProductOrder(orderVO.get().getId(), productOrderUpdateVO);
   }
 
@@ -629,8 +634,11 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         .findByNegotiationId(negotiationId)
         .ifPresent(
             ea -> {
+              String previousStatus = ea.getStatus();
               ea.setStatus(AgreementState.REJECTED.getValue());
               agreementApi.updateAgreement(ea.getId(), tmfEdcMapper.toUpdate(ea));
+              registerAgreementCompensation(
+                  "revert cancelled agreement " + ea.getId(), ea.getId(), previousStatus);
             });
   }
 
@@ -743,7 +751,15 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .addTermOrConditionItem(
                 new AgreementTermOrConditionVO().description("Under negotiation")));
     agreementVO.setStatus(AgreementState.IN_PROCESS.getValue());
-    agreementApi.createAgreement(tmfEdcMapper.toCreate(agreementVO));
+    ExtendableAgreementVO created =
+        agreementApi.createAgreement(tmfEdcMapper.toCreate(agreementVO));
+
+    if (created != null) {
+      registerAgreementCompensation(
+          "reject created agreement " + created.getId(),
+          created.getId(),
+          AgreementState.REJECTED.getValue());
+    }
   }
 
   private void updateQuote(
@@ -919,6 +935,21 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             revert.setContractNegotiationState(revertToNegState);
           }
           quoteApi.updateQuote(quoteId, revert);
+        });
+  }
+
+  private void registerAgreementCompensation(
+      String description, String agreementId, String revertToStatus) {
+    SagaContext saga = transactionContext.currentSaga();
+    if (saga == null) {
+      return;
+    }
+    saga.addCompensation(
+        description,
+        () -> {
+          ExtendableAgreementUpdateVO revert = new ExtendableAgreementUpdateVO();
+          revert.setStatus(revertToStatus);
+          agreementApi.updateAgreement(agreementId, revert);
         });
   }
 
