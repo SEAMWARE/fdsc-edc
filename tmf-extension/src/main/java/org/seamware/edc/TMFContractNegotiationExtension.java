@@ -46,6 +46,7 @@ import org.eclipse.edc.spi.query.CriterionOperatorRegistry;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.types.TypeManager;
+import org.eclipse.edc.transaction.spi.TransactionContext;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
 import org.eclipse.edc.transform.transformer.edc.to.JsonValueToGenericTypeTransformer;
 import org.seamware.edc.store.*;
@@ -66,7 +67,8 @@ import org.seamware.edc.tmf.*;
   ContractDefinitionStore.class,
   PolicyDefinitionStore.class,
   AssetIndex.class,
-  DataAddressResolver.class
+  DataAddressResolver.class,
+  TransactionContext.class
 })
 public class TMFContractNegotiationExtension implements ServiceExtension {
 
@@ -92,6 +94,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   private ProductInventoryApiClient productInventoryApi;
   private ContractNegotiationStore contractNegotiationStore;
   private TMFEdcMapper tmfEdcMapper;
+  private TMFTransactionContext tmfTransactionContext;
 
   private TMFConfig tmfConfig;
 
@@ -155,6 +158,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
     context.registerService(ProductCatalogApiClient.class, productCatalogApi(config));
     context.registerService(ProductInventoryApiClient.class, productInventoryApi(config));
     context.registerService(ParticipantResolver.class, participantResolver(config));
+    context.registerService(TransactionContext.class, tmfTransactionContext());
     context.registerService(
         ContractNegotiationStore.class, contractNegotiationStore(context, config));
     context.registerService(ContractDefinitionStore.class, contractDefinitionStore(config));
@@ -250,6 +254,13 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
     return participantResolver;
   }
 
+  public TMFTransactionContext tmfTransactionContext() {
+    if (tmfTransactionContext == null) {
+      tmfTransactionContext = new TMFTransactionContext(monitor);
+    }
+    return tmfTransactionContext;
+  }
+
   public ContractNegotiationStore contractNegotiationStore(
       ServiceExtensionContext serviceExtensionContext, TMFConfig tmfConfig) {
     if (contractNegotiationStore == null) {
@@ -270,7 +281,8 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               controlplane,
               criterionOperatorRegistry,
               new TMFBackedLeaseHolder(
-                  quoteApi(serviceExtensionContext, tmfConfig), controlplane, clock, monitor));
+                  quoteApi(serviceExtensionContext, tmfConfig), controlplane, clock, monitor),
+              tmfTransactionContext());
     }
     return contractNegotiationStore;
   }

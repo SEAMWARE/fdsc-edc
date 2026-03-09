@@ -1440,6 +1440,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             TEST_CONTROL_PLANE_ID,
             criterionOperatorRegistry,
             leaseHolder,
+            new TMFTransactionContext(mock(Monitor.class)),
             lockManager);
 
     if (existingOrder != null) {

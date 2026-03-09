@@ -119,6 +119,7 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
             TEST_CONTROL_PLANE_ID,
             criterionOperatorRegistry,
             leaseHolder,
+            new TMFTransactionContext(mock(Monitor.class)),
             lockManager);
   }
 
