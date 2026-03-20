@@ -64,6 +64,14 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
     List<ExtendableQuoteVO> quotes =
         quoteApi.findByNegotiationIdAndStates(negotiationId, ACTIVE_QUOTE_STATES);
 
+    // No quotes exist yet — this is a new negotiation with nothing to lease-protect
+    if (quotes.isEmpty()) {
+      monitor.info(
+          String.format(
+              "No quotes found for negotiation %s, skipping lease acquisition.", negotiationId));
+      return;
+    }
+
     List<ExtendableQuoteVO> lockableQuotes =
         quotes.stream()
             .filter(q -> q.getContractNegotiationState() != null)

@@ -124,15 +124,27 @@ public class TMFBackedLeaseHolderTest {
     }
 
     @Test
-    void throws_when_no_quote_found() {
+    void skips_lease_when_no_quotes_exist() {
       when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
           .thenReturn(List.of());
+
+      assertDoesNotThrow(() -> leaseHolder.acquireLease("neg-1", "lock-1"));
+
+      verify(quoteApi, never()).updateQuote(any(), any());
+    }
+
+    @Test
+    void throws_when_quotes_exist_but_none_match_controlplane() {
+      ExtendableQuoteVO otherCpQuote = quoteWith("q-other", OTHER_CONTROLPLANE, false, null, 0);
+      when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
+          .thenReturn(List.of(otherCpQuote));
 
       IllegalStateException ex =
           assertThrows(
               IllegalStateException.class, () -> leaseHolder.acquireLease("neg-1", "lock-1"));
 
       assertTrue(ex.getMessage().contains("No quote found for negotiation neg-1"));
+      verify(quoteApi, never()).updateQuote(any(), any());
     }
 
     @Test
