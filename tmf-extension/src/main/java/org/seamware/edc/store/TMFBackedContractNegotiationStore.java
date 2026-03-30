@@ -23,6 +23,9 @@ import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.*;
+import java.util.Collections;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -77,6 +80,17 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   private final LockManager lockManager;
   private final LeaseHolder leaseHolder;
   private final TMFTransactionContext transactionContext;
+  private final ConcurrentHashMap<String, Object> negotiationLocks = new ConcurrentHashMap<>();
+
+  /**
+   * Tracks negotiation IDs that are currently being processed within this JVM. Populated by {@link
+   * #nextNotLeased} and {@link #findByIdAndLease} when they acquire a lease, cleared by {@link
+   * #save} when it releases the lease. This prevents the same negotiation from being picked up by
+   * the state machine while a previous processing cycle is still running, which the distributed
+   * lease alone cannot do because all threads in the same instance share the same {@code lockId}.
+   */
+  private final Set<String> activeNegotiations =
+      Collections.newSetFromMap(new ConcurrentHashMap<>());
 
   public TMFBackedContractNegotiationStore(
       Monitor monitor,
@@ -293,10 +307,12 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       return lockManager.writeLock(
           () ->
               getNegotiations(Arrays.asList(criteria)).stream()
+                  .filter(cn -> !activeNegotiations.contains(cn.getId()))
                   .filter(
                       cn -> {
                         try {
                           leaseHolder.acquireLease(cn.getId(), lockId);
+                          activeNegotiations.add(cn.getId());
                           return true;
                         } catch (Exception e) {
                           monitor.info(String.format("Was not able to lease %s", cn.getId()), e);
@@ -317,12 +333,16 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       return lockManager.writeLock(
           () -> {
             monitor.info("Find by Id and Lease " + s);
+            if (activeNegotiations.contains(s)) {
+              return StoreResult.alreadyLeased(String.format("%s is already leased.", s));
+            }
             ContractNegotiation contractNegotiation = findById(s);
             if (contractNegotiation == null) {
               return StoreResult.notFound(String.format("Negotiation %s does not exist.", s));
             }
             try {
               leaseHolder.acquireLease(s, lockId);
+              activeNegotiations.add(s);
               return StoreResult.success(contractNegotiation);
             } catch (IllegalStateException e) {
               return StoreResult.alreadyLeased(String.format("%s is already leased.", s));
@@ -336,39 +356,47 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   @Override
   public void save(ContractNegotiation contractNegotiation) {
-    try {
-      leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
-      transactionContext.execute(
-          (TransactionContext.TransactionBlock)
-              () -> {
-                try {
-                  ContractNegotiationStates negotiationState =
-                      ContractNegotiationStates.from(contractNegotiation.getState());
-                  switch (negotiationState) {
-                    case INITIAL, REQUESTING -> handleInitialStates(contractNegotiation);
-                    case REQUESTED -> handleRequestedState(contractNegotiation);
-                    case OFFERING, OFFERED -> handleOfferStates(contractNegotiation);
-                    case ACCEPTED, ACCEPTING -> handleAcceptStates(contractNegotiation);
-                    case AGREEING, AGREED ->
-                        handleAgreeStates(contractNegotiation, negotiationState);
-                    case VERIFIED, VERIFYING -> handleVerificationStates(contractNegotiation);
-                    case FINALIZING, FINALIZED -> handleFinalStates(contractNegotiation);
-                    case TERMINATED, TERMINATING -> handleTerminationStates(contractNegotiation);
-                    default ->
-                        monitor.warning(String.format("State not supported: %s", negotiationState));
+    // Per-negotiation lock prevents concurrent saves for the same negotiation within this
+    // JVM. Without this, two DSP message handlers can enter handleAgreeStates simultaneously
+    // and both create agreements before either sees the other's, producing duplicates.
+    Object lock = negotiationLocks.computeIfAbsent(contractNegotiation.getId(), k -> new Object());
+    synchronized (lock) {
+      try {
+        leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
+        transactionContext.execute(
+            (TransactionContext.TransactionBlock)
+                () -> {
+                  try {
+                    ContractNegotiationStates negotiationState =
+                        ContractNegotiationStates.from(contractNegotiation.getState());
+                    switch (negotiationState) {
+                      case INITIAL, REQUESTING -> handleInitialStates(contractNegotiation);
+                      case REQUESTED -> handleRequestedState(contractNegotiation);
+                      case OFFERING, OFFERED -> handleOfferStates(contractNegotiation);
+                      case ACCEPTED, ACCEPTING -> handleAcceptStates(contractNegotiation);
+                      case AGREEING, AGREED ->
+                          handleAgreeStates(contractNegotiation, negotiationState);
+                      case VERIFIED, VERIFYING -> handleVerificationStates(contractNegotiation);
+                      case FINALIZING, FINALIZED -> handleFinalStates(contractNegotiation);
+                      case TERMINATED, TERMINATING -> handleTerminationStates(contractNegotiation);
+                      default ->
+                          monitor.warning(
+                              String.format("State not supported: %s", negotiationState));
+                    }
+                  } catch (JsonProcessingException e) {
+                    throw new RuntimeException(e);
                   }
-                } catch (JsonProcessingException e) {
-                  throw new RuntimeException(e);
-                }
-              });
-    } catch (Exception e) {
-      monitor.warning(
-          String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
-      throw new EdcPersistenceException(
-          String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
-    } finally {
-      // always give up the lock
-      leaseHolder.freeLease(contractNegotiation.getId(), "Finally saved.");
+                });
+      } catch (Exception e) {
+        monitor.warning(
+            String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
+        throw new EdcPersistenceException(
+            String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
+      } finally {
+        // always give up the lock
+        leaseHolder.freeLease(contractNegotiation.getId(), "Finally saved.");
+        activeNegotiations.remove(contractNegotiation.getId());
+      }
     }
   }
 
@@ -473,7 +501,15 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     } else {
       updateQuote(activeQuote.get(), contractNegotiation, QuoteStateTypeVO.ACCEPTED);
       if (contractNegotiation.getContractAgreement() != null) {
-        createAgreement(contractNegotiation);
+        boolean agreementExists =
+            agreementApi
+                .findByContractId(contractNegotiation.getContractAgreement().getId())
+                .isPresent();
+        if (agreementExists) {
+          monitor.info("The agreement is already created.");
+        } else {
+          createAgreement(contractNegotiation);
+        }
       }
     }
   }
@@ -533,12 +569,16 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   private void handleRequestedState(ContractNegotiation contractNegotiation)
       throws JsonProcessingException {
     List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
-    // TODO: check why requested was part of the active states
+    // REQUESTED must be included: a concurrent save from handleInitialStates can update
+    // the quote's contractNegotiationState.state to REQUESTED before this handler runs.
     Optional<ExtendableQuoteVO> activeQuote =
         getActiveQuote(
             quotes,
             contractNegotiation,
-            List.of(ContractNegotiationStates.INITIAL, ContractNegotiationStates.REQUESTING));
+            List.of(
+                ContractNegotiationStates.INITIAL,
+                ContractNegotiationStates.REQUESTING,
+                ContractNegotiationStates.REQUESTED));
     if (activeQuote.isEmpty()) {
       monitor.debug(
           "Create quote in requested - existing quotes " + objectMapper.writeValueAsString(quotes));
@@ -744,6 +784,9 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
     ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(orginialQuote);
     quoteUpdateVO.setState(quoteState);
+    // Null out relatedParty to prevent the PATCH from clearing existing entries.
+    // See updateQuote for the detailed explanation.
+    quoteUpdateVO.setRelatedParty(null);
 
     ContractNegotiationState contractNegotiationState =
         new ContractNegotiationState()
@@ -793,7 +836,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       ExtendableQuoteVO originalQuote,
       ContractNegotiation contractNegotiation,
       QuoteStateTypeVO quoteState) {
-    monitor.warning(
+    monitor.debug(
         "Update existing quote for negotiation "
             + contractNegotiation.getId()
             + " - state "
@@ -806,6 +849,12 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
     ExtendableQuoteUpdateVO quoteUpdateVO = tmfEdcMapper.toUpdate(originalQuote);
     quoteUpdateVO.setState(quoteState);
+    // Null out relatedParty so that the PATCH does not overwrite existing entries.
+    // The generated QuoteVO initializes relatedParty to an empty ArrayList, so MapStruct
+    // copies that empty list even when the TMF API response omitted the field. With
+    // NON_NULL serialization, an empty list would be sent as "relatedParty": [], causing
+    // the TMF API to clear the related parties that were set during quote creation.
+    quoteUpdateVO.setRelatedParty(null);
     ContractNegotiationState contractNegotiationState =
         new ContractNegotiationState()
             .setControlplane(controlplane)
@@ -977,6 +1026,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         () -> {
           ExtendableAgreementUpdateVO revert = new ExtendableAgreementUpdateVO();
           revert.setStatus(revertToStatus);
+          nullAgreementListFields(revert);
           agreementApi.updateAgreement(agreementId, revert);
         });
   }
@@ -992,6 +1042,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         () -> {
           ProductOrderUpdateVO revert = new ProductOrderUpdateVO();
           revert.setState(revertToState);
+          nullProductOrderListFields(revert);
           productOrderApi.updateProductOrder(orderId, revert);
         });
   }
@@ -1003,6 +1054,36 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       target.setLeasedBy(source.getLeasedBy());
       target.setLeaseExpiry(source.getLeaseExpiry());
     }
+  }
+
+  /**
+   * Nulls out all list fields on an {@link ExtendableAgreementUpdateVO} so that Jackson's {@code
+   * NON_NULL} serialization omits them from the PATCH. The generated {@code AgreementUpdateVO}
+   * initializes these to {@code new ArrayList<>()}, which would be serialized as empty arrays and
+   * cause the TMF API to clear existing data or return 400.
+   */
+  public static void nullAgreementListFields(ExtendableAgreementUpdateVO update) {
+    update.setAgreementAuthorization(null);
+    update.setAgreementItem(null);
+    update.setAssociatedAgreement(null);
+    update.setCharacteristic(null);
+    update.setEngagedParty(null);
+  }
+
+  /**
+   * Nulls out all list fields on a {@link ProductOrderUpdateVO}. Same reason as {@link
+   * #nullAgreementListFields}.
+   */
+  static void nullProductOrderListFields(ProductOrderUpdateVO update) {
+    update.setAgreement(null);
+    update.setChannel(null);
+    update.setNote(null);
+    update.setOrderTotalPrice(null);
+    update.setPayment(null);
+    update.setProductOfferingQualification(null);
+    update.setProductOrderItem(null);
+    update.setQuote(null);
+    update.setRelatedParty(null);
   }
 
   private record PartyWithRole(String partyId, String role) {}

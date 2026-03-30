@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.Test;
@@ -218,12 +219,16 @@ public class AgreementApiClientTest extends AbstractApiTest {
   }
 
   @Test
-  public void testFindByNegotiationId_failure_to_many_agreements() throws Exception {
-    mockResponse(200, getValidAgreements(2));
-    assertThrows(
-        BadGatewayException.class,
-        () -> agreementApiClient.findByNegotiationId(TEST_NEGOTIATION_ID),
-        "If the server returns something invalid, a BadGateWay should be thrown.");
+  public void testFindByNegotiationId_returns_first_when_duplicates_exist() throws Exception {
+    List<ExtendableAgreementVO> agreements = getValidAgreements(2);
+    mockResponse(200, agreements);
+    Optional<ExtendableAgreementVO> result =
+        agreementApiClient.findByNegotiationId(TEST_NEGOTIATION_ID);
+    assertTrue(result.isPresent(), "Should return an agreement even when duplicates exist.");
+    assertEquals(
+        agreements.getFirst(),
+        result.get(),
+        "Should return the first agreement when duplicates exist.");
   }
 
   @Test

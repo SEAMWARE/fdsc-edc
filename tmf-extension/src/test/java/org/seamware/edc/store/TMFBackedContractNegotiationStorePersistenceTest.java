@@ -123,6 +123,9 @@ public class TMFBackedContractNegotiationStorePersistenceTest
         expectedUpdate.getExtendableQuoteItem(),
         extendableQuoteUpdateVO.getExtendableQuoteItem(),
         "The offerid should be set for the quote item.");
+    assertNull(
+        extendableQuoteUpdateVO.getRelatedParty(),
+        "relatedParty must be null so that NON_NULL serialization omits it from the PATCH.");
   }
 
   @ParameterizedTest(name = "{0}")
@@ -1976,11 +1979,15 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     quoteUpdateCaptor
         .getAllValues()
         .forEach(
-            equ ->
-                assertEquals(
-                    QuoteStateTypeVO.CANCELLED,
-                    equ.getState(),
-                    "All quotes need to be updated to cancelled."));
+            equ -> {
+              assertEquals(
+                  QuoteStateTypeVO.CANCELLED,
+                  equ.getState(),
+                  "All quotes need to be updated to cancelled.");
+              assertNull(
+                  equ.getRelatedParty(),
+                  "relatedParty must be null so that NON_NULL serialization omits it from the PATCH.");
+            });
     orderUpdateCaptor
         .getAllValues()
         .forEach(
@@ -2309,6 +2316,9 @@ public class TMFBackedContractNegotiationStorePersistenceTest
         expectedUpdate.getExtendableQuoteItem(),
         extendableQuoteUpdateVO.getExtendableQuoteItem(),
         "The offerid should be set for the quote item.");
+    assertNull(
+        extendableQuoteUpdateVO.getRelatedParty(),
+        "relatedParty must be null so that NON_NULL serialization omits it from the PATCH.");
   }
 
   private static ExtendableProductCreate getProductCreate(

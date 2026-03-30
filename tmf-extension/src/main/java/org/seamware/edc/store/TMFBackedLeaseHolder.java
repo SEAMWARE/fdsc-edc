@@ -102,8 +102,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
       ContractNegotiationState updatedState =
           copyStateWithLease(quote.getContractNegotiationState(), true, lockId, expiry);
 
-      ExtendableQuoteUpdateVO updateVO = new ExtendableQuoteUpdateVO();
-      updateVO.setContractNegotiationState(updatedState);
+      ExtendableQuoteUpdateVO updateVO = createLeaseOnlyUpdate(updatedState);
       ExtendableQuoteVO written = quoteApi.updateQuote(quote.getId(), updateVO);
 
       // Read-after-write verification to detect race conditions
@@ -168,8 +167,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
               ContractNegotiationState updatedState =
                   copyStateWithLease(q.getContractNegotiationState(), false, null, 0);
 
-              ExtendableQuoteUpdateVO updateVO = new ExtendableQuoteUpdateVO();
-              updateVO.setContractNegotiationState(updatedState);
+              ExtendableQuoteUpdateVO updateVO = createLeaseOnlyUpdate(updatedState);
               quoteApi.updateQuote(q.getId(), updateVO);
             });
 
@@ -178,6 +176,29 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
 
   private boolean isLeaseNotExpired(ContractNegotiationState state) {
     return state.getLeaseExpiry() > clock.millis();
+  }
+
+  /**
+   * Creates an {@link ExtendableQuoteUpdateVO} that only carries lease-related fields. All list
+   * fields inherited from the generated {@code QuoteUpdateVO} default to {@code new ArrayList<>()},
+   * which Jackson serializes as empty arrays. Sending {@code "relatedParty": []} in a PATCH causes
+   * the TMForum API to clear the existing related parties. Nulling the lists ensures that {@code
+   * NON_NULL} serialization omits them, so the PATCH only touches the contract-negotiation state.
+   */
+  private ExtendableQuoteUpdateVO createLeaseOnlyUpdate(ContractNegotiationState updatedState) {
+    ExtendableQuoteUpdateVO updateVO = new ExtendableQuoteUpdateVO();
+    updateVO.setContractNegotiationState(updatedState);
+    updateVO.setRelatedParty(null);
+    updateVO.setQuoteItem(null);
+    updateVO.setExtendableQuoteItem(null);
+    updateVO.setAgreement(null);
+    updateVO.setAuthorization(null);
+    updateVO.setBillingAccount(null);
+    updateVO.setContactMedium(null);
+    updateVO.setNote(null);
+    updateVO.setProductOfferingQualification(null);
+    updateVO.setQuoteTotalPrice(null);
+    return updateVO;
   }
 
   private ContractNegotiationState copyStateWithLease(

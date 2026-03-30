@@ -98,7 +98,8 @@ public class TMFBackedLeaseHolderTest {
                         && "lock-1".equals(s.getLeasedBy())
                         && s.getLeaseExpiry() == NOW + 60000
                         && "REQUESTING".equals(s.getState())
-                        && "corr-1".equals(s.getCorrelationId());
+                        && "corr-1".equals(s.getCorrelationId())
+                        && update.getRelatedParty() == null;
                   }));
     }
 
@@ -399,7 +400,10 @@ public class TMFBackedLeaseHolderTest {
               argThat(
                   update -> {
                     ContractNegotiationState s = update.getContractNegotiationState();
-                    return !s.isLeased() && s.getLeasedBy() == null && s.getLeaseExpiry() == 0;
+                    return !s.isLeased()
+                        && s.getLeasedBy() == null
+                        && s.getLeaseExpiry() == 0
+                        && update.getRelatedParty() == null;
                   }));
     }
 

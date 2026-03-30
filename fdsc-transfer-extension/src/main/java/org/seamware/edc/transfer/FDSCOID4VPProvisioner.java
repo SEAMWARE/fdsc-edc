@@ -108,6 +108,7 @@ public class FDSCOID4VPProvisioner
     this.tmfEdcMapper = tmfEdcMapper;
     this.jsonLd = jsonLd;
     this.objectMapper.configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, false);
+    this.objectMapper.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
     this.objectMapper.addMixIn(MetaDataQueryVO.class, MetaQueryMixin.class);
   }
 

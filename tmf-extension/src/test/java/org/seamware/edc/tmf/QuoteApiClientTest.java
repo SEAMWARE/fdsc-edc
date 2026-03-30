@@ -139,6 +139,29 @@ public class QuoteApiClientTest extends AbstractApiTest {
   }
 
   @Test
+  public void testCreateQuote_includes_relatedParty() throws Exception {
+    ExtendableQuoteCreateVO testCreate = getQuoteCreate();
+    testCreate.addRelatedPartyItem(
+        new org.seamware.tmforum.quote.model.RelatedPartyVO().id("provider-id").role("Provider"));
+    testCreate.addRelatedPartyItem(
+        new org.seamware.tmforum.quote.model.RelatedPartyVO().id("consumer-id").role("Consumer"));
+
+    mockResponse(200, getQuote());
+
+    quoteApiClient.createQuote(testCreate);
+
+    RecordedRequest recordedRequest = mockWebServer.takeRequest();
+    String body = recordedRequest.getBody().readUtf8();
+    assertTrue(
+        body.contains("relatedParty"),
+        "relatedParty must be included in the request body. Body was: " + body);
+    assertTrue(
+        body.contains("provider-id"), "Provider party id must be in the body. Body was: " + body);
+    assertTrue(
+        body.contains("consumer-id"), "Consumer party id must be in the body. Body was: " + body);
+  }
+
+  @Test
   public void testCreateQuote_invalid_content() throws Exception {
 
     mockResponse(200, "invalid");

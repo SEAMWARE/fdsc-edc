@@ -26,6 +26,7 @@ import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.domain.*;
+import org.seamware.edc.store.TMFBackedContractNegotiationStore;
 
 public class AgreementApiClient extends ApiClient {
 
@@ -123,10 +124,11 @@ public class AgreementApiClient extends ApiClient {
           objectMapper.readValue(
               responseBody.bytes(), new TypeReference<List<ExtendableAgreementVO>>() {});
       if (extendableAgreementVOS.size() > 1) {
-        throw new BadGatewayException(
+        monitor.warning(
             String.format(
-                "There cannot be more than one agreement per negotiation id. Found multiple for %s.",
-                negotiationId));
+                "Found %d agreements for negotiation %s, expected at most 1. Rejecting duplicates.",
+                extendableAgreementVOS.size(), negotiationId));
+        rejectDuplicateAgreements(extendableAgreementVOS);
       }
       if (extendableAgreementVOS.isEmpty()) {
         return Optional.empty();
@@ -164,6 +166,25 @@ public class AgreementApiClient extends ApiClient {
           String.format("Was not able to get agreements for contractId %s", contractId), e);
       throw new BadGatewayException(
           String.format("Was not able to get agreements for contractId %s", contractId));
+    }
+  }
+
+  /**
+   * Rejects all but the first agreement in the list. This cleans up duplicates that can arise when
+   * concurrent DSP message handlers both create an agreement before either sees the other's.
+   */
+  private void rejectDuplicateAgreements(List<ExtendableAgreementVO> agreements) {
+    for (int i = 1; i < agreements.size(); i++) {
+      String duplicateId = agreements.get(i).getId();
+      try {
+        ExtendableAgreementUpdateVO rejectUpdate = new ExtendableAgreementUpdateVO();
+        rejectUpdate.setStatus(AgreementState.REJECTED.getValue());
+        TMFBackedContractNegotiationStore.nullAgreementListFields(rejectUpdate);
+        updateAgreement(duplicateId, rejectUpdate);
+        monitor.info(String.format("Rejected duplicate agreement %s.", duplicateId));
+      } catch (RuntimeException e) {
+        monitor.warning(String.format("Failed to reject duplicate agreement %s.", duplicateId), e);
+      }
     }
   }
 }
