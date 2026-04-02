@@ -63,10 +63,33 @@ jobs:
 
       - name: Start EDC and run TCK tests
         run: |
-          docker compose -f docker-compose.tck.yml up \
-            --build \
-            --abort-on-container-exit \
-            --exit-code-from tck
+          # Start all services in detached mode to avoid --abort-on-container-exit
+          # interfering with the tmf-init sidecar container.
+          docker compose -f docker-compose.tck.yml up --build -d
+
+          # Wait for the TCK container to finish running tests.
+          TCK_ID="$(docker compose -f docker-compose.tck.yml ps -q tck)"
+          MAX_WAIT=600
+          WAITED=0
+          while [ -z "${TCK_ID}" ] && [ ${WAITED} -lt ${MAX_WAIT} ]; do
+            sleep 5
+            WAITED=$((WAITED + 5))
+            TCK_ID="$(docker compose -f docker-compose.tck.yml ps -q tck)" || true
+          done
+          if [ -z "${TCK_ID}" ]; then
+            echo "ERROR: TCK container did not start within ${MAX_WAIT}s"
+            docker compose -f docker-compose.tck.yml logs 2>/dev/null | tail -60
+            exit 1
+          fi
+          docker wait "${TCK_ID}" || true
+
+          # Determine pass/fail from TCK log output (TCK may exit 0 even on failure).
+          FAILED_COUNT="$(docker compose -f docker-compose.tck.yml logs tck 2>/dev/null \
+            | grep -oP 'Failed tests:\s*\K\d+' | tail -1)" || FAILED_COUNT=""
+          if [ -n "${FAILED_COUNT}" ] && [ "${FAILED_COUNT}" != "0" ]; then
+            echo "TCK reported ${FAILED_COUNT} failed test(s)"
+            exit 1
+          fi
         env:
           DSP_TCK_VERSION: ${{ env.DSP_TCK_VERSION }}
 
@@ -77,7 +100,7 @@ jobs:
           echo "  Individual TCK Test Results"
           echo "==========================================="
           docker compose -f docker-compose.tck.yml logs tck 2>/dev/null \
-            | grep -iE '(PASS|FAIL|SKIP|ERROR|Tests run:|test.*result|Suite |── |✓|✗|✔|✘|SUCCESSFUL|ABORTED)' \
+            | grep -iE '(PASS(ED)?|FAIL(ED)?|SKIP|ERROR|Tests run:|test.*result|Suite |── |✓|✗|✔|✘|SUCCESSFUL|ABORTED|Passed tests:|Failed tests:|Failures:)' \
             || echo "(No structured test output found — see full logs in artifacts)"
           echo "==========================================="
 
