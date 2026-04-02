@@ -44,7 +44,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.tck.yml"
 readonly CONTROLPLANE_MODULE="controlplane-oid4vc"
-readonly SHADED_JAR="${PROJECT_ROOT}/${CONTROLPLANE_MODULE}/target/${CONTROLPLANE_MODULE}-0.0.1-SNAPSHOT.jar"
+readonly SHADED_JAR="${PROJECT_ROOT}/${CONTROLPLANE_MODULE}/target/context/${CONTROLPLANE_MODULE}.jar"
 
 # ---------------------------------------------------------------------------
 # Defaults

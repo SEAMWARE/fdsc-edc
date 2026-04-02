@@ -1,0 +1,6 @@
+# TCK runner variant — embeds TCK config for environments where bind mounts
+# are unavailable (e.g., rootless Docker, CI with overlayfs).
+ARG DSP_TCK_VERSION=1.0.0-RC6
+FROM eclipsedataspacetck/dsp-tck-runtime:${DSP_TCK_VERSION}
+
+COPY config/tck/tck.properties /etc/tck/config.properties

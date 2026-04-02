@@ -156,9 +156,7 @@ public class DataAssembly {
    * @return list of finalized contract negotiations, each containing a contract agreement
    */
   public static List<ContractNegotiation> createAllAgreements(String participantId) {
-    return AGREEMENT_IDS.stream()
-        .map(id -> createAgreementNegotiation(id, participantId))
-        .toList();
+    return AGREEMENT_IDS.stream().map(id -> createAgreementNegotiation(id, participantId)).toList();
   }
 
   /**

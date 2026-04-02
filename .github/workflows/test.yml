@@ -76,7 +76,7 @@ jobs:
         run: |
           docker buildx build \
             --file docker/Dockerfile \
-            --build-arg JAR=controlplane-oid4vc/target/controlplane-oid4vc-0.0.1-SNAPSHOT.jar \
+            --build-arg JAR=controlplane-oid4vc/target/context/controlplane-oid4vc.jar \
             --tag fdsc-edc-controlplane-oid4vc:latest \
             --cache-from type=local,src=/tmp/.buildx-cache \
             --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \

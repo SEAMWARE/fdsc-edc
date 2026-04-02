@@ -131,9 +131,15 @@ public class TransferConfig {
     getNullSafeFromConfig(() -> apisixConfig.getString("httpsProxy"))
         .ifPresent(apisixBuilder::httpsProxy);
 
-    transferConfigBuilder.apisix(apisixBuilder.build());
-    transferConfigBuilder.oid4Vc(oid4VcBuilder.build());
-    transferConfigBuilder.dcp(dcpBuilder.build());
+    // Only validate and build sub-configs when the transfer extension is enabled;
+    // otherwise use permissive defaults so the runtime can boot without apisix/token.
+    boolean transferEnabled =
+        getNullSafeFromConfig(() -> transferConfig.getBoolean("enabled")).orElse(false);
+    if (transferEnabled) {
+      transferConfigBuilder.apisix(apisixBuilder.build());
+      transferConfigBuilder.oid4Vc(oid4VcBuilder.build());
+      transferConfigBuilder.dcp(dcpBuilder.build());
+    }
 
     return transferConfigBuilder.build();
   }

@@ -1,0 +1,16 @@
+# TCK variant — embeds EDC config for environments where bind mounts are
+# unavailable (e.g., rootless Docker, CI with overlayfs).
+FROM eclipse-temurin:24_36-jre-alpine
+
+ARG JVM_ARGS=""
+ARG JAR
+
+RUN apk --no-cache add curl
+
+WORKDIR /app
+
+COPY ${JAR} edc.jar
+COPY config/tck/edc.properties /app/config/edc.properties
+
+ENV ENV_JVM_ARGS=$JVM_ARGS
+CMD ["sh", "-c", "exec java -Djava.security.egd=file:/dev/urandom -jar edc.jar --log-level=DEBUG"]
