@@ -119,17 +119,31 @@ verify_jar() {
 }
 
 ## Run Docker Compose to start the EDC controlplane and the TCK runner.
+## Returns the exit code from Docker Compose. A non-zero exit code indicates
+## either TCK test failure or an infrastructure error (e.g., EDC failed to start).
 run_tck() {
   log "Starting DSP TCK conformance tests via Docker Compose..."
   log "Compose file: ${COMPOSE_FILE}"
 
-  local tck_exit_code=0
+  local compose_exit_code=0
   docker compose -f "${COMPOSE_FILE}" up \
     --build \
     --abort-on-container-exit \
-    --exit-code-from tck || tck_exit_code=$?
+    --exit-code-from tck || compose_exit_code=$?
 
-  return "${tck_exit_code}"
+  # Check if the EDC container exited with an error (startup failure)
+  local edc_exit
+  edc_exit="$(docker inspect --format='{{.State.ExitCode}}' "$(docker compose -f "${COMPOSE_FILE}" ps -aq edc 2>/dev/null | head -1)" 2>/dev/null)" || edc_exit=""
+  if [[ -n "${edc_exit}" && "${edc_exit}" != "0" ]]; then
+    log "ERROR: EDC container exited with code ${edc_exit}. Dumping EDC logs:"
+    docker compose -f "${COMPOSE_FILE}" logs edc 2>/dev/null | tail -80
+    # Ensure non-zero exit even if --exit-code-from tck returned 0
+    if [[ "${compose_exit_code}" -eq 0 ]]; then
+      compose_exit_code=1
+    fi
+  fi
+
+  return "${compose_exit_code}"
 }
 
 ## Extract and display individual test results from the TCK container logs.

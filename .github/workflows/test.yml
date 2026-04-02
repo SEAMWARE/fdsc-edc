@@ -58,37 +58,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-docker-${{ hashFiles('docker/Dockerfile', '**/pom.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-docker-
-
       - name: Build controlplane shaded JAR
         run: mvn package -pl controlplane-oid4vc -am -DskipTests -q
-
-      - name: Build EDC Docker image with cache
-        run: |
-          docker buildx build \
-            --file docker/Dockerfile \
-            --build-arg JAR=controlplane-oid4vc/target/context/controlplane-oid4vc.jar \
-            --tag fdsc-edc-controlplane-oid4vc:latest \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            --load \
-            .
-          # Rotate cache to avoid unbounded growth
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
       - name: Start EDC and run TCK tests
         run: |
           docker compose -f docker-compose.tck.yml up \
+            --build \
             --abort-on-container-exit \
             --exit-code-from tck
         env:
