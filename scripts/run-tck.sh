@@ -132,6 +132,47 @@ run_tck() {
   return "${tck_exit_code}"
 }
 
+## Extract and display individual test results from the TCK container logs.
+## Parses JUnit-style output (test names, pass/fail/skip status) and prints a
+## summary table. Returns 0 if results were found, 1 otherwise.
+print_test_results() {
+  log "Collecting individual test results from TCK container logs..."
+  echo ""
+
+  local tck_logs
+  tck_logs="$(docker compose -f "${COMPOSE_FILE}" logs tck 2>/dev/null)" || true
+
+  if [[ -z "${tck_logs}" ]]; then
+    log "WARNING: No TCK container logs available."
+    return 1
+  fi
+
+  # Print lines that look like test results (JUnit/TCK output patterns)
+  # Common patterns: test name followed by PASSED/FAILED/SKIPPED, or
+  # lines containing "Tests run:", or JUnit XML-style output.
+  local result_lines
+  result_lines="$(echo "${tck_logs}" \
+    | grep -iE '(PASS|FAIL|SKIP|ERROR|Tests run:|test.*result|Suite |── |✓|✗|✔|✘|SUCCESSFUL|ABORTED)' \
+    || true)"
+
+  if [[ -n "${result_lines}" ]]; then
+    echo "-------------------------------------------"
+    echo "  Individual Test Results"
+    echo "-------------------------------------------"
+    echo "${result_lines}"
+    echo "-------------------------------------------"
+  else
+    # If no structured results found, dump the last portion of TCK logs
+    # so the user can see what happened
+    log "No structured test results found. Showing last 60 lines of TCK logs:"
+    echo "-------------------------------------------"
+    echo "${tck_logs}" | tail -60
+    echo "-------------------------------------------"
+  fi
+
+  return 0
+}
+
 ## Tear down Docker Compose containers and networks.
 cleanup() {
   if [[ "${KEEP_CONTAINERS}" == "true" ]]; then
@@ -186,10 +227,13 @@ verify_jar
 tck_exit_code=0
 run_tck || tck_exit_code=$?
 
-# Step 4: Cleanup
+# Step 4: Display individual test results (before tearing down containers)
+print_test_results
+
+# Step 5: Cleanup
 cleanup
 
-# Step 5: Report results
+# Step 6: Report overall result
 echo ""
 echo "==========================================="
 if [[ "${tck_exit_code}" -eq 0 ]]; then

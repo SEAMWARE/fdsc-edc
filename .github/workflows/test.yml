@@ -94,6 +94,17 @@ jobs:
         env:
           DSP_TCK_VERSION: ${{ env.DSP_TCK_VERSION }}
 
+      - name: Print individual TCK test results
+        if: always()
+        run: |
+          echo "==========================================="
+          echo "  Individual TCK Test Results"
+          echo "==========================================="
+          docker compose -f docker-compose.tck.yml logs tck 2>/dev/null \
+            | grep -iE '(PASS|FAIL|SKIP|ERROR|Tests run:|test.*result|Suite |── |✓|✗|✔|✘|SUCCESSFUL|ABORTED)' \
+            || echo "(No structured test output found — see full logs in artifacts)"
+          echo "==========================================="
+
       - name: Upload EDC container logs on failure
         if: failure()
         run: |
