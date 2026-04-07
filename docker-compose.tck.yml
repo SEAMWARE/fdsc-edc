@@ -47,7 +47,7 @@ services:
   # Scorpio — NGSI-LD Context Broker (storage backend for TMForum API)
   # -------------------------------------------------------------------------
   scorpio:
-    image: scorpiobroker/all-in-one-runner:java-5.0.3
+    image: scorpiobroker/all-in-one-runner:java-4.1.10
     environment:
       DBHOST: postgis
       DBPORT: "5432"
@@ -141,6 +141,7 @@ services:
         JAR: controlplane-oid4vc/target/context/controlplane-oid4vc.jar
     environment:
       EDC_FS_CONFIG: /app/config/edc.properties
+      EDC_LOG_LEVEL: DEBUG
     ports:
       - "8080:8080"   # Default API
       - "8181:8181"   # Management API

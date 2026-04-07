@@ -49,6 +49,8 @@ RETRY_INTERVAL="${RETRY_INTERVAL:-2}"
 
 CATALOG_API="${TMF_BASE_URL}/tmf-api/productCatalogManagement/v4"
 AGREEMENT_API="${TMF_BASE_URL}/tmf-api/agreementManagement/v4"
+PARTY_API="${TMF_BASE_URL}/tmf-api/party/v4"
+
 
 # TCK participant ID used in agreements
 TCK_PARTICIPANT="TCK_PARTICIPANT"
@@ -117,11 +119,12 @@ wait_for_tmforum() {
 ## Create a ProductSpecification (maps to an EDC Asset).
 create_product_spec() {
   asset_id="$1"
-  response=$(curl -sf -X POST "${CATALOG_API}/productSpecification" \
+  response=$(curl -s --fail-with-body -X POST "${CATALOG_API}/productSpecification" \
     -H "Content-Type: application/json" \
     -d "{
       \"name\": \"${asset_id}\",
       \"externalId\": \"${asset_id}\",
+      \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/external-id.json\",
       \"productSpecCharacteristic\": [
         {
           \"id\": \"upstreamAddress\",
@@ -150,14 +153,16 @@ create_product_spec() {
 ## Create a ProductOffering (maps to an EDC ContractDefinition).
 create_product_offering() {
   def_id="$1"
-  response=$(curl -sf -X POST "${CATALOG_API}/productOffering" \
+  response=$(curl -s --fail-with-body -X POST "${CATALOG_API}/productOffering" \
     -H "Content-Type: application/json" \
     -d "{
       \"name\": \"${def_id}\",
       \"externalId\": \"${def_id}\",
+      \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/external-id.json\",
       \"productOfferingTerm\": [
         {
           \"name\": \"edc:contractDefinition\",
+          \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/contract-definition.json\",
           \"contractPolicy\": ${ODRL_POLICY},
           \"accessPolicy\": ${ODRL_POLICY}
         }
@@ -174,11 +179,13 @@ create_agreement() {
   agreement_id="$1"
   provider_id="$2"
   consumer_id="$3"
-  response=$(curl -sf -X POST "${AGREEMENT_API}/agreement" \
+  response=$(curl -s --fail-with-body -X POST "${AGREEMENT_API}/agreement" \
     -H "Content-Type: application/json" \
     -d "{
       \"name\": \"${agreement_id}\",
       \"externalId\": \"${agreement_id}\",
+      \"negotiationId\": \"neg-id\",
+      \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/agreement.json\",
       \"agreementType\": \"dspContract\",
       \"status\": \"agreed\",
       \"characteristic\": [
@@ -209,6 +216,36 @@ log "Participant ID: ${PARTICIPANT_ID}"
 # Wait for TMForum to be ready
 wait_for_tmforum
 
+# Create participants
+
+PROVIDER_ID=$(curl -X 'POST' \
+  "${PARTY_API}/organization" \
+  -H 'accept: application/json;charset=utf-8' \
+  -H 'Content-Type: application/json;charset=utf-8' \
+  -d '{
+  "name": "provider.io",
+  "partyCharacteristic": [
+    {
+      "name": "did",
+      "value": "did:web:provider.io"
+    }
+  ]
+}' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); echo ${PROVIDER_ID}
+
+CONSUMER_ID=$(curl -X 'POST' \
+  "${PARTY_API}/organization" \
+  -H 'accept: application/json;charset=utf-8' \
+  -H 'Content-Type: application/json;charset=utf-8' \
+  -d '{
+  "name": "TCK_PARTICIPANT",
+  "partyCharacteristic": [
+    {
+      "name": "did",
+      "value": "did:web:fancy-marketplace.biz"
+    }
+  ]
+}' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); echo ${CONSUMER_ID}
+
 # Create ProductSpecifications (assets)
 ASSET_COUNT=$(word_count "$ASSET_IDS")
 log "Creating ${ASSET_COUNT} ProductSpecifications (assets)..."
@@ -233,7 +270,7 @@ PROVIDER_COUNT=$(word_count "$PROVIDER_AGREEMENT_IDS")
 log "Creating ${PROVIDER_COUNT} provider-side Agreements..."
 success=0
 for agreement_id in $PROVIDER_AGREEMENT_IDS; do
-  if create_agreement "$agreement_id" "$PARTICIPANT_ID" "$TCK_PARTICIPANT"; then
+  if create_agreement "$agreement_id" "$PROVIDER_ID" "$CONSUMER_ID"; then
     success=$((success + 1))
   fi
 done
@@ -244,7 +281,7 @@ CONSUMER_COUNT=$(word_count "$CONSUMER_AGREEMENT_IDS")
 log "Creating ${CONSUMER_COUNT} consumer-side Agreements..."
 success=0
 for agreement_id in $CONSUMER_AGREEMENT_IDS; do
-  if create_agreement "$agreement_id" "$TCK_PARTICIPANT" "$PARTICIPANT_ID"; then
+  if create_agreement "$agreement_id" "$CONSUMER_ID" "$PROVIDER_ID"; then
     success=$((success + 1))
   fi
 done

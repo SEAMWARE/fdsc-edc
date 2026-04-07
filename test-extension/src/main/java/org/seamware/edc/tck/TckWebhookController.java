@@ -128,7 +128,7 @@ public class TckWebhookController {
             .contractId(request.agreementId())
             .build();
 
-    monitor.debug(
+    monitor.warning(
         "Starting transfer process for [provider, address, agreement, format]: [%s, %s, %s, %s]"
             .formatted(
                 request.providerId(),
