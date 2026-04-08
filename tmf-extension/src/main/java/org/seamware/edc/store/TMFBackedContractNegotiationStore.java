@@ -161,16 +161,11 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   @Override
   public @Nullable ContractAgreement findContractAgreement(String s) {
-    monitor.warning("Find agreement " + s);
+    monitor.debug("Find agreement " + s);
     try {
 
       return agreementApi
           .findByContractId(s)
-          .map(
-              ea -> {
-                monitor.warning("Found " + ea.getId() + " " + ea.getStatus());
-                return ea;
-              })
           // only "AGREED" agreements can be considered as agreement in the terms of DSP
           .filter(agreement -> agreement.getStatus() != null)
           .filter(agreement -> agreement.getStatus().equals(AgreementState.AGREED.getValue()))
@@ -377,12 +372,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   @Override
   public void save(ContractNegotiation contractNegotiation) {
-    try {
-      monitor.warning(
-          "Received negotiation: " + new ObjectMapper().writeValueAsString(contractNegotiation));
-    } catch (JsonProcessingException e) {
-      throw new RuntimeException(e);
-    }
+
     // Per-negotiation lock prevents concurrent saves for the same negotiation within this
     // JVM. Without this, two DSP message handlers can enter handleAgreeStates simultaneously
     // and both create agreements before either sees the other's, producing duplicates.
@@ -805,11 +795,6 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       ExtendableQuoteVO orginialQuote,
       ContractNegotiation contractNegotiation,
       QuoteStateTypeVO quoteState) {
-    monitor.warning(
-        "Terminate existing quote for negotiation "
-            + contractNegotiation.getId()
-            + " - state "
-            + ContractNegotiationStates.from(contractNegotiation.getState()).name());
     boolean isConsumer = contractNegotiation.getType() == ContractNegotiation.Type.CONSUMER;
 
     // Snapshot previous state for compensation
@@ -846,12 +831,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   private void createAgreement(ContractNegotiation contractNegotiation) {
-    try {
-      monitor.warning(
-          "TO AGREEMENT: " + new ObjectMapper().writeValueAsString(contractNegotiation));
-    } catch (JsonProcessingException e) {
-      throw new RuntimeException(e);
-    }
+
     ExtendableAgreementVO agreementVO =
         tmfEdcMapper.toAgreement(
             contractNegotiation.getId(), contractNegotiation.getContractAgreement());
