@@ -55,10 +55,7 @@ public class CatalogProtocolServiceExtension implements ServiceExtension {
       context.registerService(
           CatalogProtocolService.class,
           new TMForumBackedCatalogProtocolService(
-              tmfEdcMapper,
-              productCatalogApi,
-              context.getParticipantId(),
-              protocolTokenValidator));
+              tmfEdcMapper, productCatalogApi, context.getParticipantId(), protocolTokenValidator));
     } else {
       monitor.info("TMF Catalog Protocol Service is not enabled.");
     }

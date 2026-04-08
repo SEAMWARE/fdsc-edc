@@ -107,7 +107,6 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
     return tmfEdcMapper
         .datasetFromProductSpecification(spec.get(), offerings)
         .map(ServiceResult::success)
-        .orElse(
-            ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
+        .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
   }
 }

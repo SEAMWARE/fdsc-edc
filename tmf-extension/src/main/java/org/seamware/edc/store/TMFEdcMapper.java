@@ -260,8 +260,7 @@ public class TMFEdcMapper {
     } catch (RuntimeException e) {
       monitor.debug(
           String.format(
-              "Cannot convert specification %s to dataset.",
-              productSpecification.getId()),
+              "Cannot convert specification %s to dataset.", productSpecification.getId()),
           e);
       return Optional.empty();
     }
