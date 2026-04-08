@@ -58,7 +58,6 @@ public class CatalogProtocolServiceExtension implements ServiceExtension {
               tmfEdcMapper,
               productCatalogApi,
               context.getParticipantId(),
-              monitor,
               protocolTokenValidator));
     } else {
       monitor.info("TMF Catalog Protocol Service is not enabled.");

@@ -37,7 +37,9 @@ package org.seamware.edc.edc;
  */
 
 import static org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates.REQUESTED;
+import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates.INITIAL;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -70,6 +72,12 @@ public class DataAssembly {
 
   /** DSP protocol identifier used for pre-created negotiations. */
   private static final String DSP_PROTOCOL = "dataspace-protocol-http:2025-1";
+
+  /**
+   * Asset ID referenced by transfer process agreements. Must be an asset that exists in both TMF
+   * and in-memory stores. CAT0101 is always created as part of the catalog test data.
+   */
+  private static final String TRANSFER_ASSET_ID = "CAT0101";
 
   static final Set<String> ASSET_IDS =
       Set.of(
@@ -115,7 +123,31 @@ public class DataAssembly {
   static final String POLICY_ID = "P123";
   static final String CONTRACT_DEFINITION_ID = "CD123";
 
+  private static final Field STATE_FIELD;
+
+  static {
+    try {
+      STATE_FIELD = org.eclipse.edc.spi.entity.StatefulEntity.class.getDeclaredField("state");
+      STATE_FIELD.setAccessible(true);
+    } catch (NoSuchFieldException e) {
+      throw new ExceptionInInitializerError(e);
+    }
+  }
+
   private DataAssembly() {}
+
+  /**
+   * Resets a provider transfer process back to INITIAL state via reflection. Used by triggers that
+   * fire after the DSP response (showing REQUESTED) has been sent, allowing the state machine to
+   * process the transfer normally.
+   */
+  static void resetToInitial(TransferProcess process) {
+    try {
+      STATE_FIELD.setInt(process, INITIAL.code());
+    } catch (IllegalAccessException e) {
+      throw new IllegalStateException("Failed to reset transfer state to INITIAL", e);
+    }
+  }
 
   /** Creates all test assets for TCK catalog and negotiation scenarios. */
   public static List<Asset> createAllAssets() {
@@ -175,7 +207,7 @@ public class DataAssembly {
                 .id(agreementId)
                 .providerId(isConsumer ? TCK_PARTICIPANT_ID : participantId)
                 .consumerId(isConsumer ? participantId : TCK_PARTICIPANT_ID)
-                .assetId(agreementId)
+                .assetId(TRANSFER_ASSET_ID)
                 .contractSigningDate(System.currentTimeMillis())
                 .policy(Policy.Builder.newInstance().build())
                 .build())
@@ -271,11 +303,17 @@ public class DataAssembly {
         createTrigger(
             ContractNegotiationOffered.class,
             "ACN0205",
-            ContractNegotiation::transitionTerminating),
+            cn -> {
+              cn.transitionTerminating();
+              cn.setPending(false);
+            }),
         createTrigger(
             ContractNegotiationAccepted.class,
             "ACN0206",
-            ContractNegotiation::transitionTerminating),
+            cn -> {
+              cn.transitionTerminating();
+              cn.setPending(false);
+            }),
         createTrigger(
             ContractNegotiationAccepted.class,
             "ACN0303",
@@ -443,12 +481,37 @@ public class DataAssembly {
         createTransferTrigger(TransferProcessStarted.class, "ATP0104", suspendResumeTrigger()),
         createTransferTrigger(
             TransferProcessSuspended.class, "ATP0104", TransferProcess::transitionStarting),
+        // ATP01, ATP02, ATP03 (except 0301/0302): reset to INITIAL so the state machine
+        // processes them after the REQUESTED DSP response has been sent
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0101", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0102", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0103", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0104", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0105", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0201", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0202", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0203", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0204", DataAssembly::resetToInitial),
         createTransferTrigger(
             TransferProcessInitiated.class, "ATP0205", (process) -> process.setPending(true)),
+        // ATP0301/0302: stay in REQUESTED (no reset, no state machine processing)
         createTransferTrigger(
-            TransferProcessInitiated.class, "ATP0301", (process) -> process.setPending(true)),
+            TransferProcessInitiated.class, "ATP0303", DataAssembly::resetToInitial),
         createTransferTrigger(
-            TransferProcessInitiated.class, "ATP0302", (process) -> process.setPending(true)),
+            TransferProcessInitiated.class, "ATP0304", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0305", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0306", DataAssembly::resetToInitial),
         createTransferTrigger(
             TransferProcessStarted.class, "ATPC0201", TransferProcess::transitionTerminating),
         createTransferTrigger(

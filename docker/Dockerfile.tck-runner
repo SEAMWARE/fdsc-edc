@@ -1,6 +1,30 @@
-# TCK runner variant — embeds TCK config for environments where bind mounts
-# are unavailable (e.g., rootless Docker, CI with overlayfs).
+# Stage 0: Pin the TCK base image so it can be referenced by name
 ARG DSP_TCK_VERSION=1.0.0-RC6
-FROM eclipsedataspacetck/dsp-tck-runtime:${DSP_TCK_VERSION}
+FROM eclipsedataspacetck/dsp-tck-runtime:${DSP_TCK_VERSION} AS tck-base
+
+# Stage 1: Compile the test filter extension using a JDK
+FROM eclipse-temurin:23-jdk-alpine AS filter-builder
+
+COPY --from=tck-base /app/tck-runtime.jar /tmp/tck-runtime.jar
+COPY docker/tck-filter/src /tmp/filter-src
+COPY docker/tck-filter/resources /tmp/filter-resources
+
+RUN mkdir -p /tmp/filter-out \
+    && javac -cp /tmp/tck-runtime.jar \
+         -d /tmp/filter-out \
+         /tmp/filter-src/org/seamware/tck/DisplayNameFilter.java \
+         /tmp/filter-src/org/seamware/tck/EdcContextRegistrar.java \
+    && cp -r /tmp/filter-resources/* /tmp/filter-out/ \
+    && jar cf /tmp/tck-filter.jar -C /tmp/filter-out .
+
+# Stage 2: TCK runner with embedded config and filter
+FROM tck-base
 
 COPY config/tck/tck.properties /etc/tck/config.properties
+COPY --from=filter-builder /tmp/tck-filter.jar /app/tck-filter.jar
+
+# Use -cp instead of -jar so the filter extension is on the classpath.
+# Set TCK_FILTER env var to run a subset of tests (e.g. TCK_FILTER=TP:03).
+# -Djunit.jupiter.extensions.autodetection.enabled=true is required because
+# the TCK's LauncherDiscoveryRequestBuilder doesn't load junit-platform.properties.
+ENTRYPOINT ["sh", "-c", "exec java -Djava.security.egd=file:/dev/urandom -Djunit.jupiter.extensions.autodetection.enabled=true ${TCK_FILTER:+-Dtck.filter=$TCK_FILTER} -cp /app/tck-runtime.jar:/app/tck-filter.jar org.eclipse.dataspacetck.dsp.suite.DspTckSuite -config ${CONFIG_FILE}"]

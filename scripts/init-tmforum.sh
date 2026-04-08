@@ -58,6 +58,9 @@ TCK_PARTICIPANT="TCK_PARTICIPANT"
 POLICY_ID="P123"
 # Contract definition ID matching DataAssembly.CONTRACT_DEFINITION_ID
 CONTRACT_DEF_ID="CD123"
+# Asset ID referenced by all transfer agreements (must exist as a ProductSpecification)
+# Matches DataAssembly.TRANSFER_ASSET_ID
+TRANSFER_ASSET_ID="CAT0101"
 
 # Asset IDs from DataAssembly.ASSET_IDS (space-separated list)
 ASSET_IDS="ACN0101 ACN0102 ACN0103 ACN0104 ACN0201 ACN0202 ACN0203 ACN0204 ACN0205 ACN0206 ACN0207 ACN0301 ACN0302 ACN0303 ACN0304 CAT0101 CAT0102"
@@ -175,10 +178,18 @@ create_product_offering() {
 }
 
 ## Create a TMForum Agreement (maps to an EDC ContractAgreement).
+## Parameters:
+##   $1 - agreement_id
+##   $2 - TMF party ID for the provider (used in engagedParty)
+##   $3 - TMF party ID for the consumer (used in engagedParty)
+##   $4 - EDC participant ID for the provider (used in characteristics)
+##   $5 - EDC participant ID for the consumer (used in characteristics)
 create_agreement() {
   agreement_id="$1"
-  provider_id="$2"
-  consumer_id="$3"
+  tmf_provider_id="$2"
+  tmf_consumer_id="$3"
+  edc_provider_id="$4"
+  edc_consumer_id="$5"
   response=$(curl -s --fail-with-body -X POST "${AGREEMENT_API}/agreement" \
     -H "Content-Type: application/json" \
     -d "{
@@ -190,14 +201,14 @@ create_agreement() {
       \"status\": \"agreed\",
       \"characteristic\": [
         {\"name\": \"signing-date\", \"value\": ${SIGNING_DATE}},
-        {\"name\": \"provider-id\", \"value\": \"${provider_id}\"},
-        {\"name\": \"consumer-id\", \"value\": \"${consumer_id}\"},
-        {\"name\": \"asset-id\", \"value\": \"${agreement_id}\"},
+        {\"name\": \"provider-id\", \"value\": \"${edc_provider_id}\"},
+        {\"name\": \"consumer-id\", \"value\": \"${edc_consumer_id}\"},
+        {\"name\": \"asset-id\", \"value\": \"${TRANSFER_ASSET_ID}\"},
         {\"name\": \"policy\", \"value\": ${ODRL_POLICY}}
       ],
       \"engagedParty\": [
-        {\"id\": \"${provider_id}\", \"name\": \"provider\", \"role\": \"provider\"},
-        {\"id\": \"${consumer_id}\", \"name\": \"consumer\", \"role\": \"consumer\"}
+        {\"id\": \"${tmf_provider_id}\", \"name\": \"provider\", \"role\": \"provider\"},
+        {\"id\": \"${tmf_consumer_id}\", \"name\": \"consumer\", \"role\": \"consumer\"}
       ]
     }" 2>&1) || {
     log "WARNING: Failed to create Agreement for ${agreement_id}: ${response}"
@@ -270,7 +281,7 @@ PROVIDER_COUNT=$(word_count "$PROVIDER_AGREEMENT_IDS")
 log "Creating ${PROVIDER_COUNT} provider-side Agreements..."
 success=0
 for agreement_id in $PROVIDER_AGREEMENT_IDS; do
-  if create_agreement "$agreement_id" "$PROVIDER_ID" "$CONSUMER_ID"; then
+  if create_agreement "$agreement_id" "$PROVIDER_ID" "$CONSUMER_ID" "$PARTICIPANT_ID" "$TCK_PARTICIPANT"; then
     success=$((success + 1))
   fi
 done
@@ -281,7 +292,7 @@ CONSUMER_COUNT=$(word_count "$CONSUMER_AGREEMENT_IDS")
 log "Creating ${CONSUMER_COUNT} consumer-side Agreements..."
 success=0
 for agreement_id in $CONSUMER_AGREEMENT_IDS; do
-  if create_agreement "$agreement_id" "$CONSUMER_ID" "$PROVIDER_ID"; then
+  if create_agreement "$agreement_id" "$CONSUMER_ID" "$PROVIDER_ID" "$TCK_PARTICIPANT" "$PARTICIPANT_ID"; then
     success=$((success + 1))
   fi
 done

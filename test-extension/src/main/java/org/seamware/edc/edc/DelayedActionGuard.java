@@ -87,8 +87,16 @@ public class DelayedActionGuard<T extends StatefulEntity<T>> implements PendingG
             try {
               var entry = queue.poll(POLL_TIMEOUT_MS, MILLISECONDS);
               if (entry != null) {
+                LOG.warning(
+                    String.format(
+                        "Guard background: playing step for entity=%s state=%d",
+                        entry.entity.getId(), entry.entity.getState()));
                 try {
                   action.accept(entry.entity);
+                  LOG.warning(
+                      String.format(
+                          "Guard background: after step entity=%s state=%d",
+                          entry.entity.getId(), entry.entity.getState()));
                 } catch (Exception e) {
                   LOG.log(Level.WARNING, "Guard action failed", e);
                 } finally {
@@ -111,7 +119,12 @@ public class DelayedActionGuard<T extends StatefulEntity<T>> implements PendingG
 
   @Override
   public boolean test(T entity) {
-    if (filter.test(entity)) {
+    var filterResult = filter.test(entity);
+    LOG.warning(
+        String.format(
+            "Guard test: entity=%s state=%d pending=%b filterResult=%b",
+            entity.getId(), entity.getState(), entity.isPending(), filterResult));
+    if (filterResult) {
       queue.put(new GuardDelay(entity));
       return true;
     }

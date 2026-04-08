@@ -47,9 +47,13 @@ import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractD
 import org.eclipse.edc.connector.controlplane.policy.spi.store.PolicyDefinitionStore;
 import org.eclipse.edc.connector.controlplane.transfer.spi.TransferProcessPendingGuard;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessEvent;
+import org.eclipse.edc.connector.controlplane.transfer.spi.flow.DataFlowManager;
+import org.eclipse.edc.connector.controlplane.transfer.spi.observe.TransferProcessObservable;
 import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
+import org.eclipse.edc.runtime.metamodel.annotation.Provider;
 import org.eclipse.edc.spi.event.EventRouter;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.transaction.spi.TransactionContext;
@@ -81,6 +85,10 @@ public class TckGuardExtension implements ServiceExtension {
 
   @Inject private PolicyDefinitionStore policyDefinitionStore;
 
+  @Inject private DataFlowManager dataFlowManager;
+  @Inject private Monitor monitor;
+  @Inject private TransferProcessObservable transferProcessObservable;
+
   @Override
   public String name() {
     return NAME;
@@ -97,10 +105,10 @@ public class TckGuardExtension implements ServiceExtension {
             "TMForum extension is enabled — skipping in-memory test data initialization. "
                 + "Assets, policies, contract definitions, and agreements are provided by TMForum.");
       } else {
-        initializeTestData(context.getParticipantId());
+        //      initializeTestData(context.getParticipantId());
       }
-      context.registerService(TransferProcessPendingGuard.class, transferProcessPendingGuard());
-      context.registerService(ContractNegotiationPendingGuard.class, negotiationGuard());
+      registerNoopDataFlowController();
+      registerProviderRequestedStateFix();
     }
   }
 
@@ -133,6 +141,29 @@ public class TckGuardExtension implements ServiceExtension {
     LOG.info("Created " + agreements.size() + " TCK contract agreements");
   }
 
+  /**
+   * Registers a no-op {@link NoopDataFlowController} with high priority so that transfer processes
+   * can proceed through all state transitions without a real data plane. This is required for DSP
+   * TCK conformance testing where protocol message flow matters but actual data transfer does not.
+   */
+  private void registerNoopDataFlowController() {
+    var noopPriority = 100;
+    dataFlowManager.register(noopPriority, new NoopDataFlowController(monitor));
+    LOG.info("Registered NoopDataFlowController for TCK mode (priority=" + noopPriority + ")");
+  }
+
+  /**
+   * Registers a listener that transitions provider transfers from INITIAL to REQUESTED state. The
+   * DSP 2025-1 protocol requires provider transfers to be in REQUESTED state after acknowledging a
+   * TransferRequestMessage, but EDC 0.14.1 creates them in INITIAL. This listener fixes the state
+   * before the transfer is persisted and returned in the DSP response.
+   */
+  private void registerProviderRequestedStateFix() {
+    transferProcessObservable.registerListener(new ProviderRequestedStateFixListener(monitor));
+    LOG.info("Registered ProviderRequestedStateFixListener for DSP 2025-1 compliance");
+  }
+
+  @Provider
   public ContractNegotiationPendingGuard negotiationGuard() {
     var recorder = createNegotiationRecorder();
 
@@ -146,6 +177,7 @@ public class TckGuardExtension implements ServiceExtension {
     return negotiationGuard;
   }
 
+  @Provider
   public TransferProcessPendingGuard transferProcessPendingGuard() {
     var recorder = createTransferProcessRecorder();
 

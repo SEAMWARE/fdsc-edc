@@ -36,7 +36,7 @@ import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
 public class QuoteApiClient extends ApiClient {
 
   private static final String QUOTE_PATH = "quote";
-  //public static final String CONTROL_PLANE_ID_PARAM = "contractNegotiation.controlplane";
+  // public static final String CONTROL_PLANE_ID_PARAM = "contractNegotiation.controlplane";
 
   private final String controlPlaneId;
   private final String baseUrl;
@@ -60,8 +60,8 @@ public class QuoteApiClient extends ApiClient {
     urlBuilder.addPathSegment(QUOTE_PATH);
     urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
     urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(limit));
-//    only get quotes that we are responsible for
-//    urlBuilder.addQueryParameter(CONTROL_PLANE_ID_PARAM, controlPlaneId);
+    //    only get quotes that we are responsible for
+    //    urlBuilder.addQueryParameter(CONTROL_PLANE_ID_PARAM, controlPlaneId);
     Request request = new Request.Builder().url(urlBuilder.build()).build();
     try (ResponseBody responseBody = executeRequest(request)) {
       return objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {});

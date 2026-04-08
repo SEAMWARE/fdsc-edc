@@ -168,6 +168,13 @@ services:
       dockerfile: docker/Dockerfile.tck-runner
       args:
         DSP_TCK_VERSION: ${DSP_TCK_VERSION:-1.0.0-RC6}
+    # Optional: filter tests by display name substring.
+    # Examples:
+    #   TCK_FILTER=TP:03 ./scripts/run-tck.sh       # only TP:03 tests
+    #   TCK_FILTER=TP:03-01 ./scripts/run-tck.sh     # single test
+    #   TCK_FILTER=TP_C ./scripts/run-tck.sh          # all consumer transfer tests
+    environment:
+      TCK_FILTER: ${TCK_FILTER:-}
     depends_on:
       edc:
         condition: service_healthy
