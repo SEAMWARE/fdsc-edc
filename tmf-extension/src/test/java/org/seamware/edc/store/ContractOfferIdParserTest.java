@@ -61,16 +61,45 @@ public class ContractOfferIdParserTest {
     assertTrue(contractOfferWithUidResult.failed(), "The offer should not have been parsed.");
   }
 
+  @ParameterizedTest
+  @MethodSource("getNonStandardOfferIds")
+  public void testParseNonStandard(String offerId) {
+    Result<ContractOfferIdParser.ContractOfferWithUid> contractOfferWithUidResult =
+        ContractOfferIdParser.parseId(offerId);
+
+    assertTrue(
+        contractOfferWithUidResult.succeeded(),
+        "Non-standard offer IDs should be parsed successfully.");
+    ContractOfferIdParser.ContractOfferWithUid contractOfferWithUid =
+        contractOfferWithUidResult.getContent();
+    assertEquals(
+        offerId,
+        contractOfferWithUid.uuid(),
+        "The uuid should be the raw offer ID for non-standard formats.");
+    assertEquals(
+        offerId,
+        contractOfferWithUid.contractOfferId().definitionPart(),
+        "The definition part should be the raw offer ID for non-standard formats.");
+    assertEquals(
+        offerId,
+        contractOfferWithUid.contractOfferId().assetIdPart(),
+        "The asset ID part should be the raw offer ID for non-standard formats.");
+  }
+
   private static Stream<Arguments> getValidOfferIds() {
     return Stream.of(
         Arguments.of("offer-1:asset-1:uuid", "offer-1", "asset-1", "uuid"),
         Arguments.of("offer-2:asset-2:test-id", "offer-2", "asset-2", "test-id"));
   }
 
-  private static Stream<Arguments> getInvalidOfferIds() {
+  private static Stream<Arguments> getNonStandardOfferIds() {
     return Stream.of(
+        Arguments.of("offerACNC0101"),
         Arguments.of("offer-1:asset-1"),
-        Arguments.of("offer-2"),
         Arguments.of("offer-2:definition-2:uuid:something-else"));
+  }
+
+  private static Stream<Arguments> getInvalidOfferIds() {
+    return Stream.of(Arguments.of((String) null), Arguments.of(""));
   }
 }

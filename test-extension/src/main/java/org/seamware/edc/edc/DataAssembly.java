@@ -37,7 +37,9 @@ package org.seamware.edc.edc;
  */
 
 import static org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates.REQUESTED;
+import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates.INITIAL;
 
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,20 +50,42 @@ import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotia
 import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
+import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
+import org.eclipse.edc.connector.controlplane.policy.spi.PolicyDefinition;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.*;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
+import org.eclipse.edc.policy.model.Action;
+import org.eclipse.edc.policy.model.Permission;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 
 /** Assembles data for the TCK scenarios. */
 public class DataAssembly {
-  private static final Set<String> ASSET_IDS =
+  /** Prefix for consumer-side agreement IDs. */
+  private static final String CONSUMER_AGREEMENT_PREFIX = "ATPC";
+
+  /** Default counter-party address for pre-created agreements. */
+  private static final String TCK_CALLBACK_ADDRESS = "http://tck:8083";
+
+  /** Participant ID used for the TCK test runner. */
+  private static final String TCK_PARTICIPANT_ID = "TCK_PARTICIPANT";
+
+  /** DSP protocol identifier used for pre-created negotiations. */
+  private static final String DSP_PROTOCOL = "dataspace-protocol-http:2025-1";
+
+  /**
+   * Asset ID referenced by transfer process agreements. Must be an asset that exists in both TMF
+   * and in-memory stores. CAT0101 is always created as part of the catalog test data.
+   */
+  private static final String TRANSFER_ASSET_ID = "CAT0101";
+
+  static final Set<String> ASSET_IDS =
       Set.of(
           "ACN0101", "ACN0102", "ACN0103", "ACN0104", "ACN0201", "ACN0202", "ACN0203", "ACN0204",
           "ACN0205", "ACN0206", "ACN0207", "ACN0301", "ACN0302", "ACN0303", "ACN0304", "CAT0101",
           "CAT0102");
 
-  private static final Set<String> AGREEMENT_IDS =
+  static final Set<String> AGREEMENT_IDS =
       Set.of(
           "ATP0101",
           "ATP0102",
@@ -96,10 +120,104 @@ public class DataAssembly {
           "ATPC0305",
           "ATPC0306");
 
-  private static final String POLICY_ID = "P123";
-  private static final String CONTRACT_DEFINITION_ID = "CD123";
+  static final String POLICY_ID = "P123";
+  static final String CONTRACT_DEFINITION_ID = "CD123";
+
+  private static final Field STATE_FIELD;
+
+  static {
+    try {
+      STATE_FIELD = org.eclipse.edc.spi.entity.StatefulEntity.class.getDeclaredField("state");
+      STATE_FIELD.setAccessible(true);
+    } catch (NoSuchFieldException e) {
+      throw new ExceptionInInitializerError(e);
+    }
+  }
 
   private DataAssembly() {}
+
+  /**
+   * Resets a provider transfer process back to INITIAL state via reflection. Used by triggers that
+   * fire after the DSP response (showing REQUESTED) has been sent, allowing the state machine to
+   * process the transfer normally.
+   */
+  static void resetToInitial(TransferProcess process) {
+    try {
+      STATE_FIELD.setInt(process, INITIAL.code());
+    } catch (IllegalAccessException e) {
+      throw new IllegalStateException("Failed to reset transfer state to INITIAL", e);
+    }
+  }
+
+  /** Creates all test assets for TCK catalog and negotiation scenarios. */
+  public static List<Asset> createAllAssets() {
+    return ASSET_IDS.stream().map(DataAssembly::createAsset).toList();
+  }
+
+  /** Creates a permissive policy definition used for all TCK test scenarios. */
+  public static PolicyDefinition createPolicyDefinition() {
+    return PolicyDefinition.Builder.newInstance()
+        .id(POLICY_ID)
+        .policy(
+            Policy.Builder.newInstance()
+                .permission(
+                    Permission.Builder.newInstance()
+                        .action(
+                            Action.Builder.newInstance()
+                                .type("http://www.w3.org/ns/odrl/2/use")
+                                .build())
+                        .build())
+                .build())
+        .build();
+  }
+
+  /** Creates a contract definition that matches all test assets via an empty asset selector. */
+  public static ContractDefinition createContractDefinition() {
+    return ContractDefinition.Builder.newInstance()
+        .id(CONTRACT_DEFINITION_ID)
+        .accessPolicyId(POLICY_ID)
+        .contractPolicyId(POLICY_ID)
+        .build();
+  }
+
+  /**
+   * Creates finalized contract negotiations with agreements for all transfer process test
+   * scenarios.
+   *
+   * @param participantId the connector's participant ID (used as provider/consumer in agreements)
+   * @return list of finalized contract negotiations, each containing a contract agreement
+   */
+  public static List<ContractNegotiation> createAllAgreements(String participantId) {
+    return AGREEMENT_IDS.stream().map(id -> createAgreementNegotiation(id, participantId)).toList();
+  }
+
+  /**
+   * Creates a finalized contract negotiation with an embedded contract agreement.
+   *
+   * @param agreementId the agreement ID (also used to derive the negotiation ID)
+   * @param participantId the connector's participant ID
+   */
+  private static ContractNegotiation createAgreementNegotiation(
+      String agreementId, String participantId) {
+    boolean isConsumer = agreementId.startsWith(CONSUMER_AGREEMENT_PREFIX);
+
+    return ContractNegotiation.Builder.newInstance()
+        .contractAgreement(
+            ContractAgreement.Builder.newInstance()
+                .id(agreementId)
+                .providerId(isConsumer ? TCK_PARTICIPANT_ID : participantId)
+                .consumerId(isConsumer ? participantId : TCK_PARTICIPANT_ID)
+                .assetId(TRANSFER_ASSET_ID)
+                .contractSigningDate(System.currentTimeMillis())
+                .policy(Policy.Builder.newInstance().build())
+                .build())
+        .type(isConsumer ? ContractNegotiation.Type.CONSUMER : ContractNegotiation.Type.PROVIDER)
+        .state(ContractNegotiationStates.FINALIZED.code())
+        .counterPartyId(TCK_PARTICIPANT_ID)
+        .counterPartyAddress(TCK_CALLBACK_ADDRESS)
+        .protocol(DSP_PROTOCOL)
+        .build();
+  }
 
   public static StepRecorder<ContractNegotiation> createNegotiationRecorder() {
     var recorder = new StepRecorder<ContractNegotiation>();
@@ -185,11 +303,17 @@ public class DataAssembly {
         createTrigger(
             ContractNegotiationOffered.class,
             "ACN0205",
-            ContractNegotiation::transitionTerminating),
+            cn -> {
+              cn.transitionTerminating();
+              cn.setPending(false);
+            }),
         createTrigger(
             ContractNegotiationAccepted.class,
             "ACN0206",
-            ContractNegotiation::transitionTerminating),
+            cn -> {
+              cn.transitionTerminating();
+              cn.setPending(false);
+            }),
         createTrigger(
             ContractNegotiationAccepted.class,
             "ACN0303",
@@ -357,12 +481,37 @@ public class DataAssembly {
         createTransferTrigger(TransferProcessStarted.class, "ATP0104", suspendResumeTrigger()),
         createTransferTrigger(
             TransferProcessSuspended.class, "ATP0104", TransferProcess::transitionStarting),
+        // ATP01, ATP02, ATP03 (except 0301/0302): reset to INITIAL so the state machine
+        // processes them after the REQUESTED DSP response has been sent
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0101", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0102", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0103", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0104", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0105", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0201", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0202", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0203", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0204", DataAssembly::resetToInitial),
         createTransferTrigger(
             TransferProcessInitiated.class, "ATP0205", (process) -> process.setPending(true)),
+        // ATP0301/0302: stay in REQUESTED (no reset, no state machine processing)
         createTransferTrigger(
-            TransferProcessInitiated.class, "ATP0301", (process) -> process.setPending(true)),
+            TransferProcessInitiated.class, "ATP0303", DataAssembly::resetToInitial),
         createTransferTrigger(
-            TransferProcessInitiated.class, "ATP0302", (process) -> process.setPending(true)),
+            TransferProcessInitiated.class, "ATP0304", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0305", DataAssembly::resetToInitial),
+        createTransferTrigger(
+            TransferProcessInitiated.class, "ATP0306", DataAssembly::resetToInitial),
         createTransferTrigger(
             TransferProcessStarted.class, "ATPC0201", TransferProcess::transitionTerminating),
         createTransferTrigger(
@@ -382,14 +531,16 @@ public class DataAssembly {
             (process) -> process.transitionTerminating("error")));
   }
 
+  /**
+   * Creates a trigger that alternates between suspending and completing a transfer process. Uses
+   * atomic compare-and-set to ensure thread-safe state transitions.
+   */
   public static Consumer<TransferProcess> suspendResumeTrigger() {
     var count = new AtomicInteger(0);
     return (process) -> {
-      if (count.get() == 0) {
-        count.incrementAndGet();
+      if (count.compareAndSet(0, 1)) {
         process.transitionSuspending("suspending");
-      } else if (count.get() == 1) {
-        count.set(0);
+      } else if (count.compareAndSet(1, 0)) {
         process.transitionCompleting();
       }
     };

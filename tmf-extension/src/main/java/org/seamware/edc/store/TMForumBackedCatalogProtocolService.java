@@ -26,7 +26,6 @@ import org.eclipse.edc.connector.controlplane.services.spi.protocol.ProtocolToke
 import org.eclipse.edc.participant.spi.ParticipantAgent;
 import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
 import org.eclipse.edc.spi.iam.TokenRepresentation;
-import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.jetbrains.annotations.NotNull;
 import org.seamware.edc.domain.ExtendableProductOffering;
@@ -38,21 +37,24 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
   private final TMFEdcMapper tmfEdcMapper;
   private final ProductCatalogApiClient productCatalogApi;
   private final String participantId;
-  private final Monitor monitor;
   private final ProtocolTokenValidator protocolTokenValidator;
 
   public TMForumBackedCatalogProtocolService(
       TMFEdcMapper tmfEdcMapper,
       ProductCatalogApiClient productCatalogApi,
       String participantId,
-      Monitor monitor,
       ProtocolTokenValidator protocolTokenValidator) {
     this.tmfEdcMapper = tmfEdcMapper;
     this.productCatalogApi = productCatalogApi;
     this.participantId = participantId;
-    this.monitor = monitor;
     this.protocolTokenValidator = protocolTokenValidator;
   }
+
+  /**
+   * Maximum number of ProductOfferings (contract definitions) to fetch. ProductOfferings represent
+   * contract definitions in the TMF model, and there are typically few of them.
+   */
+  private static final int MAX_OFFERINGS = 100;
 
   @Override
   public @NotNull ServiceResult<Catalog> getCatalog(
@@ -63,23 +65,29 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
     if (validatedToken.failed()) {
       return ServiceResult.unauthorized("Request not authorized.");
     }
-    List<ExtendableProductOffering> productOfferingVOList =
-        productCatalogApi.getProductOfferings(
+
+    List<ExtendableProductSpecification> specs =
+        productCatalogApi.getProductSpecifications(
             catalogRequestMessage.getQuerySpec().getOffset(),
             catalogRequestMessage.getQuerySpec().getLimit());
+    List<ExtendableProductOffering> offerings =
+        productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+
     Catalog.Builder catalogBuilder = Catalog.Builder.newInstance();
     catalogBuilder.participantId(participantId);
 
-    productOfferingVOList.stream()
-        .map(this::getProductSpec)
+    specs.stream()
+        .map(Optional::ofNullable)
         .map(tmfEdcMapper::getDataService)
         .flatMap(List::stream)
         .forEach(catalogBuilder::dataService);
-    productOfferingVOList.stream()
-        .map(po -> tmfEdcMapper.datasetFromProductOffering(po, getProductSpec(po)))
+
+    specs.stream()
+        .map(spec -> tmfEdcMapper.datasetFromProductSpecification(spec, offerings))
         .filter(Optional::isPresent)
         .map(Optional::get)
         .forEach(catalogBuilder::dataset);
+
     return ServiceResult.success(catalogBuilder.build());
   }
 
@@ -87,20 +95,18 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
   public @NotNull ServiceResult<Dataset> getDataset(
       String datasetId, TokenRepresentation tokenRepresentation, String protocol) {
 
-    return productCatalogApi
-        .getProductOfferingByExternalId(datasetId)
-        .flatMap(po -> tmfEdcMapper.datasetFromProductOffering(po, getProductSpec(po)))
+    Optional<ExtendableProductSpecification> spec =
+        productCatalogApi.getProductSpecByExternalId(datasetId);
+    if (spec.isEmpty()) {
+      return ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId));
+    }
+
+    List<ExtendableProductOffering> offerings =
+        productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+
+    return tmfEdcMapper
+        .datasetFromProductSpecification(spec.get(), offerings)
         .map(ServiceResult::success)
         .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
-  }
-
-  private Optional<ExtendableProductSpecification> getProductSpec(
-      ExtendableProductOffering offeringVO) {
-    if (offeringVO.getExtendableProductSpecification() == null) {
-      return Optional.empty();
-    }
-    return Optional.ofNullable(
-        productCatalogApi.getProductSpecification(
-            offeringVO.getExtendableProductSpecification().getId()));
   }
 }

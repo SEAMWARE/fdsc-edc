@@ -74,11 +74,13 @@ public class StepRecorder<T> {
     private boolean repeat;
     private int playIndex = 0;
 
-    public void addStep(Consumer<T> step) {
+    /** Adds a step to this sequence. Must be called under external synchronization. */
+    public synchronized void addStep(Consumer<T> step) {
       steps.add(step);
     }
 
-    public void playNext(T entity) {
+    /** Plays the next step in the sequence. Thread-safe via synchronization. */
+    public synchronized void playNext(T entity) {
       if (steps.isEmpty()) {
         throw new IllegalStateException("No replay steps");
       }

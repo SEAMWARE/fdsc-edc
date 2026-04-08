@@ -3,6 +3,10 @@ name: Test
 on:
   push:
 
+env:
+  # Eclipse DSP TCK image version
+  DSP_TCK_VERSION: "1.0.0-RC6"
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -10,15 +14,115 @@ jobs:
 
     steps:
 
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v1
+      - uses: actions/setup-java@v4
         with:
+          distribution: temurin
           java-version: '21'
-          java-package: jdk
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
 
       - name: Check code style and license
         run: mvn clean spotless:check
 
       - name: Run tests
-        run: mvn clean test
+        run: mvn test
+
+  tck-conformance:
+    name: DSP TCK Conformance Tests
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Build controlplane shaded JAR
+        run: mvn package -pl controlplane-oid4vc -am -DskipTests -q
+
+      - name: Start EDC and run TCK tests
+        run: |
+          # Start all services in detached mode to avoid --abort-on-container-exit
+          # interfering with the tmf-init sidecar container.
+          docker compose -f docker-compose.tck.yml up --build -d
+
+          # Wait for the TCK container to finish running tests.
+          TCK_ID="$(docker compose -f docker-compose.tck.yml ps -q tck)"
+          MAX_WAIT=600
+          WAITED=0
+          while [ -z "${TCK_ID}" ] && [ ${WAITED} -lt ${MAX_WAIT} ]; do
+            sleep 5
+            WAITED=$((WAITED + 5))
+            TCK_ID="$(docker compose -f docker-compose.tck.yml ps -q tck)" || true
+          done
+          if [ -z "${TCK_ID}" ]; then
+            echo "ERROR: TCK container did not start within ${MAX_WAIT}s"
+            docker compose -f docker-compose.tck.yml logs 2>/dev/null | tail -60
+            exit 1
+          fi
+          docker wait "${TCK_ID}" || true
+
+          # Determine pass/fail from TCK log output (TCK may exit 0 even on failure).
+          FAILED_COUNT="$(docker compose -f docker-compose.tck.yml logs tck 2>/dev/null \
+            | grep -oP 'Failed tests:\s*\K\d+' | tail -1)" || FAILED_COUNT=""
+          if [ -n "${FAILED_COUNT}" ] && [ "${FAILED_COUNT}" != "0" ]; then
+            echo "TCK reported ${FAILED_COUNT} failed test(s)"
+            exit 1
+          fi
+        env:
+          DSP_TCK_VERSION: ${{ env.DSP_TCK_VERSION }}
+
+      - name: Print individual TCK test results
+        if: always()
+        run: |
+          echo "==========================================="
+          echo "  Individual TCK Test Results"
+          echo "==========================================="
+          docker compose -f docker-compose.tck.yml logs tck 2>/dev/null \
+            | grep -iE '(PASS(ED)?|FAIL(ED)?|SKIP|ERROR|Tests run:|test.*result|Suite |── |✓|✗|✔|✘|SUCCESSFUL|ABORTED|Passed tests:|Failed tests:|Failures:)' \
+            || echo "(No structured test output found — see full logs in artifacts)"
+          echo "==========================================="
+
+      - name: Upload EDC container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tck-logs
+          docker compose -f docker-compose.tck.yml logs postgis > tck-logs/postgis.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs scorpio > tck-logs/scorpio.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs tmforum > tck-logs/tmforum.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs tmf-init > tck-logs/tmf-init.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs edc > tck-logs/edc.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs tck > tck-logs/tck.log 2>&1 || true
+
+      - name: Upload TCK logs as artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tck-logs
+          path: tck-logs/
+          retention-days: 14
+
+      - name: Tear down containers
+        if: always()
+        run: docker compose -f docker-compose.tck.yml down -v

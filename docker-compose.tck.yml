@@ -1,0 +1,186 @@
+#
+# Docker Compose for DSP TCK Conformance Testing
+#
+# Orchestrates PostGIS, Scorpio (NGSI-LD context broker), TMForum API,
+# fdsc-edc controlplane, and the Eclipse DSP TCK runner. TMForum uses
+# Scorpio as its storage backend, matching the production deployment topology.
+#
+# Usage (recommended — detached mode avoids abort-on-container-exit issues):
+#   docker compose -f docker-compose.tck.yml up --build -d
+#   docker wait "$(docker compose -f docker-compose.tck.yml ps -q tck)"
+#   docker compose -f docker-compose.tck.yml logs tck
+#   docker compose -f docker-compose.tck.yml down -v
+#
+# Or use the run-tck.sh wrapper:
+#   ./scripts/run-tck.sh
+#
+# To override the TCK image version:
+#   DSP_TCK_VERSION=1.0.0-RC6 ./scripts/run-tck.sh
+#
+# Prerequisites:
+#   - Build the controlplane shaded JAR first:
+#     mvn clean package -pl controlplane-oid4vc -am -DskipTests
+#
+# See also: scripts/run-tck.sh for a one-command local workflow.
+#
+
+services:
+  # -------------------------------------------------------------------------
+  # PostGIS — PostgreSQL with spatial extensions for Scorpio
+  # -------------------------------------------------------------------------
+  postgis:
+    image: postgis/postgis
+    environment:
+      POSTGRES_USER: ngb
+      POSTGRES_PASSWORD: ngb
+      POSTGRES_DB: ngb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ngb -d ngb"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # Scorpio — NGSI-LD Context Broker (storage backend for TMForum API)
+  # -------------------------------------------------------------------------
+  scorpio:
+    image: scorpiobroker/all-in-one-runner:java-4.1.10
+    environment:
+      DBHOST: postgis
+      DBPORT: "5432"
+      DBUSER: ngb
+      DBPASS: ngb
+      POSTGRES_DB: ngb
+      POSTGRES_USER: ngb
+      POSTGRES_PASSWORD: ngb
+      QUARKUS_LOG_LEVEL: INFO
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/9090 && echo -e \"GET /q/health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q UP'"]
+      interval: 5s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+    depends_on:
+      postgis:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # TMForum API (all-in-one, backed by Scorpio context broker)
+  # -------------------------------------------------------------------------
+  # FIWARE TMForum API implementation providing the storage backend for
+  # EDC assets, contract definitions, policies, and agreements.
+  # Uses Scorpio NGSI-LD context broker for persistent storage.
+  # -------------------------------------------------------------------------
+  tmforum:
+    image: quay.io/fiware/tmforum-all-in-one:${TMF_VERSION:-1.5.4}
+    environment:
+      MICRONAUT_HTTP_SERVICES_NGSI_URL: http://scorpio:9090
+      MICRONAUT_HTTP_SERVICES_NGSI_PATH: ngsi-ld/v1
+      MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE: "1000"
+      MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_WRITE: 2s
+      MICRONAUT_CACHES_ENTITIES_EXPIRE_AFTER_ACCESS: 2s
+      MICRONAUT_HTTP_SERVICES_READ_TIMEOUT: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8632/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+    depends_on:
+      scorpio:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # TMForum Data Initializer
+  # -------------------------------------------------------------------------
+  # One-shot container that populates the TMForum instance with the test
+  # data required by the DSP TCK scenarios (assets, contract definitions,
+  # agreements). Exits after initialization completes.
+  # -------------------------------------------------------------------------
+  tmf-init:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tmf-init
+    # Run init script then stay alive so --abort-on-container-exit is not
+    # triggered by this one-shot container exiting.  A marker file signals
+    # completion to the healthcheck so dependent services can proceed.
+    entrypoint: ["/bin/sh", "-c", "/scripts/init-tmforum.sh && touch /tmp/init-complete && tail -f /dev/null"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/init-complete"]
+      interval: 5s
+      timeout: 3s
+      retries: 120
+      start_period: 5s
+    environment:
+      TMF_BASE_URL: http://tmforum:8632
+      PARTICIPANT_ID: urn:connector:fdsc-edc
+      MAX_RETRIES: "90"
+      RETRY_INTERVAL: "2"
+    depends_on:
+      tmforum:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # EDC Controlplane (OID4VC variant) configured for TCK mode
+  # -------------------------------------------------------------------------
+  edc:
+    image: fdsc-edc-controlplane-oid4vc:${EDC_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tck
+      args:
+        JAR: controlplane-oid4vc/target/context/controlplane-oid4vc.jar
+    environment:
+      EDC_FS_CONFIG: /app/config/edc.properties
+      EDC_LOG_LEVEL: DEBUG
+    ports:
+      - "8080:8080"   # Default API
+      - "8181:8181"   # Management API
+      - "8282:8282"   # DSP Protocol
+      - "8687:8687"   # TCK Webhook
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/check/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    depends_on:
+      tmf-init:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # Eclipse DSP TCK Runner
+  # -------------------------------------------------------------------------
+  tck:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.tck-runner
+      args:
+        DSP_TCK_VERSION: ${DSP_TCK_VERSION:-1.0.0-RC6}
+    # Optional: filter tests by display name substring.
+    # Examples:
+    #   TCK_FILTER=TP:03 ./scripts/run-tck.sh       # only TP:03 tests
+    #   TCK_FILTER=TP:03-01 ./scripts/run-tck.sh     # single test
+    #   TCK_FILTER=TP_C ./scripts/run-tck.sh          # all consumer transfer tests
+    environment:
+      TCK_FILTER: ${TCK_FILTER:-}
+    depends_on:
+      edc:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+networks:
+  tck-net:
+    driver: bridge

@@ -226,6 +226,11 @@
             <artifactId>dsp-catalog-lib</artifactId>
             <version>${edc.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>dsp-version-http-api</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
 
     </dependencies>
 
