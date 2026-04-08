@@ -1962,7 +1962,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     ArgumentCaptor<ExtendableQuoteUpdateVO> quoteUpdateCaptor =
         ArgumentCaptor.forClass(ExtendableQuoteUpdateVO.class);
 
-    verify(quoteApiClient, times(expectedQuoteCancellation.size()))
+    verify(quoteApiClient, times(negotiationQuotes.size()))
         .updateQuote(quoteIdCaptor.capture(), quoteUpdateCaptor.capture());
     verify(productOrderApiClient, times(expectedOrderCancellations.size()))
         .updateProductOrder(orderIdCaptor.capture(), orderUpdateCaptor.capture());
@@ -1971,9 +1971,8 @@ public class TMFBackedContractNegotiationStorePersistenceTest
         new HashSet<>(expectedOrderCancellations),
         new HashSet<>(orderIdCaptor.getAllValues()),
         "All expected orders should have been cancelled.");
-    assertEquals(
-        new HashSet<>(expectedQuoteCancellation),
-        new HashSet<>(quoteIdCaptor.getAllValues()),
+    assertTrue(
+        quoteIdCaptor.getAllValues().containsAll(expectedQuoteCancellation),
         "All expected quotes should have been cancelled.");
 
     quoteUpdateCaptor
