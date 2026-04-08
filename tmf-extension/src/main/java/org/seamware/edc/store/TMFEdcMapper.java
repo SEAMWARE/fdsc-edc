@@ -45,6 +45,7 @@ import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.model.Policy;
+import org.eclipse.edc.policy.model.PolicyType;
 import org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.types.domain.DataAddress;
@@ -208,6 +209,58 @@ public class TMFEdcMapper {
           String.format(
               "Cannot convert offering %s to dataset. Offering does not support the DSP.",
               extendableProductOffering.getId()),
+          e);
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Builds a {@link Dataset} from a ProductSpecification (asset) and a list of ProductOfferings
+   * (contract definitions). Each ProductOffering that contains a contract definition term produces
+   * an offer entry in the dataset with a proper {@link ContractOfferId} and {@link
+   * PolicyType#OFFER}.
+   *
+   * <p>This mirrors the upstream EDC approach where one dataset is created per asset, with offers
+   * derived from matching contract definitions.
+   *
+   * @param productSpecification the ProductSpecification representing the EDC asset
+   * @param productOfferings the list of ProductOfferings representing EDC contract definitions
+   * @return an {@link Optional} containing the dataset, or empty if no valid offers were found
+   */
+  public Optional<Dataset> datasetFromProductSpecification(
+      ExtendableProductSpecification productSpecification,
+      List<ExtendableProductOffering> productOfferings) {
+    try {
+      Dataset.Builder datasetBuilder =
+          Dataset.Builder.newInstance().id(productSpecification.getExternalId());
+
+      boolean hasOffers = false;
+      for (ExtendableProductOffering offering : productOfferings) {
+        Optional<ExtendableProductOfferingTerm> optionalTerm = getContractDefinitionTerm(offering);
+        if (optionalTerm.isPresent()) {
+          Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
+          ContractOfferId offerId =
+              ContractOfferId.create(
+                  offering.getExternalId(), productSpecification.getExternalId());
+          datasetBuilder.offer(
+              offerId.toString(), contractPolicy.toBuilder().type(PolicyType.OFFER).build());
+          hasOffers = true;
+        }
+      }
+
+      if (!hasOffers) {
+        return Optional.empty();
+      }
+
+      getDataService(Optional.of(productSpecification)).stream()
+          .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
+          .forEach(datasetBuilder::distribution);
+
+      return Optional.of(datasetBuilder.build());
+    } catch (RuntimeException e) {
+      monitor.debug(
+          String.format(
+              "Cannot convert specification %s to dataset.", productSpecification.getId()),
           e);
       return Optional.empty();
     }
@@ -444,17 +497,37 @@ public class TMFEdcMapper {
             .map(
                 org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO
                     ::getValue)
-            .filter(String.class::isInstance)
-            .map(String.class::cast)
+            .flatMap(v -> extractStringValue(v).stream())
             .findAny();
     if (defaultValue.isPresent()) {
       return defaultValue;
     }
     return characteristicValueSpecificationVOS.stream()
         .map(org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO::getValue)
-        .filter(String.class::isInstance)
-        .map(String.class::cast)
+        .flatMap(v -> extractStringValue(v).stream())
         .findFirst();
+  }
+
+  /**
+   * Extracts a string value from a characteristic value. TMForum stores values either as plain
+   * strings or as nested objects {@code {"value": "..."}}, depending on the backend. This method
+   * handles both representations.
+   *
+   * @param value the raw characteristic value (String or Map)
+   * @return the extracted string value, or empty if extraction is not possible
+   */
+  @SuppressWarnings("unchecked")
+  private static Optional<String> extractStringValue(Object value) {
+    if (value instanceof String s) {
+      return Optional.of(s);
+    }
+    if (value instanceof Map<?, ?> map) {
+      Object inner = map.get("value");
+      if (inner instanceof String s) {
+        return Optional.of(s);
+      }
+    }
+    return Optional.empty();
   }
 
   public Optional<Asset> assetFromProductSpec(ExtendableProductSpecification productSpecification) {

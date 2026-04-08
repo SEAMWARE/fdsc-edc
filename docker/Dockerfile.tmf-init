@@ -1,0 +1,5 @@
+# TMForum data initializer — embeds init script for environments where
+# bind mounts are unavailable.
+FROM curlimages/curl:8.11.1
+
+COPY scripts/init-tmforum.sh /scripts/init-tmforum.sh

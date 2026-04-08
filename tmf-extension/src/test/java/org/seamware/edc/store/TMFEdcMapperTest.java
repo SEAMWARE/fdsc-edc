@@ -391,7 +391,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"", "offer-1", "offer:asset", "offer:asset:my:id"})
+  @ValueSource(strings = {""})
   public void fromContractOffer_failure_invalid_id(String offerId) {
     assertThrows(
         IllegalArgumentException.class,

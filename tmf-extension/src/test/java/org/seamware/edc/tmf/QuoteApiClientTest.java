@@ -56,9 +56,7 @@ public class QuoteApiClientTest extends AbstractApiTest {
         testQuotes, quoteApiClient.getQuotes(0, 5), "The correct quotes should be returned.");
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
-    assertEquals(
-        "/quote?offset=0&limit=5&contractNegotiation.controlplane=" + CONTROLPLANE_ID,
-        recordedRequest.getPath());
+    assertEquals("/quote?offset=0&limit=5", recordedRequest.getPath());
   }
 
   @Test

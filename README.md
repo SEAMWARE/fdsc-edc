@@ -110,6 +110,101 @@ All extensions are registered via Java SPI (`META-INF/services/org.eclipse.edc.s
 
 The `tmf-extension`, `fdsc-transfer-extension`, `dcp-extension`, and `test-extension` modules generate Java model classes from remote OpenAPI specifications at build time via the `openapi-generator-maven-plugin`. Generated code is placed in `target/generated-sources/` and must not be edited manually.
 
+## DSP Conformance Testing
+
+This project integrates the [Eclipse DSP Technology Compatibility Kit (TCK)](https://github.com/eclipse-dataspacetck/dsp-tck) to verify conformance with the [Dataspace Protocol (DSP)](https://docs.internationaldataspaces.org/ids-knowledgebase/dataspace-protocol). TCK tests run automatically in CI on every push and can also be run locally.
+
+### Prerequisites
+
+In addition to the [standard build prerequisites](#prerequisites), you need:
+
+- **Docker** and **Docker Compose** v2 (included with Docker Desktop, or install the `docker-compose-plugin`)
+
+### Running Locally
+
+The simplest way to run TCK conformance tests is with the provided script:
+
+```bash
+# Full build + test run
+./scripts/run-tck.sh
+
+# Skip the Maven build if the shaded JAR already exists
+./scripts/run-tck.sh --skip-build
+
+# Keep containers running after tests (useful for debugging)
+./scripts/run-tck.sh --keep-containers
+```
+
+You can also override the TCK image version or pass extra Maven arguments:
+
+```bash
+DSP_TCK_VERSION=1.0.0-RC6 ./scripts/run-tck.sh
+MVN_ARGS="-T 2C" ./scripts/run-tck.sh
+```
+
+### Running Manually with Docker Compose
+
+If you prefer more control, you can run the steps individually:
+
+```bash
+# 1. Build the controlplane shaded JAR
+mvn clean package -pl controlplane-oid4vc -am -DskipTests
+
+# 2. Start the EDC controlplane and TCK runner
+docker compose -f docker-compose.tck.yml up --build --abort-on-container-exit --exit-code-from tck
+
+# 3. Tear down when done
+docker compose -f docker-compose.tck.yml down --volumes --remove-orphans
+```
+
+### Test Suites
+
+The TCK validates the following DSP protocol areas:
+
+| Suite | Description | Tests |
+|---|---|---|
+| **CAT** | Catalog protocol — dataset query and listing | 2 |
+| **CN** | Contract negotiation (provider side) — offer, accept, verify, finalize flows | 15 |
+| **CN_C** | Contract negotiation (consumer side) — consumer-initiated negotiation flows | 11 |
+| **TP** | Transfer process (provider side) — start, suspend, resume, complete, terminate flows | 16 |
+| **TP_C** | Transfer process (consumer side) — consumer-initiated transfer flows | 16 |
+
+### Interpreting Results
+
+- **Exit code 0** — All TCK conformance tests passed.
+- **Non-zero exit code** — One or more tests failed. Check the TCK container logs for details.
+
+When running in CI, container logs are automatically uploaded as build artifacts on failure (14-day retention).
+
+To view logs from a local run:
+
+```bash
+# While containers are still running (use --keep-containers)
+docker compose -f docker-compose.tck.yml logs tck
+docker compose -f docker-compose.tck.yml logs edc
+```
+
+### Configuration
+
+TCK configuration files are in `config/tck/`:
+
+| File | Purpose |
+|---|---|
+| `tck.properties` | TCK runtime settings — connector endpoints, callback addresses, and test scenario IDs (dataset IDs, offer IDs, agreement IDs) matching `DataAssembly.java` |
+| `edc.properties` | EDC controlplane settings for TCK mode — enables test extensions, configures API ports, and disables production features (FDSC transfer, DCP) |
+
+The Docker Compose file (`docker-compose.tck.yml`) orchestrates PostGIS, Scorpio (NGSI-LD context broker), TMForum API (backed by Scorpio), the EDC controlplane, and the TCK runner. Configuration files are mounted into the containers. If you need to customize connector endpoints or test IDs, edit the properties files before running.
+
+### CI Integration
+
+The GitHub Actions workflow (`.github/workflows/test.yml`) includes a `tck-conformance` job that:
+
+1. Waits for unit tests and spotless checks to pass.
+2. Builds the controlplane shaded JAR with Maven dependency caching.
+3. Builds the Docker image with layer caching.
+4. Runs the TCK via Docker Compose.
+5. Uploads EDC and TCK container logs as artifacts if tests fail.
+
 ## Developing
 
 ```bash

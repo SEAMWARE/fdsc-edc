@@ -43,6 +43,17 @@
             <groupId>org.seamware.edc</groupId>
             <artifactId>fdsc-transfer-extension</artifactId>
             <version>${project.version}</version>
+            <exclusions>
+                <!-- Vault is provided by the test-extension InMemoryVault when
+                     testExtension.identity.enabled=true. Excluding here prevents
+                     the HashicorpVaultExtension from loading and failing when
+                     edc.vault.hashicorp.url is not configured. For production
+                     deployments, add vault-hashicorp explicitly. -->
+                <exclusion>
+                    <groupId>org.eclipse.edc</groupId>
+                    <artifactId>vault-hashicorp</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>org.seamware.edc</groupId>
@@ -84,11 +95,10 @@
             <artifactId>connector-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>vault-hashicorp</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
+        <!-- Vault is provided by the test-extension InMemoryVault when
+             testExtension.identity.enabled=true. For production deployments,
+             add vault-hashicorp (or another Vault provider) as a runtime
+             dependency in a deployment-specific profile. -->
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>runtime-core</artifactId>
@@ -224,6 +234,11 @@
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>dsp-catalog-lib</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>dsp-version-http-api</artifactId>
             <version>${edc.version}</version>
         </dependency>
 

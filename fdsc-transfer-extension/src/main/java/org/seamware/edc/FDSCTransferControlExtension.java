@@ -257,10 +257,19 @@ public class FDSCTransferControlExtension implements ServiceExtension {
     return transferConfig;
   }
 
-  @Provider
+  /**
+   * Returns the {@link ApisixAdminClient} for provisioning APISIX routes. Returns {@code null} when
+   * the FDSC transfer extension is disabled or the APISIX configuration is absent.
+   *
+   * <p>Not annotated with {@code @Provider} because no other extension injects this service; it is
+   * only used internally by the provisioners created in {@link #initialize}.
+   */
   public ApisixAdminClient apisixAdminClient(ServiceExtensionContext context) {
     if (apisixAdminClient == null) {
       TransferConfig config = transferConfig(context);
+      if (!config.isEnabled() || config.getApisix() == null) {
+        return null;
+      }
       apisixAdminClient =
           new ApisixAdminClient(
               monitor,

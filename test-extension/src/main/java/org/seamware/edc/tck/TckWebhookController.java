@@ -96,7 +96,7 @@ public class TckWebhookController {
             .protocol("dataspace-protocol-http:2025-1")
             .build();
 
-    monitor.debug(
+    monitor.warning(
         "Starting contract negotiation for [provider, address, offer]: [%s, %s, %s]"
             .formatted(request.providerId(), request.connectorAddress(), request.offerId()));
 
@@ -128,7 +128,7 @@ public class TckWebhookController {
             .contractId(request.agreementId())
             .build();
 
-    monitor.debug(
+    monitor.warning(
         "Starting transfer process for [provider, address, agreement, format]: [%s, %s, %s, %s]"
             .formatted(
                 request.providerId(),

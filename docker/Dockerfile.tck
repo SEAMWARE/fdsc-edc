@@ -1,0 +1,18 @@
+# TCK variant — embeds EDC config for environments where bind mounts are
+# unavailable (e.g., rootless Docker, CI with overlayfs).
+FROM eclipse-temurin:24_36-jre-alpine
+
+ARG JVM_ARGS=""
+ARG JAR
+
+RUN apk --no-cache add curl
+
+WORKDIR /app
+
+COPY ${JAR} edc.jar
+COPY config/tck/edc.properties /app/config/edc.properties
+
+# Default JVM memory settings: 512 MB heap prevents OOM when running 96+ extensions
+# with TMForum backend and DEBUG logging. Override via JVM_ARGS build arg.
+ENV ENV_JVM_ARGS=${JVM_ARGS:-"-Xms256m -Xmx512m"}
+CMD ["sh", "-c", "exec java $ENV_JVM_ARGS -Djava.security.egd=file:/dev/urandom -jar edc.jar --log-level=DEBUG"]

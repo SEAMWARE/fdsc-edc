@@ -305,22 +305,38 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   public @NotNull List<ContractNegotiation> nextNotLeased(int max, Criterion... criteria) {
     try {
       return lockManager.writeLock(
-          () ->
-              getNegotiations(Arrays.asList(criteria)).stream()
-                  .filter(cn -> !activeNegotiations.contains(cn.getId()))
-                  .filter(
-                      cn -> {
-                        try {
-                          leaseHolder.acquireLease(cn.getId(), lockId);
-                          activeNegotiations.add(cn.getId());
-                          return true;
-                        } catch (Exception e) {
-                          monitor.info(String.format("Was not able to lease %s", cn.getId()), e);
-                          return false;
-                        }
-                      })
-                  .limit(max)
-                  .toList());
+          () -> {
+            var allNegotiations = getNegotiations(Arrays.asList(criteria));
+            if (!allNegotiations.isEmpty()) {
+              monitor.warning(
+                  String.format(
+                      "nextNotLeased: criteria=%s matched %d entities: %s",
+                      Arrays.toString(criteria),
+                      allNegotiations.size(),
+                      allNegotiations.stream()
+                          .map(
+                              cn ->
+                                  String.format(
+                                      "[id=%s state=%d pending=%b type=%s]",
+                                      cn.getId(), cn.getState(), cn.isPending(), cn.getType()))
+                          .collect(java.util.stream.Collectors.joining(", "))));
+            }
+            return allNegotiations.stream()
+                .filter(cn -> !activeNegotiations.contains(cn.getId()))
+                .filter(
+                    cn -> {
+                      try {
+                        leaseHolder.acquireLease(cn.getId(), lockId);
+                        activeNegotiations.add(cn.getId());
+                        return true;
+                      } catch (Exception e) {
+                        monitor.info(String.format("Was not able to lease %s", cn.getId()), e);
+                        return false;
+                      }
+                    })
+                .limit(max)
+                .toList();
+          });
     } catch (Exception e) {
       monitor.warning("Failed to get", e);
       throw new EdcPersistenceException(e);
@@ -356,6 +372,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   @Override
   public void save(ContractNegotiation contractNegotiation) {
+
     // Per-negotiation lock prevents concurrent saves for the same negotiation within this
     // JVM. Without this, two DSP message handlers can enter handleAgreeStates simultaneously
     // and both create agreements before either sees the other's, producing duplicates.
@@ -401,12 +418,18 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   private void handleTerminationStates(ContractNegotiation contractNegotiation) {
-    quoteApi.findByNegotiationId(contractNegotiation.getId()).stream()
-        .filter(eq -> eq.getState() != QuoteStateTypeVO.CANCELLED)
+    quoteApi
+        .findByNegotiationId(contractNegotiation.getId())
         .forEach(
             cn -> {
+              // Always update the quote so that the contractNegotiationState reflects the
+              // current EDC state (e.g. TERMINATED after a failed TERMINATING attempt).
+              // Without this, a quote cancelled during a TERMINATING save would retain
+              // state "TERMINATING", causing the state machine to reload and retry forever.
               updateQuote(cn, contractNegotiation, QuoteStateTypeVO.CANCELLED);
-              cancelProductOrder(cn);
+              if (cn.getState() != QuoteStateTypeVO.CANCELLED) {
+                cancelProductOrder(cn);
+              }
             });
     cancelAgreements(contractNegotiation.getId());
   }
@@ -595,6 +618,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   private void handleInitialStates(ContractNegotiation contractNegotiation) {
+
     List<ExtendableQuoteVO> quotes = getQuotes(contractNegotiation);
     Optional<ExtendableQuoteVO> activeQuote =
         getActiveQuote(
@@ -771,11 +795,6 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       ExtendableQuoteVO orginialQuote,
       ContractNegotiation contractNegotiation,
       QuoteStateTypeVO quoteState) {
-    monitor.warning(
-        "Terminate existing quote for negotiation "
-            + contractNegotiation.getId()
-            + " - state "
-            + ContractNegotiationStates.from(contractNegotiation.getState()).name());
     boolean isConsumer = contractNegotiation.getType() == ContractNegotiation.Type.CONSUMER;
 
     // Snapshot previous state for compensation
@@ -812,6 +831,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   private void createAgreement(ContractNegotiation contractNegotiation) {
+
     ExtendableAgreementVO agreementVO =
         tmfEdcMapper.toAgreement(
             contractNegotiation.getId(), contractNegotiation.getContractAgreement());

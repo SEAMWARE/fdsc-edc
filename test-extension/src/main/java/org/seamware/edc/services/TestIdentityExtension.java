@@ -43,14 +43,17 @@ import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.spi.iam.AudienceResolver;
 import org.eclipse.edc.spi.iam.IdentityService;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.security.Vault;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.web.spi.WebService;
 import org.seamware.edc.TestConfig;
 
 @Provides({
   IdentityService.class,
   AudienceResolver.class,
-  DefaultParticipantIdExtractionFunction.class
+  DefaultParticipantIdExtractionFunction.class,
+  Vault.class
 })
 public class TestIdentityExtension implements ServiceExtension {
 
@@ -61,9 +64,14 @@ public class TestIdentityExtension implements ServiceExtension {
     return NAME;
   }
 
+  /** Web context name for the DSP protocol endpoint. */
+  private static final String PROTOCOL_CONTEXT = "protocol";
+
   @Inject private Monitor monitor;
 
   @Inject private ObjectMapper objectMapper;
+
+  @Inject private WebService webService;
 
   @Override
   public void initialize(ServiceExtensionContext context) {
@@ -77,6 +85,13 @@ public class TestIdentityExtension implements ServiceExtension {
     context.registerService(AudienceResolver.class, audienceResolver());
     context.registerService(
         DefaultParticipantIdExtractionFunction.class, defaultParticipantIdExtractionFunction());
+    context.registerService(Vault.class, new InMemoryVault());
+    monitor.info("Registered in-memory Vault for test mode (no external vault required).");
+
+    webService.registerResource(PROTOCOL_CONTEXT, new DefaultTokenRequestFilter(monitor));
+    monitor.info(
+        "Registered DefaultTokenRequestFilter on protocol context"
+            + " (injects Authorization header for unauthenticated DSP requests).");
   }
 
   private IdentityService identityService(ServiceExtensionContext context) {
