@@ -179,7 +179,7 @@ public class TckGuardExtension implements ServiceExtension {
               cn -> recorder.playNext(cn.getContractOffers().get(0).getAssetId(), cn), store);
       return negotiationGuard;
     }
-    return null;
+    return it -> false;
   }
 
   @Provider
@@ -198,7 +198,7 @@ public class TckGuardExtension implements ServiceExtension {
               tp -> recorder.playNext(tp.getContractId(), tp), transferProcessStore);
       return transferProcessGuard;
     }
-    return null;
+    return it -> false;
   }
 
   @Override
