@@ -62,7 +62,7 @@ jobs:
         run: mvn package -pl controlplane-oid4vc -am -DskipTests -q
 
       - name: Start EDC and run TCK tests
-        timeout-minutes: 60
+        timeout-minutes: 30
         run: |
           # Start all services in detached mode to avoid --abort-on-container-exit
           # interfering with the tmf-init sidecar container.
