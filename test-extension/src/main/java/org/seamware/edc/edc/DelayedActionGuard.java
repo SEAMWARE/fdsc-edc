@@ -87,21 +87,40 @@ public class DelayedActionGuard<T extends StatefulEntity<T>> implements PendingG
             try {
               var entry = queue.poll(POLL_TIMEOUT_MS, MILLISECONDS);
               if (entry != null) {
-                LOG.warning(
-                    String.format(
-                        "Guard background: playing step for entity=%s state=%d",
-                        entry.entity.getId(), entry.entity.getState()));
-                try {
-                  action.accept(entry.entity);
+                // Re-read the entity from the store to avoid saving a stale copy.
+                // A trigger subscriber may have already advanced the entity's state
+                // (e.g., AGREED → TERMINATING) since it was queued.
+                var result = store.findByIdAndLease(entry.entity.getId());
+                if (result.failed()) {
                   LOG.warning(
                       String.format(
-                          "Guard background: after step entity=%s state=%d",
-                          entry.entity.getId(), entry.entity.getState()));
+                          "Guard background: could not lease entity=%s: %s",
+                          entry.entity.getId(), result.getFailureDetail()));
+                  continue;
+                }
+                var current = result.getContent();
+                LOG.warning(
+                    String.format(
+                        "Guard background: processing entity=%s state=%d",
+                        current.getId(), current.getState()));
+                try {
+                  if (filter.test(current)) {
+                    action.accept(current);
+                    LOG.warning(
+                        String.format(
+                            "Guard background: after step entity=%s state=%d",
+                            current.getId(), current.getState()));
+                  } else {
+                    LOG.warning(
+                        String.format(
+                            "Guard background: filter no longer matches entity=%s state=%d, skipping action",
+                            current.getId(), current.getState()));
+                  }
                 } catch (Exception e) {
                   LOG.log(Level.WARNING, "Guard action failed", e);
                 } finally {
-                  entry.entity.setPending(false);
-                  store.save(entry.entity);
+                  current.setPending(false);
+                  store.save(current);
                 }
               }
             } catch (InterruptedException e) {

@@ -62,6 +62,7 @@ jobs:
         run: mvn package -pl controlplane-oid4vc -am -DskipTests -q
 
       - name: Start EDC and run TCK tests
+        timeout-minutes: 30
         run: |
           # Start all services in detached mode to avoid --abort-on-container-exit
           # interfering with the tmf-init sidecar container.
@@ -81,7 +82,16 @@ jobs:
             docker compose -f docker-compose.tck.yml logs 2>/dev/null | tail -60
             exit 1
           fi
+
+          # Stream TCK logs in the background so CI output shows test progress
+          docker compose -f docker-compose.tck.yml logs -f tck &
+          LOG_PID=$!
+
           docker wait "${TCK_ID}" || true
+
+          # Stop the log streamer
+          kill "${LOG_PID}" 2>/dev/null || true
+          wait "${LOG_PID}" 2>/dev/null || true
 
           # Determine pass/fail from TCK log output (TCK may exit 0 even on failure).
           FAILED_COUNT="$(docker compose -f docker-compose.tck.yml logs tck 2>/dev/null \
