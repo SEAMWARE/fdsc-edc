@@ -164,31 +164,41 @@ public class TckGuardExtension implements ServiceExtension {
   }
 
   @Provider
-  public ContractNegotiationPendingGuard negotiationGuard() {
-    var recorder = createNegotiationRecorder();
+  public ContractNegotiationPendingGuard negotiationGuard(ServiceExtensionContext context) {
 
-    var registry = new ContractNegotiationTriggerSubscriber(store, transactionContext);
-    createNegotiationTriggers().forEach(registry::register);
-    router.register(ContractNegotiationEvent.class, registry);
+    TestConfig testConfig = TestConfig.fromConfig(context.getConfig());
+    if (testConfig.isEnabled()) {
+      var recorder = createNegotiationRecorder();
 
-    negotiationGuard =
-        new ContractNegotiationGuard(
-            cn -> recorder.playNext(cn.getContractOffers().get(0).getAssetId(), cn), store);
-    return negotiationGuard;
+      var registry = new ContractNegotiationTriggerSubscriber(store, transactionContext);
+      createNegotiationTriggers().forEach(registry::register);
+      router.register(ContractNegotiationEvent.class, registry);
+
+      negotiationGuard =
+          new ContractNegotiationGuard(
+              cn -> recorder.playNext(cn.getContractOffers().get(0).getAssetId(), cn), store);
+      return negotiationGuard;
+    }
+    return it -> false;
   }
 
   @Provider
-  public TransferProcessPendingGuard transferProcessPendingGuard() {
-    var recorder = createTransferProcessRecorder();
+  public TransferProcessPendingGuard transferProcessPendingGuard(ServiceExtensionContext context) {
+    TestConfig testConfig = TestConfig.fromConfig(context.getConfig());
+    if (testConfig.isEnabled()) {
+      var recorder = createTransferProcessRecorder();
 
-    var tpRegistry = new TransferProcessTriggerSubscriber(transferProcessStore, transactionContext);
-    createTransferProcessTriggers().forEach(tpRegistry::register);
-    router.register(TransferProcessEvent.class, tpRegistry);
+      var tpRegistry =
+          new TransferProcessTriggerSubscriber(transferProcessStore, transactionContext);
+      createTransferProcessTriggers().forEach(tpRegistry::register);
+      router.register(TransferProcessEvent.class, tpRegistry);
 
-    transferProcessGuard =
-        new TransferProcessGuard(
-            tp -> recorder.playNext(tp.getContractId(), tp), transferProcessStore);
-    return transferProcessGuard;
+      transferProcessGuard =
+          new TransferProcessGuard(
+              tp -> recorder.playNext(tp.getContractId(), tp), transferProcessStore);
+      return transferProcessGuard;
+    }
+    return it -> false;
   }
 
   @Override
