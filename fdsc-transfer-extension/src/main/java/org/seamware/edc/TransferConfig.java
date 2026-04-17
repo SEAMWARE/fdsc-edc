@@ -65,6 +65,8 @@ public class TransferConfig {
   private Dcp dcp;
   // host to make the transfer available at
   private String transferHost;
+  // protocol to make the transfer available at
+  private String transferProtocol;
 
   public Apisix getApisix() {
     return apisix;
@@ -82,6 +84,10 @@ public class TransferConfig {
     return transferHost;
   }
 
+  public String getTransferProtocol() {
+    return transferProtocol;
+  }
+
   public boolean isEnabled() {
     return enabled;
   }
@@ -94,6 +100,8 @@ public class TransferConfig {
         .ifPresent(transferConfigBuilder::enabled);
     getNullSafeFromConfig(() -> transferConfig.getString("transferHost"))
         .ifPresent(transferConfigBuilder::transferHost);
+    getNullSafeFromConfig(() -> transferConfig.getString("transferProtocol"))
+        .ifPresent(transferConfigBuilder::transferProtocol);
 
     Config oid4vcConfig = config.getConfig(FDSC_TRANSFER_OID4VC_CONFIG);
     Oid4Vc.Builder oid4VcBuilder = new Oid4Vc.Builder();
@@ -358,6 +366,11 @@ public class TransferConfig {
       return this;
     }
 
+    public Builder transferProtocol(String transferProtocol) {
+      transferConfig.transferProtocol = transferProtocol;
+      return this;
+    }
+
     public Builder oid4Vc(Oid4Vc oid4Vc) {
       transferConfig.oid4Vc = oid4Vc;
       return this;
@@ -376,6 +389,9 @@ public class TransferConfig {
         Objects.requireNonNull(
             transferConfig.getTransferHost(),
             "If FDSC Transfers are supported, the host address for the transfers needs to be provided.");
+        if (transferConfig.getTransferProtocol() == null) {
+          transferConfig.transferProtocol = "https";
+        }
         if (transferConfig.oid4Vc == null) {
           transferConfig.oid4Vc = new Oid4Vc.Builder().enabled(false).build();
         }

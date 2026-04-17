@@ -64,7 +64,11 @@ public class FDSCOid4VpEndpointDataReferenceService implements EndpointDataRefer
             .type(ENDPOINT_TYPE)
             .property(
                 EDC_NAMESPACE + "endpoint",
-                "http://" + transferConfig.getTransferHost() + "/" + dataFlow.getId())
+                transferConfig.getTransferProtocol()
+                    + "://"
+                    + transferConfig.getTransferHost()
+                    + "/"
+                    + dataFlow.getId())
             .property(EDC_NAMESPACE + "endpointType", ENDPOINT_TYPE);
 
     return Result.success(fdscDataAddressBuilder.build());
