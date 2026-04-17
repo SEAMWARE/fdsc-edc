@@ -101,7 +101,7 @@ public class TransferConfig {
     getNullSafeFromConfig(() -> transferConfig.getString("transferHost"))
         .ifPresent(transferConfigBuilder::transferHost);
     getNullSafeFromConfig(() -> transferConfig.getString("transferProtocol"))
-        .ifPresent(transferConfigBuilder::transferHost);
+        .ifPresent(transferConfigBuilder::transferProtocol);
 
     Config oid4vcConfig = config.getConfig(FDSC_TRANSFER_OID4VC_CONFIG);
     Oid4Vc.Builder oid4VcBuilder = new Oid4Vc.Builder();

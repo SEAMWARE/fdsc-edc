@@ -74,7 +74,10 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
     clock = Clock.fixed(Instant.EPOCH, ZoneId.systemDefault());
 
     TransferConfig transferConfig =
-        TransferConfig.Builder.newInstance().transferHost(TEST_TRANSFER_HOST).build();
+        TransferConfig.Builder.newInstance()
+            .transferHost(TEST_TRANSFER_HOST)
+            .transferProtocol("https")
+            .build();
 
     fdscDcpEndpointDataReferenceService =
         new FDSCDcpEndpointDataReferenceService(transferConfig, vault, TEST_ISSUER, clock);
@@ -94,7 +97,7 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
     assertEquals("FDSC", dataAddress.getType());
     assertEquals("bearer", dataAddress.getStringProperty(EDC_NAMESPACE + "tokenType"));
     assertEquals(
-        "http://transfer.host/my-flow", dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
+        "https://transfer.host/my-flow", dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
     assertEquals(
         "https://w3id.org/idsa/v4.1/HTTP",
         dataAddress.getStringProperty(EDC_NAMESPACE + "endpointType"));
