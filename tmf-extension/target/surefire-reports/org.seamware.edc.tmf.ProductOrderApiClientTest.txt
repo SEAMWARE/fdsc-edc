@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: org.seamware.edc.tmf.ProductOrderApiClientTest
--------------------------------------------------------------------------------
-Tests run: 23, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.110 s -- in org.seamware.edc.tmf.ProductOrderApiClientTest
