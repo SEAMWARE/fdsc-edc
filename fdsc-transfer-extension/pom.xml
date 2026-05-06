@@ -15,7 +15,7 @@
         <version.com.nimbusds.nimbus-jose-jwt>10.5</version.com.nimbusds.nimbus-jose-jwt>
 
         <credentials-config-service.api.url>https://raw.githubusercontent.com/FIWARE/credentials-config-service/refs/heads/main/api/credentials-config-service.yaml</credentials-config-service.api.url>
-        <odrl-pap.api.url>https://raw.githubusercontent.com/wistefan/odrl-pap/refs/heads/policy-per-service/api/odrl.yaml</odrl-pap.api.url>
+        <odrl-pap.api.url>https://raw.githubusercontent.com/wistefan/odrl-pap/main/api/odrl.yaml</odrl-pap.api.url>
     </properties>
 
     <dependencies>
