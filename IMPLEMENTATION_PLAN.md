@@ -177,7 +177,7 @@ This approach is additive — existing evaluators like `DayOfWeekEvaluator` cont
    - Replace `// TODO: support odrl-pap based evaluation in the future.` with:
      ```java
      // ODRL-PAP based policy evaluation is handled by OdrlPapPolicyExtension
-     // (fdsc-transfer-extension). Enable via odrlPap.policy.enabled=true.
+     // (policy-extension). Enable via odrlPap.policy.enabled=true.
      ```
 
 2. **Remove unused `policyEngine` field** from `FDSCTransferControlExtension` at `fdsc-transfer-extension/src/main/java/org/seamware/edc/FDSCTransferControlExtension.java`:
