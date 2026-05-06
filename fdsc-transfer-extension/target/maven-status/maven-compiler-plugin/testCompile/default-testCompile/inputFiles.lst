@@ -1,0 +1,9 @@
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/AbstractApiClientTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/FDSCDcpEndpointDataReferenceServiceTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/TransferConfigTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/ccs/CredentialsConfigServiceClientTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/dcp/JwksControllerTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/pap/OdrlPapClientTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/transfer/AbstractProvisionerTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/transfer/FDSCDcpProvisionerTest.java
+/home/agent/workspace/fdsc-transfer-extension/src/test/java/org/seamware/edc/transfer/FDSCOID4VPProvisionerTest.java

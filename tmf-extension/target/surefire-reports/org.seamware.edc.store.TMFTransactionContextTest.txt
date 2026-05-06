@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: org.seamware.edc.store.TMFTransactionContextTest
+-------------------------------------------------------------------------------
+Tests run: 14, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.036 s -- in org.seamware.edc.store.TMFTransactionContextTest
