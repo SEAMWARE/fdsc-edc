@@ -1,78 +1,227 @@
-# Implementation Plan: [DSC] DSP Conformance Tests
+# Implementation Plan: Implement PolicyEngine to use ODRL-PAP
 
 ## Overview
 
-The DSP (Dataspace Protocol) conformance tests (Eclipse DSP TCK) are already scaffolded in the repository with Docker Compose orchestration, TMForum data initialization scripts, EDC test-extension with guards/webhooks/mock identity, TCK configuration, a local runner script, and a CI workflow. However, the tests do not execute successfully. This plan diagnoses and fixes all issues — from compilation errors and EDC API incompatibilities to Docker Compose configuration problems, init-script data mismatches, and runtime failures — until the TCK conformance tests pass end-to-end.
+Integrate the external ODRL-PAP (Policy Administration Point) service as a policy evaluation backend for the EDC PolicyEngine. Currently the `OdrlPapClient` only performs CRUD operations (create/delete services and policies) for transfer provisioning. This plan adds policy **evaluation** capabilities by calling the PAP's `POST /validate` endpoint and registering a pre-validator with EDC's `PolicyEngine`, so that ODRL policies are evaluated by the PAP before EDC's built-in constraint functions run.
+
+### Architecture
+
+The ODRL-PAP exposes a `POST /validate` endpoint that accepts an ODRL policy and a `TestRequest` (HTTP method, host, path, protocol, body, headers) and returns `{allow: boolean, explanation: string[]}`. The integration registers a `PolicyValidatorRule` as a pre-validator with the EDC `PolicyEngine` for configurable scopes (catalog, negotiation, transfer). When EDC evaluates a policy:
+
+1. The pre-validator converts the EDC `Policy` to ODRL JSON-LD (via `TypeTransformerRegistry` + `JsonLd`)
+2. It maps the EDC `PolicyContext` to a `TestRequestVO` (HTTP request representation)
+3. It calls `OdrlPapClient.validate()` with both
+4. If the PAP returns `allow=false`, evaluation fails immediately with explanations
+5. If the PAP returns `allow=true`, EDC's built-in constraint functions still run (layered evaluation)
+
+This approach is additive — existing evaluators like `DayOfWeekEvaluator` continue to work alongside PAP-based evaluation. The feature is gated behind `odrlPap.policy.enabled` (default `false`).
 
 ## Steps
 
-### Step 1: Fix build, Docker Compose orchestration, and EDC startup ✅
+### Step 1: Extend OdrlPapClient with Validation and Mappings API Methods
 
-**Goal:** Get the project to compile, pass unit tests, build Docker images, and have the EDC controlplane start successfully within the Docker Compose TCK stack.
+**Goal:** Add methods to `OdrlPapClient` to call the ODRL-PAP's `POST /validate` and `GET /mappings` endpoints, using the auto-generated model classes from the OpenAPI spec.
 
-**Issues found and fixed:**
-1. **Spotless formatting violation** in `DataAssembly.java` — line wrapping issue.
-2. **Wrong shaded JAR path** — `docker-compose.tck.yml`, `scripts/run-tck.sh`, and `.github/workflows/test.yml` all referenced `controlplane-oid4vc-0.0.1-SNAPSHOT.jar` (2KB non-shaded JAR) instead of the correct shaded JAR at `target/context/controlplane-oid4vc.jar` (38MB).
-3. **Scorpio health check failure** — The Scorpio container (`scorpiobroker/all-in-one-runner:java-5.0.3`) does not have `curl` installed. Changed the health check to use bash `/dev/tcp/` instead.
-4. **Docker bind mount issues** — Some Docker environments (overlayfs, CI) don't support single-file bind mounts. Created dedicated Dockerfiles (`docker/Dockerfile.tck`, `docker/Dockerfile.tck-runner`, `docker/Dockerfile.tmf-init`) that embed config files via COPY instead of relying on bind mounts.
-5. **HashicorpVault extension crash** — The `vault-hashicorp` dependency (pulled in transitively via `fdsc-transfer-extension`) causes EDC startup to fail when `edc.vault.hashicorp.url` is not configured. Added an exclusion in `controlplane-oid4vc/pom.xml` since the test-extension provides `InMemoryVault`.
-6. **OID4VP extension crash** — The OID4VP extension requires a `holder-id` config. Added `oid4vp.enabled=false` to `config/tck/edc.properties` since TCK mode uses mock identity services.
-7. **FDSC Transfer extension crash** — `TransferConfig.fromConfig()` unconditionally builds `Apisix` config (which requires `address`), even when `fdscTransfer.enabled=false`. Fixed by only building sub-configs when the transfer extension is enabled.
+**Context:** The ODRL-PAP OpenAPI spec (referenced in `fdsc-transfer-extension/pom.xml` line 18) defines models including `ValidationRequestVO`, `TestRequestVO`, `ValidationResponseVO`, and `MappingsVO` that are generated at build time into the `org.seamware.pap.model` package. The `OdrlPapClient` (at `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/OdrlPapClient.java`) currently only has `createService()`, `createPolicy()`, and `deleteService()`.
 
-**Files changed:**
-- `test-extension/src/main/java/org/seamware/edc/edc/DataAssembly.java` (spotless fix)
-- `docker-compose.tck.yml` (JAR path, Scorpio health check, embedded configs via Dockerfiles)
-- `scripts/run-tck.sh` (JAR path)
-- `.github/workflows/test.yml` (JAR path)
-- `docker/Dockerfile.tck` (new — EDC image with embedded config)
-- `docker/Dockerfile.tck-runner` (new — TCK runner with embedded config)
-- `docker/Dockerfile.tmf-init` (new — tmf-init with embedded script)
-- `controlplane-oid4vc/pom.xml` (exclude vault-hashicorp)
-- `config/tck/edc.properties` (add oid4vp.enabled=false)
-- `fdsc-transfer-extension/src/main/java/org/seamware/edc/TransferConfig.java` (conditional sub-config build)
+**Changes:**
 
-### Step 2: Fix TMForum init script and EDC runtime errors
+1. **Verify/fix OpenAPI spec URL** — The current spec URL (`https://raw.githubusercontent.com/wistefan/odrl-pap/refs/heads/policy-per-service/api/odrl.yaml`) may return 404 if the branch was merged. Update to the correct URL if needed (e.g. `https://raw.githubusercontent.com/wistefan/odrl-pap/main/api/odrl.yaml`). Verify the spec includes the `/validate` and `/mappings` endpoints and their model schemas (`ValidationRequest`, `TestRequest`, `ValidationResponse`, `Mappings`, `Mapping`).
 
-**Goal:** TMForum data initialization succeeds and EDC starts fully within the Docker Compose stack.
+2. **Add `validate()` method to `OdrlPapClient`:**
+   - Signature: `public ValidationResponseVO validate(ValidationRequestVO request)`
+   - POST to `/validate` with JSON body, deserialize response as `ValidationResponseVO`
+   - Throw `HttpClientException` on non-2xx responses (following existing `createService`/`createPolicy` pattern)
 
-**Actions:**
-- Debug why all TMForum API calls in `scripts/init-tmforum.sh` return empty errors (all ProductSpecifications, ProductOffering, and Agreements fail to create).
-- Improve error reporting in the init script to capture HTTP response bodies.
-- Fix any TMForum API compatibility issues (request format, endpoints, required fields).
-- Verify EDC starts fully after the OID4VP and FDSC Transfer fixes from Step 1.
-- Address any remaining SPI or dependency injection errors in the EDC startup.
+3. **Add `getMappings()` method to `OdrlPapClient`:**
+   - Signature: `public MappingsVO getMappings()`
+   - GET `/mappings`, deserialize as `MappingsVO`
 
-**Acceptance criteria:** `tmf-init` successfully creates all test data, EDC passes health check.
+4. **Unit tests** (in `fdsc-transfer-extension/src/test/java/org/seamware/edc/pap/OdrlPapClientTest.java` or new class):
+   - `validate()`: PAP returns allow=true, allow=false, and error (4xx/5xx) scenarios
+   - `getMappings()`: success and error scenarios
+   - Follow the existing MockWebServer-based test pattern in `OdrlPapClientTest`
 
-### Step 3: Fix TCK configuration and test data alignment
+**Acceptance Criteria:**
+- `mvn clean test -pl fdsc-transfer-extension` passes with new tests
+- `mvn spotless:check -pl fdsc-transfer-extension` passes
+- Generated model classes are used (no hand-written DTOs for PAP API models)
 
-**Goal:** Ensure TCK test IDs and configuration match what the EDC controlplane and TMForum data provide.
+**Files affected:**
+- Possibly modified: `fdsc-transfer-extension/pom.xml` (OpenAPI spec URL fix)
+- Modified: `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/OdrlPapClient.java`
+- Modified or new test: `fdsc-transfer-extension/src/test/java/org/seamware/edc/pap/OdrlPapClientTest.java`
 
-**Actions:**
-- Verify consistency between `tck.properties`, `edc.properties`, `init-tmforum.sh`, and `DataAssembly.java`.
-- Fix any ID mismatches between TMForum entities and what TCK expects.
-- Verify the TMForum-to-EDC mapping produces correct catalog, negotiation, and transfer data.
+---
 
-**Acceptance criteria:** `scripts/verify-tck-config.sh` passes, TMForum data maps correctly to EDC entities.
+### Step 2: Create PolicyContextRequestMapper and OdrlPapPolicyValidator
 
-### Step 4: Run TCK tests and fix runtime failures iteratively
+**Goal:** Create the core policy evaluation classes: a mapper that converts EDC `PolicyContext` into the PAP's `TestRequestVO` format, and a validator that orchestrates PAP-based policy evaluation.
 
-**Goal:** All DSP TCK conformance test scenarios pass.
+**Context:** The PAP's `/validate` endpoint expects a `TestRequest` with HTTP-level attributes (`method`, `host`, `path`, `protocol`, `body`, `headers`). EDC's `PolicyContext` subtypes (`RequestCatalogPolicyContext`, `RequestContractNegotiationPolicyContext`, `RequestTransferProcessPolicyContext`) contain participant agent information and scope details. The mapper bridges these two representations. The validator converts the EDC Policy to ODRL JSON-LD (using the same `TypeTransformerRegistry` + `JsonLd.expand()` approach used in `FDSCOID4VPProvisioner.provision()` at lines 171-183), combines it with the mapped request, and calls the PAP.
 
-**Actions:**
-- Run the full TCK suite and capture logs.
-- Fix catalog, negotiation, and transfer test failures.
-- Adjust guards, triggers, state transitions, and timing as needed.
+**Changes:**
 
-**Acceptance criteria:** TCK runner exits with code 0.
+1. **Create `PolicyContextRequestMapper`** at `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/PolicyContextRequestMapper.java`:
+   - `toTestRequest(PolicyContext context)` method returning `TestRequestVO`
+   - Handle `RequestCatalogPolicyContext` → GET request with catalog path
+   - Handle `RequestContractNegotiationPolicyContext` → POST request with negotiation path
+   - Handle `RequestTransferProcessPolicyContext` → POST request with transfer path
+   - Extract `ParticipantAgent` identity from context into request headers
+   - Named constants for HTTP methods, paths, header names (no magic strings)
+   - Full JavaDoc
 
-### Step 5: Verify CI workflow and finalize
+2. **Create `OdrlPapPolicyValidator`** at `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/OdrlPapPolicyValidator.java`:
+   - Implements `BiFunction<Policy, PolicyContext, Boolean>` (matches `PolicyValidatorRule` contract)
+   - Constructor: `OdrlPapClient`, `TypeTransformerRegistry`, `JsonLd`, `PolicyContextRequestMapper`, `Monitor`, `boolean denyOnError`
+   - `apply(Policy policy, PolicyContext context)`:
+     1. Convert EDC `Policy` → `JsonObject` via `TypeTransformerRegistry`
+     2. Expand JSON-LD via `JsonLd.expand()`
+     3. Convert to `Map<String, Object>` for PAP
+     4. Build `TestRequestVO` via `PolicyContextRequestMapper`
+     5. Create `ValidationRequestVO` with policy and test request
+     6. Call `OdrlPapClient.validate()`
+     7. Return `true` if `allow=true`; report problems and return `false` if `allow=false`
+     8. On exception: log warning, return `!denyOnError`
+   - `name()` returns `"OdrlPapPolicyValidator"`
+   - Full JavaDoc
 
-**Goal:** The GitHub Actions workflow for TCK conformance tests is correct and would pass in CI.
+3. **Unit tests:**
+   - `PolicyContextRequestMapperTest.java` — parameterized tests for each context type
+   - `OdrlPapPolicyValidatorTest.java` — allow/deny, PAP errors with denyOnError true/false, policy conversion failures. Mock all dependencies.
 
-**Actions:**
-- Review and fix `.github/workflows/test.yml`.
-- Ensure `run-tck.sh` works for local development.
-- Final `mvn spotless:check` and `mvn test` verification.
+**Acceptance Criteria:**
+- All unit tests pass; spotless passes
+- No magic constants
+- Complete JavaDoc on both classes
 
-**Acceptance criteria:** CI workflow correct, all tests pass.
+**Files affected:**
+- New: `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/PolicyContextRequestMapper.java`
+- New: `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/OdrlPapPolicyValidator.java`
+- New: `fdsc-transfer-extension/src/test/java/org/seamware/edc/pap/policy/PolicyContextRequestMapperTest.java`
+- New: `fdsc-transfer-extension/src/test/java/org/seamware/edc/pap/policy/OdrlPapPolicyValidatorTest.java`
+
+---
+
+### Step 3: Create OdrlPapPolicyExtension ServiceExtension with Configuration
+
+**Goal:** Create a `ServiceExtension` that wires the ODRL-PAP policy validator into the EDC `PolicyEngine`, gated by configuration.
+
+**Context:** EDC extensions implement `ServiceExtension`, use `@Inject` for dependencies, and register via `META-INF/services/org.eclipse.edc.spi.system.ServiceExtension`. The existing file at `fdsc-transfer-extension/src/main/resources/META-INF/services/org.eclipse.edc.spi.system.ServiceExtension` already lists `org.seamware.edc.FDSCTransferControlExtension`. The DCP extension at `dcp-extension/src/main/java/org/seamware/edc/DCPExtension.java` (lines 95-146) shows the reference pattern for `policyEngine.registerPostValidator()` and `policyEngine.registerFunction()`.
+
+**Changes:**
+
+1. **Create `OdrlPapConfig`** at `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/OdrlPapConfig.java`:
+   - Configuration loaded from EDC `Config` via static `fromConfig(Config config)` factory
+   - Properties (all with named setting constants):
+     - `odrlPap.policy.enabled` (boolean, default `false`)
+     - `odrlPap.host` (string, required when enabled)
+     - `odrlPap.policy.denyOnError` (boolean, default `true`)
+     - `odrlPap.policy.scopes.catalog` (boolean, default `true`)
+     - `odrlPap.policy.scopes.negotiation` (boolean, default `true`)
+     - `odrlPap.policy.scopes.transfer` (boolean, default `true`)
+
+2. **Create `OdrlPapPolicyExtension`** at `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/OdrlPapPolicyExtension.java`:
+   - `@Inject PolicyEngine policyEngine`
+   - `@Inject Monitor monitor`
+   - `@Inject OkHttpClient okHttpClient`
+   - `@Inject ObjectMapper objectMapper`
+   - `@Inject TypeTransformerRegistry typeTransformerRegistry`
+   - `@Inject JsonLd jsonLd`
+   - `name()` → `"ODRL PAP Policy Extension"`
+   - `initialize(ServiceExtensionContext)`:
+     1. Load `OdrlPapConfig`; return early if disabled
+     2. Create `OdrlPapClient(monitor, okHttpClient, config.host(), objectMapper)`
+     3. Create `PolicyContextRequestMapper()`
+     4. Create `OdrlPapPolicyValidator(client, typeTransformerRegistry, jsonLd, mapper, monitor, config.denyOnError())`
+     5. Register pre-validators per enabled scopes:
+        - `policyEngine.registerPreValidator(RequestCatalogPolicyContext.class, validator::apply)`
+        - `policyEngine.registerPreValidator(RequestContractNegotiationPolicyContext.class, validator::apply)`
+        - `policyEngine.registerPreValidator(RequestTransferProcessPolicyContext.class, validator::apply)`
+     6. Log registered scopes at info level
+
+3. **Update SPI file** at `fdsc-transfer-extension/src/main/resources/META-INF/services/org.eclipse.edc.spi.system.ServiceExtension`:
+   - Add `org.seamware.edc.pap.policy.OdrlPapPolicyExtension`
+
+4. **Add policy context dependencies** to `fdsc-transfer-extension/pom.xml` if not already present:
+   - `org.eclipse.edc:policy-engine-spi`
+   - `org.eclipse.edc:policy-context-request-spi`
+
+5. **Unit tests** at `fdsc-transfer-extension/src/test/java/org/seamware/edc/pap/policy/OdrlPapPolicyExtensionTest.java`:
+   - Disabled mode: no validators registered
+   - Enabled with all scopes: three pre-validators registered
+   - Enabled with subset of scopes: only matching validators registered
+   - Missing host when enabled: initialization fails gracefully
+
+**Acceptance Criteria:**
+- Extension compiles and is in SPI file
+- `mvn clean test -pl fdsc-transfer-extension` passes
+- Configuration documented with JavaDoc and named constants
+
+**Files affected:**
+- New: `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/OdrlPapConfig.java`
+- New: `fdsc-transfer-extension/src/main/java/org/seamware/edc/pap/policy/OdrlPapPolicyExtension.java`
+- Modified: `fdsc-transfer-extension/src/main/resources/META-INF/services/org.eclipse.edc.spi.system.ServiceExtension`
+- Possibly modified: `fdsc-transfer-extension/pom.xml`
+- New: `fdsc-transfer-extension/src/test/java/org/seamware/edc/pap/policy/OdrlPapPolicyExtensionTest.java`
+
+---
+
+### Step 4: Integration Wiring, DCP Extension Cleanup, and Example Configuration
+
+**Goal:** Update the DCP extension's TODO, remove unused code, add example configuration, and verify cross-module integration.
+
+**Changes:**
+
+1. **Update DCP extension TODO** at `dcp-extension/src/main/java/org/seamware/edc/DCPExtension.java` line 130-131:
+   - Replace `// TODO: support odrl-pap based evaluation in the future.` with:
+     ```java
+     // ODRL-PAP based policy evaluation is handled by OdrlPapPolicyExtension
+     // (fdsc-transfer-extension). Enable via odrlPap.policy.enabled=true.
+     ```
+
+2. **Remove unused `policyEngine` field** from `FDSCTransferControlExtension` at `fdsc-transfer-extension/src/main/java/org/seamware/edc/FDSCTransferControlExtension.java`:
+   - Remove line 127: `private PolicyEngine policyEngine;`
+   - Remove line 60: `import org.eclipse.edc.policy.engine.spi.PolicyEngine;` (if no longer used)
+
+3. **Add example configuration** to `config/tck/edc.properties`:
+   ```properties
+   # ODRL-PAP Policy Evaluation (disabled for TCK mode)
+   # odrlPap.policy.enabled=false
+   # odrlPap.host=http://odrl-pap:8080
+   # odrlPap.policy.denyOnError=true
+   # odrlPap.policy.scopes.catalog=true
+   # odrlPap.policy.scopes.negotiation=true
+   # odrlPap.policy.scopes.transfer=true
+   ```
+
+**Acceptance Criteria:**
+- No unused imports or fields remain
+- DCP extension TODO is resolved
+- Example config documents the new feature
+- `mvn clean test` passes across all modules
+
+**Files affected:**
+- Modified: `dcp-extension/src/main/java/org/seamware/edc/DCPExtension.java`
+- Modified: `fdsc-transfer-extension/src/main/java/org/seamware/edc/FDSCTransferControlExtension.java`
+- Modified: `config/tck/edc.properties`
+
+---
+
+### Step 5: Build Verification, Formatting, and Final Tests
+
+**Goal:** Ensure the complete build passes, formatting is correct, and all tests succeed across the entire project.
+
+**Verification steps:**
+
+1. Run `mvn spotless:apply` then `mvn spotless:check` to verify formatting
+2. Run `mvn clean test` to verify all unit tests pass (all modules)
+3. Run `mvn clean package -DskipTests` to verify build and packaging succeeds
+4. Verify no regressions in existing functionality
+5. Fix any issues found during verification
+
+**Acceptance Criteria:**
+- `mvn clean spotless:check` passes
+- `mvn clean test` passes (all modules)
+- `mvn clean package -DskipTests` succeeds
+- No regressions in existing tests or functionality
