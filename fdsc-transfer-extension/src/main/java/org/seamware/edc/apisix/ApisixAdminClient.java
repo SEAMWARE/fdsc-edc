@@ -44,7 +44,6 @@ import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.BaseClient;
-import org.seamware.edc.HttpClientException;
 
 public class ApisixAdminClient extends BaseClient {
 
@@ -93,15 +92,12 @@ public class ApisixAdminClient extends BaseClient {
     HttpUrl.Builder urlBuilder = Objects.requireNonNull(HttpUrl.parse(baseUrl)).newBuilder();
     urlBuilder.addPathSegment(ROUTES_PATH);
     urlBuilder.addPathSegment(routeId);
-    Response response =
-        executeRequest(
+    executeRequest(
             new Request.Builder()
                 .url(urlBuilder.build())
                 .header(ADMIN_TOKEN_HEADER, adminToken)
                 .delete()
-                .build());
-    if (!response.isSuccessful()) {
-      throw new HttpClientException("Was not able to delete route.", response.code());
-    }
+                .build())
+        .close();
   }
 }
