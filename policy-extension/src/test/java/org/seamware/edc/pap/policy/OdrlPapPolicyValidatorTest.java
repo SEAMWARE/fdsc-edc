@@ -31,9 +31,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
-
 import java.util.List;
-
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.engine.spi.PolicyContext;
 import org.eclipse.edc.policy.model.Permission;
@@ -62,253 +60,248 @@ import org.seamware.pap.model.ValidationResponseVO;
 @ExtendWith(MockitoExtension.class)
 class OdrlPapPolicyValidatorTest {
 
-    private static final String TEST_SCOPE = "request.catalog";
+  private static final String TEST_SCOPE = "request.catalog";
 
-    @Mock
-    private OdrlPapClient odrlPapClient;
-    @Mock
-    private TypeTransformerRegistry transformerRegistry;
-    @Mock
-    private JsonLd jsonLd;
-    @Mock
-    private PolicyContextRequestMapper requestMapper;
-    @Mock
-    private Monitor monitor;
+  @Mock private OdrlPapClient odrlPapClient;
+  @Mock private TypeTransformerRegistry transformerRegistry;
+  @Mock private JsonLd jsonLd;
+  @Mock private PolicyContextRequestMapper requestMapper;
+  @Mock private Monitor monitor;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private Policy policy;
-    private PolicyContext context;
+  private Policy policy;
+  private PolicyContext context;
+
+  @BeforeEach
+  void setUp() {
+    policy = Policy.Builder.newInstance().build();
+    policy.getPermissions().add(Permission.Builder.newInstance().build());
+    context = mock(PolicyContext.class);
+    lenient().when(context.scope()).thenReturn(TEST_SCOPE);
+  }
+
+  /**
+   * Configures mocks so that policy-to-JSON-LD conversion succeeds, producing a minimal expanded
+   * JSON-LD object.
+   */
+  private void setupSuccessfulPolicyConversion() {
+    JsonObject compactJson = Json.createObjectBuilder().add("@type", "odrl:Set").build();
+    JsonObject expandedJson =
+        Json.createObjectBuilder().add("http://www.w3.org/ns/odrl/2/type", "Set").build();
+
+    when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
+        .thenReturn(Result.success(compactJson));
+    when(jsonLd.expand(any(JsonObject.class))).thenReturn(Result.success(expandedJson));
+    when(requestMapper.toTestRequest(any(PolicyContext.class)))
+        .thenReturn(new TestRequestVO().method(TestRequestVO.MethodEnum.GET));
+  }
+
+  @Nested
+  @DisplayName("PAP allows request")
+  class PapAllows {
+
+    @Test
+    @DisplayName("Returns true when PAP responds with allow=true")
+    void apply_papAllows_returnsTrue() {
+      OdrlPapPolicyValidator validator =
+          new OdrlPapPolicyValidator(
+              odrlPapClient,
+              transformerRegistry,
+              jsonLd,
+              requestMapper,
+              monitor,
+              objectMapper,
+              false);
+
+      setupSuccessfulPolicyConversion();
+      ValidationResponseVO response = new ValidationResponseVO().allow(true);
+      when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
+
+      Boolean result = validator.apply(policy, context);
+
+      assertTrue(result);
+      verify(context, never()).reportProblem(any());
+    }
+  }
+
+  @Nested
+  @DisplayName("PAP denies request")
+  class PapDenies {
+
+    @Test
+    @DisplayName("Returns false when PAP responds with allow=false")
+    void apply_papDenies_returnsFalse() {
+      OdrlPapPolicyValidator validator =
+          new OdrlPapPolicyValidator(
+              odrlPapClient,
+              transformerRegistry,
+              jsonLd,
+              requestMapper,
+              monitor,
+              objectMapper,
+              false);
+
+      setupSuccessfulPolicyConversion();
+      ValidationResponseVO response =
+          new ValidationResponseVO()
+              .allow(false)
+              .explanation(List.of("Policy constraint violated", "Access denied for resource"));
+      when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
+
+      Boolean result = validator.apply(policy, context);
+
+      assertFalse(result);
+      verify(context).reportProblem(contains("Policy constraint violated"));
+      verify(context).reportProblem(contains("Access denied for resource"));
+    }
+
+    @Test
+    @DisplayName("Reports generic problem when PAP denies without explanation")
+    void apply_papDeniesNoExplanation_reportsGenericProblem() {
+      OdrlPapPolicyValidator validator =
+          new OdrlPapPolicyValidator(
+              odrlPapClient,
+              transformerRegistry,
+              jsonLd,
+              requestMapper,
+              monitor,
+              objectMapper,
+              false);
+
+      setupSuccessfulPolicyConversion();
+      ValidationResponseVO response = new ValidationResponseVO().allow(false).explanation(null);
+      when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
+
+      Boolean result = validator.apply(policy, context);
+
+      assertFalse(result);
+      verify(context).reportProblem(contains("no explanation provided"));
+    }
+  }
+
+  @Nested
+  @DisplayName("Error handling with denyOnError=true (fail-closed)")
+  class FailClosed {
+
+    private OdrlPapPolicyValidator validator;
 
     @BeforeEach
     void setUp() {
-        policy = Policy.Builder.newInstance().build();
-        policy.getPermissions().add(Permission.Builder.newInstance().build());
-        context = mock(PolicyContext.class);
-        lenient().when(context.scope()).thenReturn(TEST_SCOPE);
+      validator =
+          new OdrlPapPolicyValidator(
+              odrlPapClient,
+              transformerRegistry,
+              jsonLd,
+              requestMapper,
+              monitor,
+              objectMapper,
+              true);
     }
 
-    /**
-     * Configures mocks so that policy-to-JSON-LD conversion succeeds, producing a minimal expanded
-     * JSON-LD object.
-     */
-    private void setupSuccessfulPolicyConversion() {
-        JsonObject compactJson = Json.createObjectBuilder().add("@type", "odrl:Set").build();
-        JsonObject expandedJson =
-                Json.createObjectBuilder().add("http://www.w3.org/ns/odrl/2/type", "Set").build();
+    @Test
+    @DisplayName("Returns false when PAP throws exception and denyOnError is true")
+    void apply_papException_denyOnError_returnsFalse() {
+      setupSuccessfulPolicyConversion();
+      when(odrlPapClient.validate(any(ValidationRequestVO.class)))
+          .thenThrow(new RuntimeException("Connection refused"));
 
-        when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
-                .thenReturn(Result.success(compactJson));
-        when(jsonLd.expand(any(JsonObject.class))).thenReturn(Result.success(expandedJson));
-        when(requestMapper.toTestRequest(any(PolicyContext.class)))
-                .thenReturn(new TestRequestVO().method(TestRequestVO.MethodEnum.GET));
+      Boolean result = validator.apply(policy, context);
+
+      assertFalse(result);
+      verify(context).reportProblem(contains("PAP communication error"));
     }
 
-    @Nested
-    @DisplayName("PAP allows request")
-    class PapAllows {
+    @Test
+    @DisplayName("Returns false when policy transform fails and denyOnError is true")
+    void apply_transformFails_denyOnError_returnsFalse() {
+      when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
+          .thenReturn(Result.failure("Transform failed"));
 
-        @Test
-        @DisplayName("Returns true when PAP responds with allow=true")
-        void apply_papAllows_returnsTrue() {
-            OdrlPapPolicyValidator validator =
-                    new OdrlPapPolicyValidator(
-                            odrlPapClient,
-                            transformerRegistry,
-                            jsonLd,
-                            requestMapper,
-                            monitor,
-                            objectMapper,
-                            false);
+      Boolean result = validator.apply(policy, context);
 
-            setupSuccessfulPolicyConversion();
-            ValidationResponseVO response = new ValidationResponseVO().allow(true);
-            when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
-
-            Boolean result = validator.apply(policy, context);
-
-            assertTrue(result);
-            verify(context, never()).reportProblem(any());
-        }
+      assertFalse(result);
+      verify(context).reportProblem(contains("PAP communication error"));
     }
 
-    @Nested
-    @DisplayName("PAP denies request")
-    class PapDenies {
+    @Test
+    @DisplayName("Returns false when JSON-LD expand fails and denyOnError is true")
+    void apply_expandFails_denyOnError_returnsFalse() {
+      JsonObject compactJson = Json.createObjectBuilder().add("@type", "odrl:Set").build();
+      when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
+          .thenReturn(Result.success(compactJson));
+      when(jsonLd.expand(any(JsonObject.class))).thenReturn(Result.failure("Expand failed"));
 
-        @Test
-        @DisplayName("Returns false when PAP responds with allow=false")
-        void apply_papDenies_returnsFalse() {
-            OdrlPapPolicyValidator validator =
-                    new OdrlPapPolicyValidator(
-                            odrlPapClient,
-                            transformerRegistry,
-                            jsonLd,
-                            requestMapper,
-                            monitor,
-                            objectMapper,
-                            false);
+      Boolean result = validator.apply(policy, context);
 
-            setupSuccessfulPolicyConversion();
-            ValidationResponseVO response =
-                    new ValidationResponseVO()
-                            .allow(false)
-                            .explanation(List.of("Policy constraint violated", "Access denied for resource"));
-            when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
+      assertFalse(result);
+      verify(context).reportProblem(contains("PAP communication error"));
+    }
+  }
 
-            Boolean result = validator.apply(policy, context);
+  @Nested
+  @DisplayName("Error handling with denyOnError=false (fail-open)")
+  class FailOpen {
 
-            assertFalse(result);
-            verify(context).reportProblem(contains("Policy constraint violated"));
-            verify(context).reportProblem(contains("Access denied for resource"));
-        }
+    private OdrlPapPolicyValidator validator;
 
-        @Test
-        @DisplayName("Reports generic problem when PAP denies without explanation")
-        void apply_papDeniesNoExplanation_reportsGenericProblem() {
-            OdrlPapPolicyValidator validator =
-                    new OdrlPapPolicyValidator(
-                            odrlPapClient,
-                            transformerRegistry,
-                            jsonLd,
-                            requestMapper,
-                            monitor,
-                            objectMapper,
-                            false);
-
-            setupSuccessfulPolicyConversion();
-            ValidationResponseVO response = new ValidationResponseVO().allow(false).explanation(null);
-            when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
-
-            Boolean result = validator.apply(policy, context);
-
-            assertFalse(result);
-            verify(context).reportProblem(contains("no explanation provided"));
-        }
+    @BeforeEach
+    void setUp() {
+      validator =
+          new OdrlPapPolicyValidator(
+              odrlPapClient,
+              transformerRegistry,
+              jsonLd,
+              requestMapper,
+              monitor,
+              objectMapper,
+              false);
     }
 
-    @Nested
-    @DisplayName("Error handling with denyOnError=true (fail-closed)")
-    class FailClosed {
+    @Test
+    @DisplayName("Returns true when PAP throws exception and denyOnError is false")
+    void apply_papException_failOpen_returnsTrue() {
+      setupSuccessfulPolicyConversion();
+      when(odrlPapClient.validate(any(ValidationRequestVO.class)))
+          .thenThrow(new RuntimeException("Connection refused"));
 
-        private OdrlPapPolicyValidator validator;
+      Boolean result = validator.apply(policy, context);
 
-        @BeforeEach
-        void setUp() {
-            validator =
-                    new OdrlPapPolicyValidator(
-                            odrlPapClient,
-                            transformerRegistry,
-                            jsonLd,
-                            requestMapper,
-                            monitor,
-                            objectMapper,
-                            true);
-        }
-
-        @Test
-        @DisplayName("Returns false when PAP throws exception and denyOnError is true")
-        void apply_papException_denyOnError_returnsFalse() {
-            setupSuccessfulPolicyConversion();
-            when(odrlPapClient.validate(any(ValidationRequestVO.class)))
-                    .thenThrow(new RuntimeException("Connection refused"));
-
-            Boolean result = validator.apply(policy, context);
-
-            assertFalse(result);
-            verify(context).reportProblem(contains("PAP communication error"));
-        }
-
-        @Test
-        @DisplayName("Returns false when policy transform fails and denyOnError is true")
-        void apply_transformFails_denyOnError_returnsFalse() {
-            when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
-                    .thenReturn(Result.failure("Transform failed"));
-
-            Boolean result = validator.apply(policy, context);
-
-            assertFalse(result);
-            verify(context).reportProblem(contains("PAP communication error"));
-        }
-
-        @Test
-        @DisplayName("Returns false when JSON-LD expand fails and denyOnError is true")
-        void apply_expandFails_denyOnError_returnsFalse() {
-            JsonObject compactJson = Json.createObjectBuilder().add("@type", "odrl:Set").build();
-            when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
-                    .thenReturn(Result.success(compactJson));
-            when(jsonLd.expand(any(JsonObject.class))).thenReturn(Result.failure("Expand failed"));
-
-            Boolean result = validator.apply(policy, context);
-
-            assertFalse(result);
-            verify(context).reportProblem(contains("PAP communication error"));
-        }
+      assertTrue(result);
+      verify(context, never()).reportProblem(any());
     }
 
-    @Nested
-    @DisplayName("Error handling with denyOnError=false (fail-open)")
-    class FailOpen {
+    @Test
+    @DisplayName("Returns true when policy transform fails and denyOnError is false")
+    void apply_transformFails_failOpen_returnsTrue() {
+      when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
+          .thenReturn(Result.failure("Transform failed"));
 
-        private OdrlPapPolicyValidator validator;
+      Boolean result = validator.apply(policy, context);
 
-        @BeforeEach
-        void setUp() {
-            validator =
-                    new OdrlPapPolicyValidator(
-                            odrlPapClient,
-                            transformerRegistry,
-                            jsonLd,
-                            requestMapper,
-                            monitor,
-                            objectMapper,
-                            false);
-        }
-
-        @Test
-        @DisplayName("Returns true when PAP throws exception and denyOnError is false")
-        void apply_papException_failOpen_returnsTrue() {
-            setupSuccessfulPolicyConversion();
-            when(odrlPapClient.validate(any(ValidationRequestVO.class)))
-                    .thenThrow(new RuntimeException("Connection refused"));
-
-            Boolean result = validator.apply(policy, context);
-
-            assertTrue(result);
-            verify(context, never()).reportProblem(any());
-        }
-
-        @Test
-        @DisplayName("Returns true when policy transform fails and denyOnError is false")
-        void apply_transformFails_failOpen_returnsTrue() {
-            when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
-                    .thenReturn(Result.failure("Transform failed"));
-
-            Boolean result = validator.apply(policy, context);
-
-            assertTrue(result);
-            verify(context, never()).reportProblem(any());
-        }
+      assertTrue(result);
+      verify(context, never()).reportProblem(any());
     }
+  }
 
-    @Nested
-    @DisplayName("Validator metadata")
-    class Metadata {
+  @Nested
+  @DisplayName("Validator metadata")
+  class Metadata {
 
-        @Test
-        @DisplayName("name() returns the expected validator name")
-        void name_returnsExpectedName() {
-            OdrlPapPolicyValidator validator =
-                    new OdrlPapPolicyValidator(
-                            odrlPapClient,
-                            transformerRegistry,
-                            jsonLd,
-                            requestMapper,
-                            monitor,
-                            objectMapper,
-                            false);
+    @Test
+    @DisplayName("name() returns the expected validator name")
+    void name_returnsExpectedName() {
+      OdrlPapPolicyValidator validator =
+          new OdrlPapPolicyValidator(
+              odrlPapClient,
+              transformerRegistry,
+              jsonLd,
+              requestMapper,
+              monitor,
+              objectMapper,
+              false);
 
-            assertEquals(OdrlPapPolicyValidator.VALIDATOR_NAME, validator.name());
-        }
+      assertEquals(OdrlPapPolicyValidator.VALIDATOR_NAME, validator.name());
     }
+  }
 }
