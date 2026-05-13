@@ -122,6 +122,8 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
   @Override
   public Boolean apply(Policy policy, PolicyContext context) {
     try {
+      monitor.info("The policy " + objectMapper.writeValueAsString(policy));
+
       Map<String, Object> policyMap = convertPolicyToMap(policy);
       TestRequestVO testRequest = requestMapper.toTestRequest(context);
 
