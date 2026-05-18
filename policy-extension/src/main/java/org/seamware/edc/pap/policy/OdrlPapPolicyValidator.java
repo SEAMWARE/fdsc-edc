@@ -123,6 +123,7 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
   public Boolean apply(Policy policy, PolicyContext context) {
     try {
       monitor.info("The policy " + objectMapper.writeValueAsString(policy));
+      monitor.info("The context " + objectMapper.writeValueAsString(context));
 
       if (policy.getPermissions() == null || policy.getPermissions().isEmpty()) {
         monitor.info(
