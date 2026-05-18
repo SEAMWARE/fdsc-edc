@@ -131,6 +131,7 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
         return true;
       }
       Map<String, Object> policyMap = convertPolicyToMap(policy);
+      policyMap.put("pap:evaluationContext", "json");
       TestRequestVO testRequest = requestMapper.toTestRequest(context);
 
       ValidationRequestVO validationRequest = new ValidationRequestVO();
