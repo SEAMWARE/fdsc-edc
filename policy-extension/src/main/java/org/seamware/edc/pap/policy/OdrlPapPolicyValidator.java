@@ -125,6 +125,7 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
     try {
       monitor.info("The policy " + objectMapper.writeValueAsString(policy));
       monitor.info("The context " + objectMapper.writeValueAsString(context));
+        monitor.info("The class " + context.getClass());
 
       if (policy.getPermissions() == null || policy.getPermissions().isEmpty()) {
         monitor.info(
