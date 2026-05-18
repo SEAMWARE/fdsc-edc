@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.policy.context.request.spi.RequestPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyValidatorRule;
 import org.eclipse.edc.policy.model.Policy;
@@ -31,7 +32,6 @@ import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
 import org.seamware.edc.pap.OdrlPapClient;
-import org.seamware.pap.model.GenericJsonInputVO;
 import org.seamware.pap.model.ValidationRequestVO;
 import org.seamware.pap.model.ValidationResponseVO;
 
@@ -40,9 +40,10 @@ import org.seamware.pap.model.ValidationResponseVO;
  *
  * <p>When registered as a pre-validator with the EDC {@code PolicyEngine}, this rule intercepts
  * policy evaluation before the built-in constraint functions run. It converts the EDC {@link
- * Policy} to expanded ODRL JSON-LD, maps the {@link PolicyContext} to a {@link GenericJsonInputVO}
- * with a payload depending on the concrete context class, and calls the PAP's {@code POST
- * /validate} endpoint.
+ * Policy} to expanded ODRL JSON-LD, maps the {@link PolicyContext} to the appropriate PAP input
+ * format depending on the concrete context class, and calls the PAP's {@code POST /validate}
+ * endpoint. {@link RequestPolicyContext} subtypes are evaluated as HTTP requests, while other
+ * context types use JSON payload evaluation.
  *
  * <p>If the PAP returns {@code allow=false}, the validator reports the PAP's explanation messages
  * as problems on the context and returns {@code false}, causing the policy evaluation to fail
@@ -78,8 +79,8 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
    * @param transformerRegistry the EDC type transformer registry for converting {@link Policy} to
    *     {@link JsonObject}
    * @param jsonLd the JSON-LD processor for expanding compacted JSON-LD
-   * @param inputMapper the mapper for converting {@link PolicyContext} to {@link
-   *     GenericJsonInputVO}
+   * @param inputMapper the mapper for converting {@link PolicyContext} to the appropriate PAP input
+   *     format
    * @param monitor the EDC monitor for logging
    * @param objectMapper the Jackson object mapper for JSON serialization
    * @param denyOnError when {@code true}, PAP communication errors cause policy denial (fail-
@@ -112,8 +113,8 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
    *       TypeTransformerRegistry}
    *   <li>Expand the JSON-LD using {@link JsonLd#expand(JsonObject)}
    *   <li>Convert the expanded JSON-LD to a {@code Map<String, Object>} for the PAP API
-   *   <li>Map the {@link PolicyContext} to a {@link GenericJsonInputVO} via the {@link
-   *       PolicyContextInputMapper}
+   *   <li>Map the {@link PolicyContext} to either a test request (for {@link RequestPolicyContext})
+   *       or a JSON input (for other context types) via the {@link PolicyContextInputMapper}
    *   <li>Call the PAP's {@code POST /validate} endpoint
    *   <li>Return {@code true} if allowed, {@code false} with reported problems if denied
    * </ol>
@@ -135,12 +136,15 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
         return true;
       }
       Map<String, Object> policyMap = new HashMap<>(convertPolicyToMap(policy));
-      policyMap.put("pap:evaluationContext", "json");
-      GenericJsonInputVO jsonInput = inputMapper.toJsonInput(context);
 
       ValidationRequestVO validationRequest = new ValidationRequestVO();
+      if (context instanceof RequestPolicyContext requestPolicyContext) {
+        validationRequest.testRequest(inputMapper.toTestRequest(requestPolicyContext));
+      } else {
+        policyMap.put("pap:evaluationContext", "json");
+        validationRequest.jsonInput(inputMapper.toJsonInput(context));
+      }
       validationRequest.policy(policyMap);
-      validationRequest.jsonInput(jsonInput);
 
       ValidationResponseVO response = odrlPapClient.validate(validationRequest);
 

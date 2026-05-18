@@ -36,6 +36,8 @@ import jakarta.json.JsonObject;
 import java.util.List;
 import java.util.Map;
 import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
+import org.eclipse.edc.policy.context.request.spi.RequestPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyContext;
 import org.eclipse.edc.policy.model.Permission;
 import org.eclipse.edc.policy.model.Policy;
@@ -51,6 +53,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.seamware.edc.pap.OdrlPapClient;
 import org.seamware.pap.model.GenericJsonInputVO;
+import org.seamware.pap.model.TestRequestVO;
 import org.seamware.pap.model.ValidationRequestVO;
 import org.seamware.pap.model.ValidationResponseVO;
 
@@ -280,6 +283,67 @@ class OdrlPapPolicyValidatorTest {
 
       assertTrue(result);
       verify(context, never()).reportProblem(any());
+    }
+  }
+
+  @Nested
+  @DisplayName("Context-dependent input mapping")
+  class ContextDependentMapping {
+
+    private OdrlPapPolicyValidator validator;
+
+    @BeforeEach
+    void setUp() {
+      validator =
+          new OdrlPapPolicyValidator(
+              odrlPapClient,
+              transformerRegistry,
+              jsonLd,
+              inputMapper,
+              monitor,
+              objectMapper,
+              false);
+    }
+
+    @Test
+    @DisplayName("Uses testRequest for RequestPolicyContext subtypes")
+    void apply_requestContext_usesTestRequest() throws Exception {
+      JsonObject compactJson = Json.createObjectBuilder().add("@type", "odrl:Set").build();
+      JsonObject expandedJson =
+          Json.createObjectBuilder().add("http://www.w3.org/ns/odrl/2/type", "Set").build();
+      when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
+          .thenReturn(Result.success(compactJson));
+      when(jsonLd.expand(any(JsonObject.class))).thenReturn(Result.success(expandedJson));
+      when(objectMapper.readValue(anyString(), any(TypeReference.class))).thenReturn(Map.of());
+
+      RequestCatalogPolicyContext requestContext = mock(RequestCatalogPolicyContext.class);
+      lenient().when(requestContext.scope()).thenReturn(TEST_SCOPE);
+
+      TestRequestVO testRequest = new TestRequestVO().method(TestRequestVO.MethodEnum.GET);
+      when(inputMapper.toTestRequest(any(RequestPolicyContext.class))).thenReturn(testRequest);
+
+      ValidationResponseVO response = new ValidationResponseVO().allow(true);
+      when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
+
+      Boolean result = validator.apply(policy, requestContext);
+
+      assertTrue(result);
+      verify(inputMapper).toTestRequest(requestContext);
+      verify(inputMapper, never()).toJsonInput(any());
+    }
+
+    @Test
+    @DisplayName("Uses jsonInput for non-RequestPolicyContext types")
+    void apply_nonRequestContext_usesJsonInput() throws Exception {
+      setupSuccessfulPolicyConversion();
+      ValidationResponseVO response = new ValidationResponseVO().allow(true);
+      when(odrlPapClient.validate(any(ValidationRequestVO.class))).thenReturn(response);
+
+      Boolean result = validator.apply(policy, context);
+
+      assertTrue(result);
+      verify(inputMapper).toJsonInput(context);
+      verify(inputMapper, never()).toTestRequest(any());
     }
   }
 
