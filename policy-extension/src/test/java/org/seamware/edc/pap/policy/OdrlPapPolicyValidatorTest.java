@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -28,10 +29,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import java.util.List;
+import java.util.Map;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.engine.spi.PolicyContext;
 import org.eclipse.edc.policy.model.Permission;
@@ -68,24 +71,25 @@ class OdrlPapPolicyValidatorTest {
   @Mock private PolicyContextRequestMapper requestMapper;
   @Mock private Monitor monitor;
 
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  @Mock private ObjectMapper objectMapper;
 
   private Policy policy;
   private PolicyContext context;
 
   @BeforeEach
-  void setUp() {
+  void setUp() throws Exception {
     policy = Policy.Builder.newInstance().build();
     policy.getPermissions().add(Permission.Builder.newInstance().build());
     context = mock(PolicyContext.class);
     lenient().when(context.scope()).thenReturn(TEST_SCOPE);
+    lenient().when(objectMapper.writeValueAsString(any())).thenReturn("{}");
   }
 
   /**
    * Configures mocks so that policy-to-JSON-LD conversion succeeds, producing a minimal expanded
    * JSON-LD object.
    */
-  private void setupSuccessfulPolicyConversion() {
+  private void setupSuccessfulPolicyConversion() throws Exception {
     JsonObject compactJson = Json.createObjectBuilder().add("@type", "odrl:Set").build();
     JsonObject expandedJson =
         Json.createObjectBuilder().add("http://www.w3.org/ns/odrl/2/type", "Set").build();
@@ -95,6 +99,7 @@ class OdrlPapPolicyValidatorTest {
     when(jsonLd.expand(any(JsonObject.class))).thenReturn(Result.success(expandedJson));
     when(requestMapper.toTestRequest(any(PolicyContext.class)))
         .thenReturn(new TestRequestVO().method(TestRequestVO.MethodEnum.GET));
+    when(objectMapper.readValue(anyString(), any(TypeReference.class))).thenReturn(Map.of());
   }
 
   @Nested
@@ -103,7 +108,7 @@ class OdrlPapPolicyValidatorTest {
 
     @Test
     @DisplayName("Returns true when PAP responds with allow=true")
-    void apply_papAllows_returnsTrue() {
+    void apply_papAllows_returnsTrue() throws Exception {
       OdrlPapPolicyValidator validator =
           new OdrlPapPolicyValidator(
               odrlPapClient,
@@ -131,7 +136,7 @@ class OdrlPapPolicyValidatorTest {
 
     @Test
     @DisplayName("Returns false when PAP responds with allow=false")
-    void apply_papDenies_returnsFalse() {
+    void apply_papDenies_returnsFalse() throws Exception {
       OdrlPapPolicyValidator validator =
           new OdrlPapPolicyValidator(
               odrlPapClient,
@@ -158,7 +163,7 @@ class OdrlPapPolicyValidatorTest {
 
     @Test
     @DisplayName("Reports generic problem when PAP denies without explanation")
-    void apply_papDeniesNoExplanation_reportsGenericProblem() {
+    void apply_papDeniesNoExplanation_reportsGenericProblem() throws Exception {
       OdrlPapPolicyValidator validator =
           new OdrlPapPolicyValidator(
               odrlPapClient,
@@ -201,7 +206,7 @@ class OdrlPapPolicyValidatorTest {
 
     @Test
     @DisplayName("Returns false when PAP throws exception and denyOnError is true")
-    void apply_papException_denyOnError_returnsFalse() {
+    void apply_papException_denyOnError_returnsFalse() throws Exception {
       setupSuccessfulPolicyConversion();
       when(odrlPapClient.validate(any(ValidationRequestVO.class)))
           .thenThrow(new RuntimeException("Connection refused"));
@@ -260,7 +265,7 @@ class OdrlPapPolicyValidatorTest {
 
     @Test
     @DisplayName("Returns true when PAP throws exception and denyOnError is false")
-    void apply_papException_failOpen_returnsTrue() {
+    void apply_papException_failOpen_returnsTrue() throws Exception {
       setupSuccessfulPolicyConversion();
       when(odrlPapClient.validate(any(ValidationRequestVO.class)))
           .thenThrow(new RuntimeException("Connection refused"));
