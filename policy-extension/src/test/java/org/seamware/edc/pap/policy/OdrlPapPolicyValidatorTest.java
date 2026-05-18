@@ -50,7 +50,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.seamware.edc.pap.OdrlPapClient;
-import org.seamware.pap.model.TestRequestVO;
+import org.seamware.pap.model.GenericJsonInputVO;
 import org.seamware.pap.model.ValidationRequestVO;
 import org.seamware.pap.model.ValidationResponseVO;
 
@@ -68,7 +68,7 @@ class OdrlPapPolicyValidatorTest {
   @Mock private OdrlPapClient odrlPapClient;
   @Mock private TypeTransformerRegistry transformerRegistry;
   @Mock private JsonLd jsonLd;
-  @Mock private PolicyContextRequestMapper requestMapper;
+  @Mock private PolicyContextInputMapper inputMapper;
   @Mock private Monitor monitor;
 
   @Mock private ObjectMapper objectMapper;
@@ -97,8 +97,8 @@ class OdrlPapPolicyValidatorTest {
     when(transformerRegistry.transform(any(Policy.class), eq(JsonObject.class)))
         .thenReturn(Result.success(compactJson));
     when(jsonLd.expand(any(JsonObject.class))).thenReturn(Result.success(expandedJson));
-    when(requestMapper.toTestRequest(any(PolicyContext.class)))
-        .thenReturn(new TestRequestVO().method(TestRequestVO.MethodEnum.GET));
+    when(inputMapper.toJsonInput(any(PolicyContext.class)))
+        .thenReturn(new GenericJsonInputVO().payload(Map.of()));
     when(objectMapper.readValue(anyString(), any(TypeReference.class))).thenReturn(Map.of());
   }
 
@@ -114,7 +114,7 @@ class OdrlPapPolicyValidatorTest {
               odrlPapClient,
               transformerRegistry,
               jsonLd,
-              requestMapper,
+              inputMapper,
               monitor,
               objectMapper,
               false);
@@ -142,7 +142,7 @@ class OdrlPapPolicyValidatorTest {
               odrlPapClient,
               transformerRegistry,
               jsonLd,
-              requestMapper,
+              inputMapper,
               monitor,
               objectMapper,
               false);
@@ -169,7 +169,7 @@ class OdrlPapPolicyValidatorTest {
               odrlPapClient,
               transformerRegistry,
               jsonLd,
-              requestMapper,
+              inputMapper,
               monitor,
               objectMapper,
               false);
@@ -195,13 +195,7 @@ class OdrlPapPolicyValidatorTest {
     void setUp() {
       validator =
           new OdrlPapPolicyValidator(
-              odrlPapClient,
-              transformerRegistry,
-              jsonLd,
-              requestMapper,
-              monitor,
-              objectMapper,
-              true);
+              odrlPapClient, transformerRegistry, jsonLd, inputMapper, monitor, objectMapper, true);
     }
 
     @Test
@@ -257,7 +251,7 @@ class OdrlPapPolicyValidatorTest {
               odrlPapClient,
               transformerRegistry,
               jsonLd,
-              requestMapper,
+              inputMapper,
               monitor,
               objectMapper,
               false);
@@ -301,7 +295,7 @@ class OdrlPapPolicyValidatorTest {
               odrlPapClient,
               transformerRegistry,
               jsonLd,
-              requestMapper,
+              inputMapper,
               monitor,
               objectMapper,
               false);

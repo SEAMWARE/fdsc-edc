@@ -115,7 +115,7 @@ public class OdrlPapPolicyExtension implements ServiceExtension {
     }
 
     OdrlPapClient client = new OdrlPapClient(monitor, okHttpClient, config.host(), objectMapper);
-    PolicyContextRequestMapper mapper = new PolicyContextRequestMapper();
+    PolicyContextInputMapper mapper = new PolicyContextInputMapper();
     OdrlPapPolicyValidator validator =
         new OdrlPapPolicyValidator(
             client,

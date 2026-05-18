@@ -19,9 +19,11 @@ package org.seamware.edc.pap.policy;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.Map;
 import java.util.stream.Stream;
 import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
 import org.eclipse.edc.policy.context.request.spi.RequestContractNegotiationPolicyContext;
@@ -36,24 +38,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.seamware.pap.model.TestRequestVO;
+import org.seamware.pap.model.GenericJsonInputVO;
 
 /**
- * Unit tests for {@link PolicyContextRequestMapper}.
+ * Unit tests for {@link PolicyContextInputMapper}.
  *
  * <p>Verifies that each EDC {@link PolicyContext} subtype is correctly mapped to the expected
- * {@link TestRequestVO} with the appropriate HTTP method, path, host, protocol, and headers.
+ * {@link GenericJsonInputVO} with the appropriate payload fields and subject identity.
  */
-class PolicyContextRequestMapperTest {
+class PolicyContextInputMapperTest {
 
   private static final String TEST_COUNTER_PARTY_ADDRESS = "https://provider.example.com/dsp";
   private static final String TEST_COUNTER_PARTY_ID = "urn:connector:provider";
 
-  private PolicyContextRequestMapper mapper;
+  private PolicyContextInputMapper mapper;
 
   @BeforeEach
   void setUp() {
-    mapper = new PolicyContextRequestMapper();
+    mapper = new PolicyContextInputMapper();
   }
 
   /**
@@ -65,94 +67,104 @@ class PolicyContextRequestMapperTest {
         Arguments.of(
             "Catalog",
             RequestCatalogPolicyContext.class,
-            PolicyContextRequestMapper.CATALOG_HTTP_METHOD,
-            PolicyContextRequestMapper.CATALOG_PATH),
+            PolicyContextInputMapper.CATALOG_HTTP_METHOD,
+            PolicyContextInputMapper.CATALOG_PATH),
         Arguments.of(
             "ContractNegotiation",
             RequestContractNegotiationPolicyContext.class,
-            PolicyContextRequestMapper.NEGOTIATION_HTTP_METHOD,
-            PolicyContextRequestMapper.NEGOTIATION_PATH),
+            PolicyContextInputMapper.NEGOTIATION_HTTP_METHOD,
+            PolicyContextInputMapper.NEGOTIATION_PATH),
         Arguments.of(
             "TransferProcess",
             RequestTransferProcessPolicyContext.class,
-            PolicyContextRequestMapper.TRANSFER_HTTP_METHOD,
-            PolicyContextRequestMapper.TRANSFER_PATH));
+            PolicyContextInputMapper.TRANSFER_HTTP_METHOD,
+            PolicyContextInputMapper.TRANSFER_PATH));
   }
 
   @ParameterizedTest(name = "{0} context maps to {2} {3}")
   @MethodSource("knownContextTypes")
-  @DisplayName("Known RequestPolicyContext subtypes map to correct method and path")
-  void toTestRequest_knownContextTypes(
+  @DisplayName("Known RequestPolicyContext subtypes map to correct payload fields")
+  void toJsonInput_knownContextTypes(
       String label,
       Class<? extends RequestPolicyContext> contextClass,
-      TestRequestVO.MethodEnum expectedMethod,
+      String expectedMethod,
       String expectedPath) {
     RequestPolicyContext context = createMockRequestPolicyContext(contextClass);
 
-    TestRequestVO result = mapper.toTestRequest(context);
+    GenericJsonInputVO result = mapper.toJsonInput(context);
 
     assertNotNull(result);
-    assertEquals(expectedMethod, result.getMethod());
-    assertEquals(expectedPath, result.getPath());
-    assertEquals(PolicyContextRequestMapper.DEFAULT_PROTOCOL, result.getProtocol());
-    assertEquals(TEST_COUNTER_PARTY_ADDRESS, result.getHost());
+    Map<String, Object> payload = result.getPayload();
+    assertEquals(expectedMethod, payload.get(PolicyContextInputMapper.KEY_METHOD));
+    assertEquals(expectedPath, payload.get(PolicyContextInputMapper.KEY_PATH));
+    assertEquals(
+        PolicyContextInputMapper.DEFAULT_PROTOCOL,
+        payload.get(PolicyContextInputMapper.KEY_PROTOCOL));
+    assertEquals(TEST_COUNTER_PARTY_ADDRESS, payload.get(PolicyContextInputMapper.KEY_HOST));
   }
 
-  @ParameterizedTest(name = "{0} context includes counter-party identity in authorization header")
+  @ParameterizedTest(name = "{0} context includes counter-party identity in subject")
   @MethodSource("knownContextTypes")
-  @DisplayName("Known RequestPolicyContext subtypes include authorization header")
-  void toTestRequest_setsAuthorizationHeader(
+  @DisplayName("Known RequestPolicyContext subtypes include counter-party identity in subject")
+  void toJsonInput_setsSubjectIdentity(
       String label,
       Class<? extends RequestPolicyContext> contextClass,
-      TestRequestVO.MethodEnum expectedMethod,
+      String expectedMethod,
       String expectedPath) {
     RequestPolicyContext context = createMockRequestPolicyContext(contextClass);
 
-    TestRequestVO result = mapper.toTestRequest(context);
+    GenericJsonInputVO result = mapper.toJsonInput(context);
 
-    assertNotNull(result.getHeaders());
-    assertEquals(TEST_COUNTER_PARTY_ID, result.getHeaders().getAuthorization());
+    assertNotNull(result.getSubject());
     assertEquals(
-        PolicyContextRequestMapper.JSON_LD_CONTENT_TYPE, result.getHeaders().getContentType());
+        TEST_COUNTER_PARTY_ID, result.getSubject().get(PolicyContextInputMapper.KEY_IDENTITY));
+    assertEquals(
+        PolicyContextInputMapper.JSON_LD_CONTENT_TYPE,
+        result.getPayload().get(PolicyContextInputMapper.KEY_CONTENT_TYPE));
   }
 
   @Test
-  @DisplayName("Non-RequestPolicyContext falls back to default method and scope-based path")
-  void toTestRequest_unknownContextType_usesDefaults() {
+  @DisplayName("Non-RequestPolicyContext falls back to scope-only payload")
+  void toJsonInput_unknownContextType_usesDefaults() {
     String customScope = "custom.scope";
     PolicyContext context = mock(PolicyContext.class);
     when(context.scope()).thenReturn(customScope);
 
-    TestRequestVO result = mapper.toTestRequest(context);
+    GenericJsonInputVO result = mapper.toJsonInput(context);
 
     assertNotNull(result);
-    assertEquals(PolicyContextRequestMapper.DEFAULT_HTTP_METHOD, result.getMethod());
-    assertEquals("/" + customScope, result.getPath());
-    assertEquals(PolicyContextRequestMapper.DEFAULT_PROTOCOL, result.getProtocol());
-    assertEquals(PolicyContextRequestMapper.DEFAULT_HOST, result.getHost());
-    assertNull(result.getHeaders());
+    Map<String, Object> payload = result.getPayload();
+    assertEquals(customScope, payload.get(PolicyContextInputMapper.KEY_SCOPE));
+    assertNull(payload.get(PolicyContextInputMapper.KEY_METHOD));
+    assertTrue(
+        result.getSubject() == null || result.getSubject().isEmpty(),
+        "Subject should be absent for non-request context types");
   }
 
   @Test
   @DisplayName("Null counter-party address falls back to default host")
-  void toTestRequest_nullCounterPartyAddress_usesDefaultHost() {
+  void toJsonInput_nullCounterPartyAddress_usesDefaultHost() {
     RequestCatalogPolicyContext context =
         createMockRequestPolicyContextWithNullAddress(RequestCatalogPolicyContext.class);
 
-    TestRequestVO result = mapper.toTestRequest(context);
+    GenericJsonInputVO result = mapper.toJsonInput(context);
 
-    assertEquals(PolicyContextRequestMapper.DEFAULT_HOST, result.getHost());
+    assertEquals(
+        PolicyContextInputMapper.DEFAULT_HOST,
+        result.getPayload().get(PolicyContextInputMapper.KEY_HOST));
   }
 
   @Test
-  @DisplayName("Null counter-party ID omits headers")
-  void toTestRequest_nullCounterPartyId_noHeaders() {
+  @DisplayName("Null counter-party ID omits subject")
+  void toJsonInput_nullCounterPartyId_noSubject() {
     RequestCatalogPolicyContext context =
         createMockRequestPolicyContextWithNullId(RequestCatalogPolicyContext.class);
 
-    TestRequestVO result = mapper.toTestRequest(context);
+    GenericJsonInputVO result = mapper.toJsonInput(context);
 
-    assertNull(result.getHeaders());
+    assertTrue(
+        result.getSubject() == null || result.getSubject().isEmpty(),
+        "Subject should be absent when counter-party ID is null");
   }
 
   /**
