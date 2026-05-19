@@ -165,7 +165,11 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
         context.reportProblem(
             String.format("%s: PAP denied request (no explanation provided)", VALIDATOR_NAME));
       }
-
+      try {
+        throw new IllegalArgumentException();
+      } catch (Exception e) {
+        monitor.info("Error is", e);
+      }
       monitor.warning(
           String.format(
               "%s: PAP denied request for scope '%s'. Explanations: %s",
