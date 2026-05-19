@@ -57,7 +57,6 @@ import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
 import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceServiceRegistry;
 import org.eclipse.edc.connector.dataplane.spi.iam.PublicEndpointGeneratorService;
 import org.eclipse.edc.jsonld.spi.JsonLd;
-import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provider;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -124,7 +123,6 @@ public class FDSCTransferControlExtension implements ServiceExtension {
   private TransferConfig transferConfig;
   private TransferMapper transferMapper;
   private TransferProcessStore transferProcessStore;
-  private PolicyEngine policyEngine;
 
   @Override
   public String name() {
