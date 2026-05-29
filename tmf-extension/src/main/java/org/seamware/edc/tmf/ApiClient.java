@@ -41,14 +41,14 @@ public abstract class ApiClient {
       if (response.isSuccessful()) {
         return response.body();
       } else {
+        int code = response.code();
+        response.close();
         monitor.warning(
             String.format(
-                "Was not able to get as successful response for %s. Was: %s",
-                request.url(), response.code()));
+                "Was not able to get as successful response for %s. Was: %s", request.url(), code));
         throw new BadGatewayException(
             String.format(
-                "Was not able to get as successful response for %s. Was: %s",
-                request.url(), response.code()));
+                "Was not able to get as successful response for %s. Was: %s", request.url(), code));
       }
     } catch (IOException e) {
       monitor.warning(String.format("Was not able to get response for %s", request.url()), e);

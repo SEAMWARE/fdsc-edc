@@ -59,6 +59,8 @@ public abstract class BaseClient {
     this.objectMapper = objectMapper;
   }
 
+  // Caller is responsible for closing the returned ResponseBody to release the connection.
+  @SuppressWarnings("resource")
   protected ResponseBody executeRequestWithResponse(Request request) {
     return executeRequest(request).body();
   }
@@ -69,15 +71,17 @@ public abstract class BaseClient {
       if (response.isSuccessful()) {
         return response;
       } else {
+        int code = response.code();
+        String body = response.body() != null ? response.body().string() : "";
+        response.close();
         monitor.warning(
             String.format(
                 "Was not able to get as successful response for %s. Was: %s - %s",
-                request.url(), response.code(), response.body().string()));
+                request.url(), code, body));
         throw new HttpClientException(
             String.format(
-                "Was not able to get as successful response for %s. Was: %s",
-                request.url(), response.code()),
-            response.code());
+                "Was not able to get as successful response for %s. Was: %s", request.url(), code),
+            code);
       }
     } catch (IOException e) {
       monitor.warning(String.format("Was not able to get response for %s", request.url()));

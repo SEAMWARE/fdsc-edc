@@ -91,7 +91,7 @@ public class OdrlPapClient extends BaseClient {
     Request request =
         new Request.Builder().url(url).post(RequestBody.create(policyString, JSON)).build();
 
-    executeRequest(request);
+    executeRequest(request).close();
   }
 
   public void deleteService(String serviceId) {
@@ -99,6 +99,6 @@ public class OdrlPapClient extends BaseClient {
     urlBuilder.addPathSegment(SERVICE_PATH);
     urlBuilder.addPathSegment(serviceId);
 
-    executeRequest(new Request.Builder().url(urlBuilder.build()).delete().build());
+    executeRequest(new Request.Builder().url(urlBuilder.build()).delete().build()).close();
   }
 }
