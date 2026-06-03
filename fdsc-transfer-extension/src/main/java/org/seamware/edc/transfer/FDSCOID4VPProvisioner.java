@@ -225,6 +225,11 @@ public class FDSCOID4VPProvisioner
                     .build());
 
           } catch (HttpClientException e) {
+            // Best-effort cleanup of any partial state left in the PAP so the
+            // next retry doesn't fail with "Service ... already exists". The
+            // PAP service is created first, so any later failure may leave it
+            // dangling and turn every retry into a permanent error.
+            rollbackPapService(resourceDefinition);
             if (e.getStatusCode().isPresent() && e.getStatusCode().get() == 400) {
               return StatusResult.failure(
                   ResponseStatus.FATAL_ERROR,
@@ -233,10 +238,31 @@ public class FDSCOID4VPProvisioner
             monitor.warning("Was not able to provision, remote server issue. Retry.", e);
             return StatusResult.failure(ResponseStatus.ERROR_RETRY, "Unable to provision");
           } catch (Exception e) {
+            rollbackPapService(resourceDefinition);
             monitor.warning("Was not able to provision.", e);
             return StatusResult.failure(ResponseStatus.FATAL_ERROR, "Unable to provision");
           }
         });
+  }
+
+  /**
+   * Best-effort delete of the PAP service for this transfer process. Swallows any
+   * error: if the service was never created (or already gone) the delete is a no-op,
+   * and if the PAP itself is down the original provision failure already surfaces
+   * the same condition. Without this, a single transient failure between
+   * createService and a later step leaves an orphan that turns every subsequent
+   * retry into "already exists" until the transfer is permanently terminated.
+   */
+  private void rollbackPapService(FDSCOID4VPProviderResourceDefinition resourceDefinition) {
+    try {
+      odrlPapClient.deleteService(resourceDefinition.getTransferProcessId());
+    } catch (Exception cleanupFailure) {
+      monitor.debug(
+          "Rollback of PAP service "
+              + resourceDefinition.getTransferProcessId()
+              + " failed (ignored): "
+              + cleanupFailure.getMessage());
+    }
   }
 
   @Override
