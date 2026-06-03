@@ -125,13 +125,27 @@ jobs:
           docker compose -f docker-compose.tck.yml logs edc > tck-logs/edc.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs tck > tck-logs/tck.log 2>&1 || true
 
-      - name: Upload TCK logs as artifact
-        if: always()
+      - name: Upload EDC container logs on success
+        if: success()
+        run: |
+          mkdir -p tck-logs
+          docker compose -f docker-compose.tck.yml logs tck > tck-logs/tck.log 2>&1 || true
+
+      - name: Upload TCK logs as artifact on failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: tck-logs
           path: tck-logs/
           retention-days: 14
+
+      - name: Upload TCK logs as artifact on sucess
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tck-logs
+          path: tck-logs/
+          retention-days: 200
 
       - name: Tear down containers
         if: always()
