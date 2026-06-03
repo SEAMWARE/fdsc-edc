@@ -16,6 +16,8 @@
  */
 package org.seamware.edc;
 
+import static org.eclipse.edc.protocol.dsp.spi.type.Dsp2024Constants.DSP_TRANSFORMER_CONTEXT_V_2024_1;
+import static org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants.DSP_TRANSFORMER_CONTEXT_V_2025_1;
 import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -32,9 +34,9 @@ import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.Con
 import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractDefinitionStore;
 import org.eclipse.edc.connector.controlplane.policy.spi.store.PolicyDefinitionStore;
 import org.eclipse.edc.connector.controlplane.transform.odrl.OdrlTransformersFactory;
-import org.eclipse.edc.connector.controlplane.transform.odrl.from.JsonObjectFromPolicyTransformer;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participant.spi.ParticipantIdMapper;
+import org.eclipse.edc.policy.model.Constraint;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.protocol.spi.DataspaceProfileContextRegistry;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
@@ -47,6 +49,7 @@ import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.types.TypeManager;
 import org.eclipse.edc.transaction.spi.TransactionContext;
+import org.eclipse.edc.transform.spi.TypeTransformer;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
 import org.eclipse.edc.transform.transformer.edc.to.JsonValueToGenericTypeTransformer;
 import org.seamware.edc.store.*;
@@ -140,14 +143,26 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
             return s;
           }
         };
+    var typePreservingPolicyTransformer =
+        new TypePreservingJsonObjectFromPolicyTransformer(
+            jsonBuilderFactory, participantIdMapper, true, true);
+    var typePreservingConstraintTransformer = new TypePreservingJsonObjectToConstraintTransformer();
+
+    typeTransformerRegistry.register(typePreservingPolicyTransformer);
+    typeTransformerRegistry.register(typePreservingConstraintTransformer);
     OdrlTransformersFactory.jsonObjectToOdrlTransformers(participantIdMapper)
+        .filter(t -> !isConstraintTransformer(t))
         .forEach(typeTransformerRegistry::register);
     typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
-    typeTransformerRegistry.register(
-        new JsonObjectFromPolicyTransformer(
-            jsonBuilderFactory,
-            participantIdMapper,
-            new JsonObjectFromPolicyTransformer.TransformerConfig(true, true)));
+
+    registerTypePreservingTransformers(
+        DSP_TRANSFORMER_CONTEXT_V_2024_1,
+        typePreservingPolicyTransformer,
+        typePreservingConstraintTransformer);
+    registerTypePreservingTransformers(
+        DSP_TRANSFORMER_CONTEXT_V_2025_1,
+        typePreservingPolicyTransformer,
+        typePreservingConstraintTransformer);
 
     SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
     context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
@@ -318,5 +333,24 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
 
   public DataAddressResolver dataAddressResolver(TMFConfig tmfConfig) {
     return assetIndex(tmfConfig);
+  }
+
+  /**
+   * Registers the type-preserving transformers in a scoped DSP transformer context, ensuring they
+   * are found before the original EDC transformers. The registry uses first-match semantics, so our
+   * transformers must be registered before the originals to take effect.
+   */
+  private void registerTypePreservingTransformers(
+      String contextName,
+      TypePreservingJsonObjectFromPolicyTransformer policyTransformer,
+      TypePreservingJsonObjectToConstraintTransformer constraintTransformer) {
+    var scopedRegistry = typeTransformerRegistry.forContext(contextName);
+    scopedRegistry.register(policyTransformer);
+    scopedRegistry.register(constraintTransformer);
+  }
+
+  private static boolean isConstraintTransformer(TypeTransformer<?, ?> transformer) {
+    return transformer.getInputType().equals(jakarta.json.JsonObject.class)
+        && transformer.getOutputType().equals(Constraint.class);
   }
 }
