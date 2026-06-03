@@ -126,7 +126,7 @@ jobs:
           docker compose -f docker-compose.tck.yml logs tck > tck-logs/tck.log 2>&1 || true
 
       - name: Upload TCK logs as artifact
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tck-logs
