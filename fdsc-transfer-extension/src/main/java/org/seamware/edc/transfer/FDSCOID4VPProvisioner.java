@@ -246,12 +246,11 @@ public class FDSCOID4VPProvisioner
   }
 
   /**
-   * Best-effort delete of the PAP service for this transfer process. Swallows any
-   * error: if the service was never created (or already gone) the delete is a no-op,
-   * and if the PAP itself is down the original provision failure already surfaces
-   * the same condition. Without this, a single transient failure between
-   * createService and a later step leaves an orphan that turns every subsequent
-   * retry into "already exists" until the transfer is permanently terminated.
+   * Best-effort delete of the PAP service for this transfer process. Swallows any error: if the
+   * service was never created (or already gone) the delete is a no-op, and if the PAP itself is
+   * down the original provision failure already surfaces the same condition. Without this, a single
+   * transient failure between createService and a later step leaves an orphan that turns every
+   * subsequent retry into "already exists" until the transfer is permanently terminated.
    */
   private void rollbackPapService(FDSCOID4VPProviderResourceDefinition resourceDefinition) {
     try {
