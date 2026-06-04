@@ -188,11 +188,11 @@ public class TypePreservingJsonObjectFromPolicyTransformer
       Object value = expression.getValue();
 
       if (value instanceof Integer i) {
-        builder.add(VALUE, Json.createValue(i));
+        builder.add(VALUE, Json.createValue(i.intValue()));
       } else if (value instanceof Long l) {
-        builder.add(VALUE, Json.createValue(l));
+        builder.add(VALUE, Json.createValue(l.longValue()));
       } else if (value instanceof Double d) {
-        builder.add(VALUE, Json.createValue(d));
+        builder.add(VALUE, Json.createValue(d.doubleValue()));
       } else if (value instanceof Float f) {
         builder.add(VALUE, Json.createValue(f.doubleValue()));
       } else if (value instanceof Number n) {
