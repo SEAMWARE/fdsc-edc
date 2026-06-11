@@ -87,7 +87,8 @@ public class AbstractProvisionerTest {
 
     return new ProductSpecificationCharacteristicVO()
         .productSpecCharacteristicValue(List.of(characteristicValueSpecificationVO))
-        .id("upstreamAddress");
+        .id("upstreamAddress")
+        .valueType("upstreamAddress");
   }
 
   protected static Policy getTestPolicy() {

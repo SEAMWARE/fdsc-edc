@@ -182,7 +182,7 @@ public class FDSCDcpProvisioner
         Optional.ofNullable(extendableProductSpecification.getProductSpecCharacteristic())
             .orElse(List.of())
             .stream()
-            .filter(psc -> Optional.ofNullable(psc.getId()).orElse("").equals(valueKey))
+            .filter(psc -> Optional.ofNullable(psc.getValueType()).orElse("").equals(valueKey))
             .map(ProductSpecificationCharacteristicVO::getProductSpecCharacteristicValue)
             .map(Optional::ofNullable)
             .map(ol -> ol.orElse(List.of()))

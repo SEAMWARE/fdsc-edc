@@ -535,12 +535,11 @@ public class TMFEdcMapper {
         DataAddress.Builder.newInstance().type(FDSC_DATA_ADDRESS_TYPE);
     List<ProductSpecificationCharacteristicVO> specChars =
         productSpecification.getProductSpecCharacteristic();
-    Optional<String> upstreamAddressKey =
+    boolean hasUpstreamAddress =
         specChars.stream()
-            .map(ProductSpecificationCharacteristicVO::getId)
-            .filter(UPSTREAM_ADDRESS_KEY::equals)
-            .findAny();
-    if (upstreamAddressKey.isEmpty()) {
+            .map(ProductSpecificationCharacteristicVO::getValueType)
+            .anyMatch(UPSTREAM_ADDRESS_KEY::equals);
+    if (!hasUpstreamAddress) {
       monitor.info(
           "The given product specification cannot be used for DSP, since it does not contain an upstreamAddress.");
       return Optional.empty();
