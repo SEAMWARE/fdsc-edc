@@ -748,7 +748,6 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     return DataAddress.Builder.newInstance()
         .type("FDSC")
         .property("endpointUrl", url)
-        .property("endpointDescription", description)
         .build();
   }
 
