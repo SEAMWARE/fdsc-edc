@@ -17,6 +17,7 @@
 package org.seamware.edc.pap.policy;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -26,11 +27,14 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import okhttp3.OkHttpClient;
+import org.eclipse.edc.connector.controlplane.catalog.spi.policy.CatalogPolicyContext;
+import org.eclipse.edc.connector.controlplane.contract.spi.policy.ContractNegotiationPolicyContext;
+import org.eclipse.edc.connector.controlplane.contract.spi.policy.TransferProcessPolicyContext;
 import org.eclipse.edc.jsonld.spi.JsonLd;
-import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestContractNegotiationPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestTransferProcessPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.policy.engine.spi.PolicyValidatorRule;
 import org.eclipse.edc.spi.EdcException;
@@ -43,6 +47,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -99,6 +104,37 @@ class OdrlPapPolicyExtensionTest {
       Boolean scopeCatalog,
       Boolean scopeNegotiation,
       Boolean scopeTransfer) {
+    setupConfig(enabled, host, denyOnError, scopeCatalog, scopeNegotiation, scopeTransfer, null);
+  }
+
+  private void setupConfig(
+      Boolean enabled,
+      String host,
+      Boolean denyOnError,
+      Boolean scopeCatalog,
+      Boolean scopeNegotiation,
+      Boolean scopeTransfer,
+      String additionalContextsPath) {
+    setupConfig(
+        enabled,
+        host,
+        denyOnError,
+        scopeCatalog,
+        scopeNegotiation,
+        scopeTransfer,
+        additionalContextsPath,
+        null);
+  }
+
+  private void setupConfig(
+      Boolean enabled,
+      String host,
+      Boolean denyOnError,
+      Boolean scopeCatalog,
+      Boolean scopeNegotiation,
+      Boolean scopeTransfer,
+      String additionalContextsPath,
+      String scopeMappingsPath) {
     Config rootConfig = mock(Config.class);
     Config odrlPapConfig = mock(Config.class);
     Config policyConfig = mock(Config.class);
@@ -113,6 +149,8 @@ class OdrlPapPolicyExtensionTest {
     mockBooleanProperty(policyConfig, "enabled", enabled);
     mockStringProperty(odrlPapConfig, "host", host);
     mockBooleanProperty(policyConfig, "denyOnError", denyOnError);
+    mockStringProperty(policyConfig, "additionalContextsPath", additionalContextsPath);
+    mockStringProperty(policyConfig, "scopeMappingsPath", scopeMappingsPath);
     mockBooleanProperty(scopesConfig, "catalog", scopeCatalog);
     mockBooleanProperty(scopesConfig, "negotiation", scopeNegotiation);
     mockBooleanProperty(scopesConfig, "transfer", scopeTransfer);
@@ -180,14 +218,13 @@ class OdrlPapPolicyExtensionTest {
       extension.initialize(context);
 
       verify(policyEngine)
-          .registerPreValidator(
-              eq(RequestCatalogPolicyContext.class), any(PolicyValidatorRule.class));
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine)
           .registerPreValidator(
-              eq(RequestContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(ContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine)
           .registerPreValidator(
-              eq(RequestTransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(TransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
     }
 
     @Test
@@ -213,14 +250,13 @@ class OdrlPapPolicyExtensionTest {
       extension.initialize(context);
 
       verify(policyEngine)
-          .registerPreValidator(
-              eq(RequestCatalogPolicyContext.class), any(PolicyValidatorRule.class));
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine, never())
           .registerPreValidator(
-              eq(RequestContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(ContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine, never())
           .registerPreValidator(
-              eq(RequestTransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(TransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
     }
 
     @Test
@@ -231,14 +267,13 @@ class OdrlPapPolicyExtensionTest {
       extension.initialize(context);
 
       verify(policyEngine, never())
-          .registerPreValidator(
-              eq(RequestCatalogPolicyContext.class), any(PolicyValidatorRule.class));
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine)
           .registerPreValidator(
-              eq(RequestContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(ContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine, never())
           .registerPreValidator(
-              eq(RequestTransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(TransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
     }
 
     @Test
@@ -249,14 +284,13 @@ class OdrlPapPolicyExtensionTest {
       extension.initialize(context);
 
       verify(policyEngine, never())
-          .registerPreValidator(
-              eq(RequestCatalogPolicyContext.class), any(PolicyValidatorRule.class));
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine, never())
           .registerPreValidator(
-              eq(RequestContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(ContractNegotiationPolicyContext.class), any(PolicyValidatorRule.class));
       verify(policyEngine)
           .registerPreValidator(
-              eq(RequestTransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
+              eq(TransferProcessPolicyContext.class), any(PolicyValidatorRule.class));
     }
 
     @Test
@@ -294,6 +328,129 @@ class OdrlPapPolicyExtensionTest {
 
       verify(policyEngine, never()).registerPreValidator(any(), any());
       verify(monitor).severe(contains(OdrlPapConfig.SETTING_HOST));
+    }
+  }
+
+  @Nested
+  @DisplayName("Additional contexts loading")
+  class AdditionalContextsLoading {
+
+    @TempDir Path tempDir;
+
+    @Test
+    @DisplayName("initializes successfully when additional contexts file is configured")
+    void initializesWithContextsFile() throws IOException {
+      Path file = tempDir.resolve("contexts.json");
+      Files.writeString(
+          file,
+          """
+          [{"odrl:action": {"@id": "http://www.w3.org/ns/odrl/2/action"}}]
+          """);
+      extension.objectMapper = new ObjectMapper();
+      setupConfig(true, TEST_HOST, null, null, null, null, file.toString());
+
+      extension.initialize(context);
+
+      verify(policyEngine)
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
+      verify(monitor).info(contains("1 additional context(s)"));
+    }
+
+    @Test
+    @DisplayName("initializes without contexts when path is not configured")
+    void initializesWithoutContextsFile() {
+      setupConfig(true, TEST_HOST, null, null, null, null);
+
+      extension.initialize(context);
+
+      verify(policyEngine)
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
+      verify(monitor).info(contains("No additional contexts file"));
+    }
+
+    @Test
+    @DisplayName("throws when additional contexts file does not exist")
+    void throwsWhenContextsFileNotFound() {
+      String missingPath = tempDir.resolve("nonexistent.json").toString();
+      setupConfig(true, TEST_HOST, null, null, null, null, missingPath);
+
+      assertThrows(IllegalArgumentException.class, () -> extension.initialize(context));
+    }
+
+    @Test
+    @DisplayName("throws when additional contexts file contains invalid JSON")
+    void throwsWhenContextsFileInvalid() throws IOException {
+      Path file = tempDir.resolve("invalid.json");
+      Files.writeString(file, "not json");
+      extension.objectMapper = new ObjectMapper();
+      setupConfig(true, TEST_HOST, null, null, null, null, file.toString());
+
+      assertThrows(IllegalArgumentException.class, () -> extension.initialize(context));
+    }
+  }
+
+  @Nested
+  @DisplayName("Scope mappings loading")
+  class ScopeMappingsLoading {
+
+    @TempDir Path tempDir;
+
+    @Test
+    @DisplayName("initializes successfully when scope mappings file is configured")
+    void initializesWithScopeMappingsFile() throws IOException {
+      Path file = tempDir.resolve("scope-mappings.json");
+      Files.writeString(
+          file,
+          """
+          {
+            "mappings": [
+              {
+                "match": { "http://www.w3.org/ns/odrl/2/leftOperand": "Membership" },
+                "scopes": ["contract.negotiation"]
+              }
+            ]
+          }
+          """);
+      extension.objectMapper = new ObjectMapper();
+      setupConfig(true, TEST_HOST, null, null, null, null, null, file.toString());
+
+      extension.initialize(context);
+
+      verify(policyEngine)
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
+      verify(monitor).info(contains("1 scope mapping rule(s)"));
+    }
+
+    @Test
+    @DisplayName("initializes without scope mappings when path is not configured")
+    void initializesWithoutScopeMappingsFile() {
+      setupConfig(true, TEST_HOST, null, null, null, null);
+
+      extension.initialize(context);
+
+      verify(policyEngine)
+          .registerPreValidator(eq(CatalogPolicyContext.class), any(PolicyValidatorRule.class));
+      verify(monitor).info(contains("No scope mappings file"));
+    }
+
+    @Test
+    @DisplayName("throws when scope mappings file does not exist")
+    void throwsWhenScopeMappingsFileNotFound() {
+      String missingPath = tempDir.resolve("nonexistent.json").toString();
+      setupConfig(true, TEST_HOST, null, null, null, null, null, missingPath);
+
+      assertThrows(IllegalArgumentException.class, () -> extension.initialize(context));
+    }
+
+    @Test
+    @DisplayName("throws when scope mappings file contains invalid JSON")
+    void throwsWhenScopeMappingsFileInvalid() throws IOException {
+      Path file = tempDir.resolve("invalid.json");
+      Files.writeString(file, "not json");
+      extension.objectMapper = new ObjectMapper();
+      setupConfig(true, TEST_HOST, null, null, null, null, null, file.toString());
+
+      assertThrows(IllegalArgumentException.class, () -> extension.initialize(context));
     }
   }
 }

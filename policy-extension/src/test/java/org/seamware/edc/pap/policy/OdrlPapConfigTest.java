@@ -53,6 +53,38 @@ class OdrlPapConfigTest {
       Boolean scopeCatalog,
       Boolean scopeNegotiation,
       Boolean scopeTransfer) {
+    return createMockConfig(
+        enabled, host, denyOnError, scopeCatalog, scopeNegotiation, scopeTransfer, null, null);
+  }
+
+  private Config createMockConfig(
+      Boolean enabled,
+      String host,
+      Boolean denyOnError,
+      Boolean scopeCatalog,
+      Boolean scopeNegotiation,
+      Boolean scopeTransfer,
+      String additionalContextsPath) {
+    return createMockConfig(
+        enabled,
+        host,
+        denyOnError,
+        scopeCatalog,
+        scopeNegotiation,
+        scopeTransfer,
+        additionalContextsPath,
+        null);
+  }
+
+  private Config createMockConfig(
+      Boolean enabled,
+      String host,
+      Boolean denyOnError,
+      Boolean scopeCatalog,
+      Boolean scopeNegotiation,
+      Boolean scopeTransfer,
+      String additionalContextsPath,
+      String scopeMappingsPath) {
     Config rootConfig = mock(Config.class);
     Config odrlPapConfig = mock(Config.class);
     Config policyConfig = mock(Config.class);
@@ -67,6 +99,8 @@ class OdrlPapConfigTest {
     mockBooleanProperty(policyConfig, "enabled", enabled);
     mockStringProperty(odrlPapConfig, "host", host);
     mockBooleanProperty(policyConfig, "denyOnError", denyOnError);
+    mockStringProperty(policyConfig, "additionalContextsPath", additionalContextsPath);
+    mockStringProperty(policyConfig, "scopeMappingsPath", scopeMappingsPath);
     mockBooleanProperty(scopesConfig, "catalog", scopeCatalog);
     mockBooleanProperty(scopesConfig, "negotiation", scopeNegotiation);
     mockBooleanProperty(scopesConfig, "transfer", scopeTransfer);
@@ -106,6 +140,8 @@ class OdrlPapConfigTest {
       assertTrue(result.scopeCatalog());
       assertTrue(result.scopeNegotiation());
       assertTrue(result.scopeTransfer());
+      assertNull(result.additionalContextsPath());
+      assertNull(result.scopeMappingsPath());
     }
 
     @Test
@@ -178,6 +214,44 @@ class OdrlPapConfigTest {
       assertFalse(result.scopeCatalog());
       assertFalse(result.scopeNegotiation());
       assertFalse(result.scopeTransfer());
+    }
+
+    @Test
+    @DisplayName("additionalContextsPath reads from config")
+    void additionalContextsPathFromConfig() {
+      String path = "/etc/edc/additional-contexts.json";
+      Config config = createMockConfig(true, TEST_HOST, null, null, null, null, path);
+      OdrlPapConfig result = OdrlPapConfig.fromConfig(config);
+
+      assertEquals(path, result.additionalContextsPath());
+    }
+
+    @Test
+    @DisplayName("additionalContextsPath defaults to null when not configured")
+    void additionalContextsPathDefaultsNull() {
+      Config config = createMockConfig(true, TEST_HOST, null, null, null, null);
+      OdrlPapConfig result = OdrlPapConfig.fromConfig(config);
+
+      assertNull(result.additionalContextsPath());
+    }
+
+    @Test
+    @DisplayName("scopeMappingsPath reads from config")
+    void scopeMappingsPathFromConfig() {
+      String path = "/etc/edc/scope-mappings.json";
+      Config config = createMockConfig(true, TEST_HOST, null, null, null, null, null, path);
+      OdrlPapConfig result = OdrlPapConfig.fromConfig(config);
+
+      assertEquals(path, result.scopeMappingsPath());
+    }
+
+    @Test
+    @DisplayName("scopeMappingsPath defaults to null when not configured")
+    void scopeMappingsPathDefaultsNull() {
+      Config config = createMockConfig(true, TEST_HOST, null, null, null, null);
+      OdrlPapConfig result = OdrlPapConfig.fromConfig(config);
+
+      assertNull(result.scopeMappingsPath());
     }
   }
 

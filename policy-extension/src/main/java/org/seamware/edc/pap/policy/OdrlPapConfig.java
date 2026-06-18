@@ -42,6 +42,8 @@ import org.eclipse.edc.spi.system.configuration.Config;
  *       (default: {@value #DEFAULT_SCOPE_NEGOTIATION})
  *   <li>{@value #SETTING_SCOPE_TRANSFER} &mdash; register pre-validator for transfer scope
  *       (default: {@value #DEFAULT_SCOPE_TRANSFER})
+ *   <li>{@value #SETTING_ADDITIONAL_CONTEXTS_PATH} &mdash; path to a JSON file containing
+ *       additional JSON-LD contexts to include in PAP validation requests (default: not set)
  * </ul>
  */
 public class OdrlPapConfig {
@@ -88,12 +90,26 @@ public class OdrlPapConfig {
   /** Default value for {@link #SETTING_SCOPE_TRANSFER}. */
   static final boolean DEFAULT_SCOPE_TRANSFER = true;
 
+  /**
+   * EDC setting key for the path to a JSON file containing additional JSON-LD contexts to include
+   * in PAP validation requests.
+   */
+  static final String SETTING_ADDITIONAL_CONTEXTS_PATH = "odrlPap.policy.additionalContextsPath";
+
+  /**
+   * EDC setting key for the path to a JSON file containing scope mapping rules that assign ODRL
+   * permissions to evaluation scopes based on their properties.
+   */
+  static final String SETTING_SCOPE_MAPPINGS_PATH = "odrlPap.policy.scopeMappingsPath";
+
   private final boolean enabled;
   private final String host;
   private final boolean denyOnError;
   private final boolean scopeCatalog;
   private final boolean scopeNegotiation;
   private final boolean scopeTransfer;
+  private final String additionalContextsPath;
+  private final String scopeMappingsPath;
 
   /**
    * Creates a new configuration instance. Package-private to encourage use of {@link
@@ -105,6 +121,10 @@ public class OdrlPapConfig {
    * @param scopeCatalog whether to register the catalog scope pre-validator
    * @param scopeNegotiation whether to register the negotiation scope pre-validator
    * @param scopeTransfer whether to register the transfer scope pre-validator
+   * @param additionalContextsPath path to a JSON file with additional JSON-LD contexts, or {@code
+   *     null} if not configured
+   * @param scopeMappingsPath path to a JSON file with scope mapping rules, or {@code null} if not
+   *     configured
    */
   OdrlPapConfig(
       boolean enabled,
@@ -112,13 +132,17 @@ public class OdrlPapConfig {
       boolean denyOnError,
       boolean scopeCatalog,
       boolean scopeNegotiation,
-      boolean scopeTransfer) {
+      boolean scopeTransfer,
+      String additionalContextsPath,
+      String scopeMappingsPath) {
     this.enabled = enabled;
     this.host = host;
     this.denyOnError = denyOnError;
     this.scopeCatalog = scopeCatalog;
     this.scopeNegotiation = scopeNegotiation;
     this.scopeTransfer = scopeTransfer;
+    this.additionalContextsPath = additionalContextsPath;
+    this.scopeMappingsPath = scopeMappingsPath;
   }
 
   /**
@@ -151,9 +175,20 @@ public class OdrlPapConfig {
     boolean scopeTransfer =
         getNullSafeFromConfig(() -> scopesConfig.getBoolean("transfer"))
             .orElse(DEFAULT_SCOPE_TRANSFER);
+    String additionalContextsPath =
+        getNullSafeFromConfig(() -> policyConfig.getString("additionalContextsPath")).orElse(null);
+    String scopeMappingsPath =
+        getNullSafeFromConfig(() -> policyConfig.getString("scopeMappingsPath")).orElse(null);
 
     return new OdrlPapConfig(
-        enabled, host, denyOnError, scopeCatalog, scopeNegotiation, scopeTransfer);
+        enabled,
+        host,
+        denyOnError,
+        scopeCatalog,
+        scopeNegotiation,
+        scopeTransfer,
+        additionalContextsPath,
+        scopeMappingsPath);
   }
 
   /** Returns {@code true} if PAP-based policy evaluation is enabled. */
@@ -204,6 +239,26 @@ public class OdrlPapConfig {
    */
   public boolean scopeTransfer() {
     return scopeTransfer;
+  }
+
+  /**
+   * Returns the path to the JSON file containing additional JSON-LD contexts, or {@code null} if
+   * not configured.
+   *
+   * @return the additional contexts file path, or {@code null}
+   */
+  public String additionalContextsPath() {
+    return additionalContextsPath;
+  }
+
+  /**
+   * Returns the path to the JSON file containing scope mapping rules, or {@code null} if not
+   * configured.
+   *
+   * @return the scope mappings file path, or {@code null}
+   */
+  public String scopeMappingsPath() {
+    return scopeMappingsPath;
   }
 
   /**

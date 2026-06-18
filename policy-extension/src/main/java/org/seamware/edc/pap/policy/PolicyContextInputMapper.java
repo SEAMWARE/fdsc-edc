@@ -16,123 +16,92 @@
  */
 package org.seamware.edc.pap.policy;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
-import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestContractNegotiationPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestTransferProcessPolicyContext;
+import org.eclipse.edc.connector.controlplane.contract.spi.policy.TransferProcessPolicyContext;
+import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
+import org.eclipse.edc.participant.spi.ParticipantAgent;
+import org.eclipse.edc.participant.spi.ParticipantAgentPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyContext;
-import org.eclipse.edc.spi.iam.RequestContext;
-import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
 import org.seamware.pap.model.GenericJsonInputVO;
-import org.seamware.pap.model.HeadersVO;
-import org.seamware.pap.model.TestRequestVO;
 
 /**
- * Maps an EDC {@link PolicyContext} to the appropriate ODRL-PAP evaluation input.
+ * Maps an EDC {@link PolicyContext} to a {@link GenericJsonInputVO} for the ODRL-PAP's JSON payload
+ * evaluation.
  *
- * <p>The PAP's {@code POST /validate} endpoint accepts two mutually exclusive input formats:
+ * <p>The mapper targets EDC's <b>Layer 2</b> policy scopes ({@code catalog}, {@code
+ * contract.negotiation}, {@code transfer.process}), which are evaluated <b>after</b> token
+ * verification. At this layer, the {@link ParticipantAgentPolicyContext} carries the authenticated
+ * {@link ParticipantAgent} with verified VerifiableCredential claims.
+ *
+ * <p>The resulting {@link GenericJsonInputVO} contains:
  *
  * <ul>
- *   <li><b>HTTP request evaluation</b> ({@link TestRequestVO}) — used for {@link
- *       RequestPolicyContext} subtypes that represent incoming DSP protocol messages:
- *       <ul>
- *         <li>{@link RequestCatalogPolicyContext} &rarr; GET on the catalog path
- *         <li>{@link RequestContractNegotiationPolicyContext} &rarr; POST on the negotiations path
- *         <li>{@link RequestTransferProcessPolicyContext} &rarr; POST on the transfers path
- *       </ul>
- *   <li><b>JSON payload evaluation</b> ({@link GenericJsonInputVO}) — used for all other {@link
- *       PolicyContext} types (e.g. internal contract negotiation, transfer process, catalog policy
- *       evaluation), carrying the scope as payload
+ *   <li><b>Payload</b> — the policy scope and, for transfer contexts, the contract agreement and
+ *       evaluation timestamp
+ *   <li><b>Subject</b> — the authenticated participant identity and all verified credential claims
+ *       (including the {@code "vc"} key with the list of VerifiableCredentials for DCP)
  * </ul>
  */
 public class PolicyContextInputMapper {
 
-  /** HTTP method for catalog requests. */
-  static final TestRequestVO.MethodEnum CATALOG_HTTP_METHOD = TestRequestVO.MethodEnum.GET;
-
-  /** HTTP method for contract negotiation requests. */
-  static final TestRequestVO.MethodEnum NEGOTIATION_HTTP_METHOD = TestRequestVO.MethodEnum.POST;
-
-  /** HTTP method for transfer process requests. */
-  static final TestRequestVO.MethodEnum TRANSFER_HTTP_METHOD = TestRequestVO.MethodEnum.POST;
-
-  /** Default HTTP method for unrecognized request context types. */
-  static final TestRequestVO.MethodEnum DEFAULT_HTTP_METHOD = TestRequestVO.MethodEnum.POST;
-
-  /** DSP catalog request path. */
-  static final String CATALOG_PATH = "/catalog";
-
-  /** DSP contract negotiation request path. */
-  static final String NEGOTIATION_PATH = "/negotiations";
-
-  /** DSP transfer process request path. */
-  static final String TRANSFER_PATH = "/transfers";
-
-  /** Default protocol for all HTTP requests. */
-  static final TestRequestVO.ProtocolEnum DEFAULT_PROTOCOL = TestRequestVO.ProtocolEnum.HTTPS;
-
-  /** Content type for JSON-LD payloads used in DSP protocol messages. */
-  static final String JSON_LD_CONTENT_TYPE = "application/ld+json";
-
-  /** Default host when no counter-party address is available. */
-  static final String DEFAULT_HOST = "unknown";
-
-  /** Payload key for the policy scope in JSON input. */
+  /** Payload key for the policy scope. */
   static final String KEY_SCOPE = "scope";
 
+  /** Subject key for the authenticated participant identity. */
+  static final String KEY_IDENTITY = "identity";
+
+  /** Subject key for the participant's verified claims. */
+  static final String KEY_CLAIMS = "claims";
+
+  /** Payload key for the contract agreement in transfer process contexts. */
+  static final String KEY_CONTRACT_AGREEMENT = "contractAgreement";
+
+  /** Key for the agreement ID within the contract agreement object. */
+  static final String KEY_AGREEMENT_ID = "id";
+
+  /** Key for the asset ID within the contract agreement object. */
+  static final String KEY_AGREEMENT_ASSET_ID = "assetId";
+
+  /** Key for the provider ID within the contract agreement object. */
+  static final String KEY_AGREEMENT_PROVIDER_ID = "providerId";
+
+  /** Key for the consumer ID within the contract agreement object. */
+  static final String KEY_AGREEMENT_CONSUMER_ID = "consumerId";
+
+  /** Key for the signing date within the contract agreement object. */
+  static final String KEY_AGREEMENT_SIGNING_DATE = "contractSigningDate";
+
+  /** Payload key for the current evaluation timestamp (ISO-8601). */
+  static final String KEY_NOW = "now";
+
+  /** TypeReference for converting VerifiableCredential objects to JSON-compatible maps. */
+  private static final TypeReference<List<Map<String, Object>>> VC_LIST_TYPE_REFERENCE =
+      new TypeReference<>() {};
+
+  private final ObjectMapper objectMapper;
+
   /**
-   * Converts a {@link RequestPolicyContext} into a {@link TestRequestVO} for HTTP request
-   * evaluation by the PAP.
+   * Creates a new mapper instance.
    *
-   * <p>The mapping extracts the counter-party address and identity from the underlying {@link
-   * RemoteMessage} and determines the HTTP method and path from the concrete context type.
-   *
-   * @param context the request policy context to convert
-   * @return a {@link TestRequestVO} representing the HTTP request for PAP evaluation
+   * @param objectMapper the Jackson object mapper used to serialize VerifiableCredential objects to
+   *     JSON-compatible maps
    */
-  public TestRequestVO toTestRequest(RequestPolicyContext context) {
-    TestRequestVO testRequest = new TestRequestVO();
-    testRequest.protocol(DEFAULT_PROTOCOL);
-
-    RequestContext requestContext = context.requestContext();
-    RemoteMessage message = requestContext.getMessage();
-
-    String host = message.getCounterPartyAddress();
-    testRequest.host(host != null ? host : DEFAULT_HOST);
-
-    String counterPartyId = message.getCounterPartyId();
-    if (counterPartyId != null) {
-      HeadersVO headers = new HeadersVO();
-      headers.authorization(counterPartyId);
-      headers.contentType(JSON_LD_CONTENT_TYPE);
-      testRequest.headers(headers);
-    }
-
-    if (context instanceof RequestCatalogPolicyContext) {
-      testRequest.method(CATALOG_HTTP_METHOD);
-      testRequest.path(CATALOG_PATH);
-    } else if (context instanceof RequestContractNegotiationPolicyContext) {
-      testRequest.method(NEGOTIATION_HTTP_METHOD);
-      testRequest.path(NEGOTIATION_PATH);
-    } else if (context instanceof RequestTransferProcessPolicyContext) {
-      testRequest.method(TRANSFER_HTTP_METHOD);
-      testRequest.path(TRANSFER_PATH);
-    } else {
-      testRequest.method(DEFAULT_HTTP_METHOD);
-      testRequest.path("/" + context.scope());
-    }
-
-    return testRequest;
+  public PolicyContextInputMapper(ObjectMapper objectMapper) {
+    this.objectMapper = objectMapper;
   }
 
   /**
-   * Converts a non-request {@link PolicyContext} into a {@link GenericJsonInputVO} for JSON payload
-   * evaluation by the PAP.
+   * Converts a {@link PolicyContext} into a {@link GenericJsonInputVO} for JSON payload evaluation
+   * by the PAP.
    *
-   * <p>The payload carries the context's scope, allowing the PAP to evaluate the policy against the
-   * scope identifier rather than an HTTP request.
+   * <p>The payload always includes the context's scope. For {@link ParticipantAgentPolicyContext}
+   * subtypes (Layer 2), the mapper extracts the authenticated participant's identity and credential
+   * claims into the subject. For {@link TransferProcessPolicyContext}, the contract agreement and
+   * evaluation timestamp are added to the payload.
    *
    * @param context the policy context to convert
    * @return a {@link GenericJsonInputVO} representing the JSON input for PAP evaluation
@@ -141,7 +110,101 @@ public class PolicyContextInputMapper {
     GenericJsonInputVO jsonInput = new GenericJsonInputVO();
     Map<String, Object> payload = new HashMap<>();
     payload.put(KEY_SCOPE, context.scope());
+
+    if (context instanceof ParticipantAgentPolicyContext agentContext) {
+      enrichFromParticipantAgent(jsonInput, agentContext.participantAgent());
+
+      if (context instanceof TransferProcessPolicyContext transferContext) {
+        enrichFromTransferProcessContext(payload, transferContext);
+      }
+    }
+
     jsonInput.payload(payload);
     return jsonInput;
+  }
+
+  /**
+   * Extracts the participant's identity and credential claims into the subject.
+   *
+   * <p>The claims map may contain a {@code "vc"} key with a {@code List<VerifiableCredential>} when
+   * using DCP. These Java objects are converted to JSON-compatible maps via the {@link
+   * ObjectMapper}, so the PAP receives plain JSON it can evaluate with Rego/CEL.
+   *
+   * @param jsonInput the JSON input VO whose subject field will be populated
+   * @param agent the authenticated participant agent
+   */
+  private void enrichFromParticipantAgent(GenericJsonInputVO jsonInput, ParticipantAgent agent) {
+    Map<String, Object> subject = new HashMap<>();
+    putIfNotNull(subject, KEY_IDENTITY, agent.getIdentity());
+
+    Map<String, Object> claims = agent.getClaims();
+    if (claims != null && !claims.isEmpty()) {
+      subject.put(KEY_CLAIMS, serializeClaims(claims));
+    }
+
+    if (!subject.isEmpty()) {
+      jsonInput.subject(subject);
+    }
+  }
+
+  /**
+   * Serializes the claims map to ensure all values are JSON-compatible. The {@code "vc"} claim
+   * contains {@code List<VerifiableCredential>} Java objects that must be converted to maps for
+   * JSON transport.
+   *
+   * @param claims the raw claims map from the {@link ParticipantAgent}
+   * @return a new map with all values converted to JSON-serializable types
+   */
+  private Map<String, Object> serializeClaims(Map<String, Object> claims) {
+    Map<String, Object> serialized = new HashMap<>();
+    for (Map.Entry<String, Object> entry : claims.entrySet()) {
+      if ("vc".equals(entry.getKey()) && entry.getValue() instanceof List<?>) {
+        serialized.put(
+            entry.getKey(), objectMapper.convertValue(entry.getValue(), VC_LIST_TYPE_REFERENCE));
+      } else {
+        serialized.put(entry.getKey(), entry.getValue());
+      }
+    }
+    return serialized;
+  }
+
+  /**
+   * Extracts transfer-specific fields from a {@link TransferProcessPolicyContext}: the contract
+   * agreement and the evaluation timestamp.
+   *
+   * @param payload the payload map to enrich
+   * @param context the transfer process policy context
+   */
+  private void enrichFromTransferProcessContext(
+      Map<String, Object> payload, TransferProcessPolicyContext context) {
+    ContractAgreement agreement = context.contractAgreement();
+    if (agreement != null) {
+      Map<String, Object> agreementMap = new HashMap<>();
+      putIfNotNull(agreementMap, KEY_AGREEMENT_ID, agreement.getId());
+      putIfNotNull(agreementMap, KEY_AGREEMENT_ASSET_ID, agreement.getAssetId());
+      putIfNotNull(agreementMap, KEY_AGREEMENT_PROVIDER_ID, agreement.getProviderId());
+      putIfNotNull(agreementMap, KEY_AGREEMENT_CONSUMER_ID, agreement.getConsumerId());
+      agreementMap.put(KEY_AGREEMENT_SIGNING_DATE, agreement.getContractSigningDate());
+      if (!agreementMap.isEmpty()) {
+        payload.put(KEY_CONTRACT_AGREEMENT, agreementMap);
+      }
+    }
+
+    if (context.now() != null) {
+      payload.put(KEY_NOW, context.now().toString());
+    }
+  }
+
+  /**
+   * Puts a value into a map only if the value is not {@code null}.
+   *
+   * @param map the target map
+   * @param key the key
+   * @param value the value, or {@code null} to skip
+   */
+  private void putIfNotNull(Map<String, Object> map, String key, Object value) {
+    if (value != null) {
+      map.put(key, value);
+    }
   }
 }

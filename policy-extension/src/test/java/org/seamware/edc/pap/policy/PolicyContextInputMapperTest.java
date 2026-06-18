@@ -23,14 +23,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.stream.Stream;
-import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestContractNegotiationPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestTransferProcessPolicyContext;
+import org.eclipse.edc.connector.controlplane.catalog.spi.policy.CatalogPolicyContext;
+import org.eclipse.edc.connector.controlplane.contract.spi.policy.ContractNegotiationPolicyContext;
+import org.eclipse.edc.connector.controlplane.contract.spi.policy.TransferProcessPolicyContext;
+import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
+import org.eclipse.edc.participant.spi.ParticipantAgent;
 import org.eclipse.edc.policy.engine.spi.PolicyContext;
-import org.eclipse.edc.spi.iam.RequestContext;
-import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
+import org.eclipse.edc.policy.model.Policy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -39,148 +43,251 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.seamware.pap.model.GenericJsonInputVO;
-import org.seamware.pap.model.TestRequestVO;
 
 /**
  * Unit tests for {@link PolicyContextInputMapper}.
  *
- * <p>Verifies that {@link RequestPolicyContext} subtypes are mapped to {@link TestRequestVO} (HTTP
- * request evaluation) and other {@link PolicyContext} types are mapped to {@link
- * GenericJsonInputVO} (JSON payload evaluation).
+ * <p>Verifies that Layer 2 {@link org.eclipse.edc.participant.spi.ParticipantAgentPolicyContext}
+ * subtypes are mapped to {@link GenericJsonInputVO} with the authenticated participant's identity
+ * and credential claims in the subject.
  */
 class PolicyContextInputMapperTest {
 
-  private static final String TEST_COUNTER_PARTY_ADDRESS = "https://provider.example.com/dsp";
-  private static final String TEST_COUNTER_PARTY_ID = "urn:connector:provider";
+  private static final String TEST_IDENTITY = "did:web:provider.example.com";
+  private static final String TEST_SCOPE_CATALOG = "catalog";
+  private static final String TEST_SCOPE_NEGOTIATION = "contract.negotiation";
+  private static final String TEST_SCOPE_TRANSFER = "transfer.process";
+  private static final String TEST_AGREEMENT_ID = "agreement-123";
+  private static final String TEST_ASSET_ID = "asset-xyz";
+  private static final String TEST_PROVIDER_ID = "urn:connector:provider";
+  private static final String TEST_CONSUMER_ID = "urn:connector:consumer";
+  private static final long TEST_SIGNING_DATE = 1700000000L;
 
   private PolicyContextInputMapper mapper;
+  private ObjectMapper objectMapper;
 
   @BeforeEach
   void setUp() {
-    mapper = new PolicyContextInputMapper();
+    objectMapper = new ObjectMapper();
+    mapper = new PolicyContextInputMapper(objectMapper);
   }
 
   @Nested
-  @DisplayName("HTTP request mapping (RequestPolicyContext subtypes)")
-  class HttpRequestMapping {
+  @DisplayName("Participant agent context mapping (Layer 2)")
+  class ParticipantAgentContextMapping {
 
-    /**
-     * Provides test arguments for each known {@link RequestPolicyContext} subtype, mapping each to
-     * its expected HTTP method and path.
-     */
-    static Stream<Arguments> knownContextTypes() {
+    /** Provides Layer 2 context types with their expected scopes for parameterized tests. */
+    static Stream<Arguments> layer2ContextTypes() {
       return Stream.of(
-          Arguments.of(
-              "Catalog",
-              RequestCatalogPolicyContext.class,
-              PolicyContextInputMapper.CATALOG_HTTP_METHOD,
-              PolicyContextInputMapper.CATALOG_PATH),
+          Arguments.of("Catalog", CatalogPolicyContext.class, TEST_SCOPE_CATALOG),
           Arguments.of(
               "ContractNegotiation",
-              RequestContractNegotiationPolicyContext.class,
-              PolicyContextInputMapper.NEGOTIATION_HTTP_METHOD,
-              PolicyContextInputMapper.NEGOTIATION_PATH),
-          Arguments.of(
-              "TransferProcess",
-              RequestTransferProcessPolicyContext.class,
-              PolicyContextInputMapper.TRANSFER_HTTP_METHOD,
-              PolicyContextInputMapper.TRANSFER_PATH));
+              ContractNegotiationPolicyContext.class,
+              TEST_SCOPE_NEGOTIATION),
+          Arguments.of("TransferProcess", TransferProcessPolicyContext.class, TEST_SCOPE_TRANSFER));
     }
 
-    @ParameterizedTest(name = "{0} context maps to {2} {3}")
-    @MethodSource("knownContextTypes")
-    @DisplayName("Known RequestPolicyContext subtypes map to correct method and path")
-    void toTestRequest_knownContextTypes(
-        String label,
-        Class<? extends RequestPolicyContext> contextClass,
-        TestRequestVO.MethodEnum expectedMethod,
-        String expectedPath) {
-      RequestPolicyContext context = createMockRequestPolicyContext(contextClass);
+    @ParameterizedTest(name = "{0} context includes scope in payload")
+    @MethodSource("layer2ContextTypes")
+    @DisplayName("Layer 2 context types include scope in payload")
+    void toJsonInput_includesScopeInPayload(
+        String label, Class<? extends PolicyContext> contextClass, String expectedScope) {
+      PolicyContext context = createMockLayer2Context(contextClass, expectedScope);
 
-      TestRequestVO result = mapper.toTestRequest(context);
+      GenericJsonInputVO result = mapper.toJsonInput(context);
 
       assertNotNull(result);
-      assertEquals(expectedMethod, result.getMethod());
-      assertEquals(expectedPath, result.getPath());
-      assertEquals(PolicyContextInputMapper.DEFAULT_PROTOCOL, result.getProtocol());
-      assertEquals(TEST_COUNTER_PARTY_ADDRESS, result.getHost());
+      assertNotNull(result.getPayload());
+      assertEquals(expectedScope, result.getPayload().get(PolicyContextInputMapper.KEY_SCOPE));
     }
 
-    @ParameterizedTest(name = "{0} context includes counter-party identity in authorization header")
-    @MethodSource("knownContextTypes")
-    @DisplayName("Known RequestPolicyContext subtypes include authorization header")
-    void toTestRequest_setsAuthorizationHeader(
-        String label,
-        Class<? extends RequestPolicyContext> contextClass,
-        TestRequestVO.MethodEnum expectedMethod,
-        String expectedPath) {
-      RequestPolicyContext context = createMockRequestPolicyContext(contextClass);
+    @ParameterizedTest(name = "{0} context extracts identity into subject")
+    @MethodSource("layer2ContextTypes")
+    @DisplayName("Layer 2 context types extract participant identity into subject")
+    void toJsonInput_extractsIdentity(
+        String label, Class<? extends PolicyContext> contextClass, String expectedScope) {
+      PolicyContext context = createMockLayer2Context(contextClass, expectedScope);
 
-      TestRequestVO result = mapper.toTestRequest(context);
+      GenericJsonInputVO result = mapper.toJsonInput(context);
 
-      assertNotNull(result.getHeaders());
-      assertEquals(TEST_COUNTER_PARTY_ID, result.getHeaders().getAuthorization());
-      assertEquals(
-          PolicyContextInputMapper.JSON_LD_CONTENT_TYPE, result.getHeaders().getContentType());
+      assertNotNull(result.getSubject());
+      assertEquals(TEST_IDENTITY, result.getSubject().get(PolicyContextInputMapper.KEY_IDENTITY));
+    }
+
+    @ParameterizedTest(name = "{0} context extracts claims into subject")
+    @MethodSource("layer2ContextTypes")
+    @DisplayName("Layer 2 context types extract participant claims into subject")
+    @SuppressWarnings("unchecked")
+    void toJsonInput_extractsClaims(
+        String label, Class<? extends PolicyContext> contextClass, String expectedScope) {
+      PolicyContext context = createMockLayer2Context(contextClass, expectedScope);
+
+      GenericJsonInputVO result = mapper.toJsonInput(context);
+
+      assertNotNull(result.getSubject());
+      Map<String, Object> claims =
+          (Map<String, Object>) result.getSubject().get(PolicyContextInputMapper.KEY_CLAIMS);
+      assertNotNull(claims);
+      assertEquals("value1", claims.get("claim1"));
     }
 
     @Test
-    @DisplayName("Null counter-party address falls back to default host")
-    void toTestRequest_nullCounterPartyAddress_usesDefaultHost() {
-      RequestCatalogPolicyContext context =
-          createMockRequestPolicyContextWithNullAddress(RequestCatalogPolicyContext.class);
+    @DisplayName("Null identity is omitted from subject")
+    void toJsonInput_nullIdentity_omittedFromSubject() {
+      CatalogPolicyContext context = mock(CatalogPolicyContext.class);
+      ParticipantAgent agent =
+          new ParticipantAgent(null, Map.of("claim1", (Object) "value1"), Map.of());
+      when(context.scope()).thenReturn(TEST_SCOPE_CATALOG);
+      when(context.participantAgent()).thenReturn(agent);
 
-      TestRequestVO result = mapper.toTestRequest(context);
+      GenericJsonInputVO result = mapper.toJsonInput(context);
 
-      assertEquals(PolicyContextInputMapper.DEFAULT_HOST, result.getHost());
+      assertNotNull(result.getSubject());
+      assertNull(result.getSubject().get(PolicyContextInputMapper.KEY_IDENTITY));
     }
 
     @Test
-    @DisplayName("Null counter-party ID omits headers")
-    void toTestRequest_nullCounterPartyId_noHeaders() {
-      RequestCatalogPolicyContext context =
-          createMockRequestPolicyContextWithNullId(RequestCatalogPolicyContext.class);
+    @DisplayName("Empty claims are omitted from subject")
+    void toJsonInput_emptyClaims_omittedFromSubject() {
+      CatalogPolicyContext context = mock(CatalogPolicyContext.class);
+      ParticipantAgent agent = new ParticipantAgent(TEST_IDENTITY, Map.of(), Map.of());
+      when(context.scope()).thenReturn(TEST_SCOPE_CATALOG);
+      when(context.participantAgent()).thenReturn(agent);
 
-      TestRequestVO result = mapper.toTestRequest(context);
+      GenericJsonInputVO result = mapper.toJsonInput(context);
 
-      assertNull(result.getHeaders());
+      assertNotNull(result.getSubject());
+      assertEquals(TEST_IDENTITY, result.getSubject().get(PolicyContextInputMapper.KEY_IDENTITY));
+      assertNull(result.getSubject().get(PolicyContextInputMapper.KEY_CLAIMS));
+    }
+
+    @Test
+    @DisplayName("VerifiableCredential list in claims is serialized to JSON maps")
+    @SuppressWarnings("unchecked")
+    void toJsonInput_vcClaimsSerializedAsJsonMaps() {
+      CatalogPolicyContext context = mock(CatalogPolicyContext.class);
+      Map<String, Object> vcData =
+          Map.of("type", List.of("VerifiableCredential", "MembershipCredential"));
+      Map<String, Object> inputClaims = new java.util.HashMap<>();
+      inputClaims.put("vc", List.of(vcData));
+      inputClaims.put("other", "value");
+      ParticipantAgent agent = new ParticipantAgent(TEST_IDENTITY, inputClaims, Map.of());
+      when(context.scope()).thenReturn(TEST_SCOPE_CATALOG);
+      when(context.participantAgent()).thenReturn(agent);
+
+      GenericJsonInputVO result = mapper.toJsonInput(context);
+
+      Map<String, Object> claims =
+          (Map<String, Object>) result.getSubject().get(PolicyContextInputMapper.KEY_CLAIMS);
+      assertNotNull(claims);
+      List<Map<String, Object>> vcList = (List<Map<String, Object>>) claims.get("vc");
+      assertNotNull(vcList);
+      assertEquals(1, vcList.size());
+      List<String> types = (List<String>) vcList.get(0).get("type");
+      assertTrue(types.contains("MembershipCredential"));
+      assertEquals("value", claims.get("other"));
     }
   }
 
   @Nested
-  @DisplayName("JSON payload mapping (non-request PolicyContext types)")
-  class JsonInputMapping {
+  @DisplayName("Transfer process context enrichment")
+  class TransferProcessEnrichment {
 
     @Test
-    @DisplayName("Non-RequestPolicyContext maps to GenericJsonInputVO with scope in payload")
-    void toJsonInput_includesScopeInPayload() {
-      String customScope = "contract.negotiation";
+    @DisplayName("Transfer context includes contract agreement in payload")
+    @SuppressWarnings("unchecked")
+    void toJsonInput_transferContext_includesContractAgreement() {
+      TransferProcessPolicyContext context = createMockTransferContext();
+
+      GenericJsonInputVO result = mapper.toJsonInput(context);
+
+      Map<String, Object> payload = result.getPayload();
+      Map<String, Object> agreementMap =
+          (Map<String, Object>) payload.get(PolicyContextInputMapper.KEY_CONTRACT_AGREEMENT);
+      assertNotNull(agreementMap);
+      assertEquals(TEST_AGREEMENT_ID, agreementMap.get(PolicyContextInputMapper.KEY_AGREEMENT_ID));
+      assertEquals(
+          TEST_ASSET_ID, agreementMap.get(PolicyContextInputMapper.KEY_AGREEMENT_ASSET_ID));
+      assertEquals(
+          TEST_PROVIDER_ID, agreementMap.get(PolicyContextInputMapper.KEY_AGREEMENT_PROVIDER_ID));
+      assertEquals(
+          TEST_CONSUMER_ID, agreementMap.get(PolicyContextInputMapper.KEY_AGREEMENT_CONSUMER_ID));
+      assertEquals(
+          TEST_SIGNING_DATE, agreementMap.get(PolicyContextInputMapper.KEY_AGREEMENT_SIGNING_DATE));
+    }
+
+    @Test
+    @DisplayName("Transfer context includes evaluation timestamp in payload")
+    void toJsonInput_transferContext_includesNow() {
+      TransferProcessPolicyContext context = createMockTransferContext();
+
+      GenericJsonInputVO result = mapper.toJsonInput(context);
+
+      assertNotNull(result.getPayload().get(PolicyContextInputMapper.KEY_NOW));
+    }
+
+    @Test
+    @DisplayName("Transfer context with null agreement omits agreement from payload")
+    void toJsonInput_transferContext_nullAgreement_omitted() {
+      TransferProcessPolicyContext context = mock(TransferProcessPolicyContext.class);
+      ParticipantAgent agent = new ParticipantAgent(TEST_IDENTITY, Map.of(), Map.of());
+      when(context.scope()).thenReturn(TEST_SCOPE_TRANSFER);
+
+      when(context.participantAgent()).thenReturn(agent);
+      when(context.contractAgreement()).thenReturn(null);
+      when(context.now()).thenReturn(null);
+
+      GenericJsonInputVO result = mapper.toJsonInput(context);
+
+      assertNull(result.getPayload().get(PolicyContextInputMapper.KEY_CONTRACT_AGREEMENT));
+      assertNull(result.getPayload().get(PolicyContextInputMapper.KEY_NOW));
+    }
+
+    /**
+     * Creates a mock transfer process context with a contract agreement and evaluation timestamp.
+     */
+    private TransferProcessPolicyContext createMockTransferContext() {
+      TransferProcessPolicyContext context = mock(TransferProcessPolicyContext.class);
+      ParticipantAgent agent =
+          new ParticipantAgent(TEST_IDENTITY, Map.of("claim1", (Object) "value1"), Map.of());
+      ContractAgreement agreement =
+          ContractAgreement.Builder.newInstance()
+              .id(TEST_AGREEMENT_ID)
+              .assetId(TEST_ASSET_ID)
+              .providerId(TEST_PROVIDER_ID)
+              .consumerId(TEST_CONSUMER_ID)
+              .contractSigningDate(TEST_SIGNING_DATE)
+              .policy(Policy.Builder.newInstance().build())
+              .build();
+
+      when(context.scope()).thenReturn(TEST_SCOPE_TRANSFER);
+      when(context.participantAgent()).thenReturn(agent);
+      when(context.contractAgreement()).thenReturn(agreement);
+      when(context.now()).thenReturn(Instant.ofEpochSecond(TEST_SIGNING_DATE));
+      return context;
+    }
+  }
+
+  @Nested
+  @DisplayName("Non-participant-agent context mapping")
+  class GenericContextMapping {
+
+    @Test
+    @DisplayName("Non-ParticipantAgentPolicyContext includes only scope in payload")
+    void toJsonInput_genericContext_onlyScope() {
+      String customScope = "custom.scope";
       PolicyContext context = mock(PolicyContext.class);
       when(context.scope()).thenReturn(customScope);
 
       GenericJsonInputVO result = mapper.toJsonInput(context);
 
       assertNotNull(result);
-      assertNotNull(result.getPayload());
       assertEquals(customScope, result.getPayload().get(PolicyContextInputMapper.KEY_SCOPE));
     }
 
     @Test
-    @DisplayName("JSON input payload contains no HTTP request fields")
-    void toJsonInput_noHttpRequestFields() {
-      PolicyContext context = mock(PolicyContext.class);
-      when(context.scope()).thenReturn("custom.scope");
-
-      GenericJsonInputVO result = mapper.toJsonInput(context);
-
-      assertNull(result.getPayload().get("method"));
-      assertNull(result.getPayload().get("path"));
-      assertNull(result.getPayload().get("host"));
-    }
-
-    @Test
-    @DisplayName("JSON input has no subject set")
-    void toJsonInput_noSubject() {
+    @DisplayName("Non-ParticipantAgentPolicyContext has no subject")
+    void toJsonInput_genericContext_noSubject() {
       PolicyContext context = mock(PolicyContext.class);
       when(context.scope()).thenReturn("custom.scope");
 
@@ -188,54 +295,36 @@ class PolicyContextInputMapperTest {
 
       assertTrue(
           result.getSubject() == null || result.getSubject().isEmpty(),
-          "Subject should be absent for non-request context types");
+          "Subject should be absent for non-participant-agent context types");
     }
   }
 
-  /**
-   * Creates a mock {@link RequestPolicyContext} of the given subtype with standard test values for
-   * counter-party address and identity.
-   */
-  private <T extends RequestPolicyContext> T createMockRequestPolicyContext(Class<T> contextClass) {
-    T context = mock(contextClass);
-    RequestContext requestContext = mock(RequestContext.class);
-    RemoteMessage message = mock(RemoteMessage.class);
-
-    when(context.requestContext()).thenReturn(requestContext);
-    when(requestContext.getMessage()).thenReturn(message);
-    when(message.getCounterPartyAddress()).thenReturn(TEST_COUNTER_PARTY_ADDRESS);
-    when(message.getCounterPartyId()).thenReturn(TEST_COUNTER_PARTY_ID);
-
-    return context;
+  /** Creates a mock Layer 2 context of the given type with a standard {@link ParticipantAgent}. */
+  private PolicyContext createMockLayer2Context(
+      Class<? extends PolicyContext> contextClass, String scope) {
+    if (contextClass == CatalogPolicyContext.class) {
+      CatalogPolicyContext ctx = mock(CatalogPolicyContext.class);
+      when(ctx.scope()).thenReturn(scope);
+      when(ctx.participantAgent()).thenReturn(createTestAgent());
+      return ctx;
+    } else if (contextClass == ContractNegotiationPolicyContext.class) {
+      ContractNegotiationPolicyContext ctx = mock(ContractNegotiationPolicyContext.class);
+      when(ctx.scope()).thenReturn(scope);
+      when(ctx.participantAgent()).thenReturn(createTestAgent());
+      return ctx;
+    } else if (contextClass == TransferProcessPolicyContext.class) {
+      TransferProcessPolicyContext ctx = mock(TransferProcessPolicyContext.class);
+      when(ctx.scope()).thenReturn(scope);
+      when(ctx.participantAgent()).thenReturn(createTestAgent());
+      when(ctx.contractAgreement()).thenReturn(null);
+      when(ctx.now()).thenReturn(null);
+      return ctx;
+    }
+    throw new IllegalArgumentException("Unknown context class: " + contextClass);
   }
 
-  /** Creates a mock {@link RequestPolicyContext} with a null counter-party address. */
-  private <T extends RequestPolicyContext> T createMockRequestPolicyContextWithNullAddress(
-      Class<T> contextClass) {
-    T context = mock(contextClass);
-    RequestContext requestContext = mock(RequestContext.class);
-    RemoteMessage message = mock(RemoteMessage.class);
-
-    when(context.requestContext()).thenReturn(requestContext);
-    when(requestContext.getMessage()).thenReturn(message);
-    when(message.getCounterPartyAddress()).thenReturn(null);
-    when(message.getCounterPartyId()).thenReturn(TEST_COUNTER_PARTY_ID);
-
-    return context;
-  }
-
-  /** Creates a mock {@link RequestPolicyContext} with a null counter-party ID. */
-  private <T extends RequestPolicyContext> T createMockRequestPolicyContextWithNullId(
-      Class<T> contextClass) {
-    T context = mock(contextClass);
-    RequestContext requestContext = mock(RequestContext.class);
-    RemoteMessage message = mock(RemoteMessage.class);
-
-    when(context.requestContext()).thenReturn(requestContext);
-    when(requestContext.getMessage()).thenReturn(message);
-    when(message.getCounterPartyAddress()).thenReturn(TEST_COUNTER_PARTY_ADDRESS);
-    when(message.getCounterPartyId()).thenReturn(null);
-
-    return context;
+  /** Creates a {@link ParticipantAgent} with standard test identity and claims. */
+  private ParticipantAgent createTestAgent() {
+    return new ParticipantAgent(TEST_IDENTITY, Map.of("claim1", (Object) "value1"), Map.of());
   }
 }
