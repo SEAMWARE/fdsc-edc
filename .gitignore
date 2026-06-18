@@ -1,14 +1,31 @@
-# Maven build output
+# Maven
 target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
 
-# IDE files
+# IDE - IntelliJ
 .idea/
 *.iml
-.project
+*.iws
+*.ipr
+
+# IDE - Eclipse
 .classpath
+.project
 .settings/
+
+# IDE - VS Code
 .vscode/
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+
+# Docker
+docker-compose.override.yml

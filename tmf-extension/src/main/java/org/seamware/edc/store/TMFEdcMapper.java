@@ -71,7 +71,6 @@ public class TMFEdcMapper {
   public static final String CONTRACT_POLICY_KEY = "contractPolicy";
   public static final String ACCESS_POLICY_KEY = "accessPolicy";
   public static final String ENDPOINT_URL_KEY = "endpointUrl";
-  public static final String ENDPOINT_DESCRIPTION_KEY = "endpointDescription";
   public static final String UPSTREAM_ADDRESS_KEY = "upstreamAddress";
   public static final String UID_KEY = "http://www.w3.org/ns/odrl/2/uid";
   public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
@@ -266,12 +265,10 @@ public class TMFEdcMapper {
     }
   }
 
-  private record DataServiceChar(String id, String endpointUrl) {}
+  private record DataServiceChar(String id, String endpointUrl, String description) {}
 
   public List<DataService> getDataService(
       Optional<ExtendableProductSpecification> productSpecification) {
-    DataService.Builder defaultDataserviceBuilder = DataService.Builder.newInstance();
-
     if (productSpecification.isEmpty()) {
       return List.of();
     }
@@ -281,25 +278,21 @@ public class TMFEdcMapper {
         .orElse(List.of())
         .forEach(
             spec -> {
-              switch (spec.getValueType()) {
-                case ENDPOINT_URL_KEY -> {
-                  getValue(spec.getProductSpecCharacteristicValue())
-                      .map(endpointUrl -> new DataServiceChar(spec.getId(), endpointUrl))
-                      .ifPresent(endpoints::add);
-                }
-                case ENDPOINT_DESCRIPTION_KEY ->
-                    getValue(spec.getProductSpecCharacteristicValue())
-                        .ifPresent(defaultDataserviceBuilder::endpointDescription);
+              if (ENDPOINT_URL_KEY.equals(spec.getValueType())) {
+                getValue(spec.getProductSpecCharacteristicValue())
+                    .map(
+                        endpointUrl ->
+                            new DataServiceChar(spec.getId(), endpointUrl, spec.getDescription()))
+                    .ifPresent(endpoints::add);
               }
             });
-    String endpointDescription = defaultDataserviceBuilder.build().getEndpointDescription();
 
     return endpoints.stream()
         .map(
             endpoint ->
                 DataService.Builder.newInstance()
                     .endpointUrl(endpoint.endpointUrl())
-                    .endpointDescription(endpointDescription)
+                    .endpointDescription(endpoint.description())
                     .id(endpoint.id())
                     .build())
         .toList();
@@ -550,17 +543,12 @@ public class TMFEdcMapper {
           "The given product specification cannot be used for DSP, since it does not contain an externalId.");
       return Optional.empty();
     }
-    specChars.forEach(
-        spec -> {
-          switch (spec.getValueType()) {
-            case ENDPOINT_URL_KEY ->
+    specChars.stream()
+        .filter(spec -> ENDPOINT_URL_KEY.equals(spec.getValueType()))
+        .forEach(
+            spec ->
                 getValue(spec.getProductSpecCharacteristicValue())
-                    .ifPresent(url -> dataAddressBuilder.property(ENDPOINT_URL_KEY, url));
-            case ENDPOINT_DESCRIPTION_KEY ->
-                getValue(spec.getProductSpecCharacteristicValue())
-                    .ifPresent(desc -> dataAddressBuilder.property(ENDPOINT_DESCRIPTION_KEY, desc));
-          }
-        });
+                    .ifPresent(url -> dataAddressBuilder.property(ENDPOINT_URL_KEY, url)));
 
     return Optional.of(
         Asset.Builder.newInstance()

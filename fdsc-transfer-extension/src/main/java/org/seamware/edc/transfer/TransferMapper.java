@@ -94,7 +94,12 @@ public class TransferMapper {
             .setDiscovery(discoveryAddress)
             .setRequiredScopes(List.of(resourceDefinition.getTransferProcessId()))
             .setUseJwks(true);
+    // Only set proxy_opts when an actual proxy address is configured. An empty
+    // string makes lua-resty-openidc treat it as the literal proxy URL and reject
+    // every discovery fetch with "bad uri:" — the EDC config can yield an empty
+    // value when the chart renders the property with no value set.
     Optional.ofNullable(transferConfig.getApisix().httpsProxy())
+        .filter(proxyAddress -> !proxyAddress.isBlank())
         .ifPresent(
             (proxyAddress) ->
                 openidConnectPlugin.setProxyOpts(
@@ -148,7 +153,12 @@ public class TransferMapper {
                     resourceDefinition.getTransferProcessId()))
             .setSslVerify(false)
             .setUseJwks(true);
+    // Only set proxy_opts when an actual proxy address is configured. An empty
+    // string makes lua-resty-openidc treat it as the literal proxy URL and reject
+    // every discovery fetch with "bad uri:" — the EDC config can yield an empty
+    // value when the chart renders the property with no value set.
     Optional.ofNullable(transferConfig.getApisix().httpsProxy())
+        .filter(proxyAddress -> !proxyAddress.isBlank())
         .ifPresent(
             (proxyAddress) ->
                 openidConnectPlugin.setProxyOpts(

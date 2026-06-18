@@ -18,6 +18,7 @@ package org.seamware.edc.domain;
 
 import static org.seamware.edc.domain.ExtendableProduct.EXTERNAL_ID_SCHEMA;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.URI;
@@ -28,6 +29,7 @@ import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.SchemaBaseUriHolder;
 import org.seamware.tmforum.productcatalog.model.ProductOfferingVO;
 
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class ExtendableProductOffering extends ProductOfferingVO {
 
   @Override
