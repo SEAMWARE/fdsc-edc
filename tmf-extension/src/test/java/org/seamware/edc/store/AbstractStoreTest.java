@@ -117,7 +117,6 @@ public abstract class AbstractStoreTest {
                 new ProductSpecificationCharacteristicVO()
                     .id(endpoint.id())
                     .valueType("endpointUrl")
-                    .description(TEST_DESCRIPTION)
                     .productSpecCharacteristicValue(
                         List.of(
                             new CharacteristicValueSpecificationVO()
@@ -125,6 +124,16 @@ public abstract class AbstractStoreTest {
                                 .valueType("endpointUrl")
                                 .isDefault(true))))
         .forEach(extendableProductSpecification::addProductSpecCharacteristicItem);
+    extendableProductSpecification.addProductSpecCharacteristicItem(
+        new ProductSpecificationCharacteristicVO()
+            .id("endpointDescription")
+            .valueType("endpointDescription")
+            .productSpecCharacteristicValue(
+                List.of(
+                    new CharacteristicValueSpecificationVO()
+                        .value(TEST_DESCRIPTION)
+                        .valueType("endpointDescription")
+                        .isDefault(true))));
     return extendableProductSpecification;
   }
 
