@@ -18,95 +18,129 @@ package org.seamware.edc.store;
 
 import java.util.List;
 import java.util.Optional;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Catalog;
 import org.eclipse.edc.connector.controlplane.catalog.spi.CatalogRequestMessage;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Dataset;
+import org.eclipse.edc.connector.controlplane.catalog.spi.policy.CatalogPolicyContext;
 import org.eclipse.edc.connector.controlplane.services.spi.catalog.CatalogProtocolService;
 import org.eclipse.edc.connector.controlplane.services.spi.protocol.ProtocolTokenValidator;
 import org.eclipse.edc.participant.spi.ParticipantAgent;
 import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
+import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.spi.iam.TokenRepresentation;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.jetbrains.annotations.NotNull;
 import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.domain.ExtendableProductSpecification;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
+/**
+ * TMForum-backed implementation of the EDC CatalogProtocolService. Fetches product specifications
+ * and offerings from the TMForum API and maps them to EDC catalog datasets.
+ *
+ * <p>Access policies from each offering's contract definition are evaluated against the
+ * authenticated participant agent to filter catalog visibility.
+ */
 public class TMForumBackedCatalogProtocolService implements CatalogProtocolService {
 
-  private final TMFEdcMapper tmfEdcMapper;
-  private final ProductCatalogApiClient productCatalogApi;
-  private final String participantId;
-  private final ProtocolTokenValidator protocolTokenValidator;
+    private final TMFEdcMapper tmfEdcMapper;
+    private final ProductCatalogApiClient productCatalogApi;
+    private final String participantId;
+    private final ProtocolTokenValidator protocolTokenValidator;
+    private final PolicyEngine policyEngine;
+    private final Monitor monitor;
+    private final ObjectMapper objectMapper;
 
-  public TMForumBackedCatalogProtocolService(
-      TMFEdcMapper tmfEdcMapper,
-      ProductCatalogApiClient productCatalogApi,
-      String participantId,
-      ProtocolTokenValidator protocolTokenValidator) {
-    this.tmfEdcMapper = tmfEdcMapper;
-    this.productCatalogApi = productCatalogApi;
-    this.participantId = participantId;
-    this.protocolTokenValidator = protocolTokenValidator;
-  }
-
-  /**
-   * Maximum number of ProductOfferings (contract definitions) to fetch. ProductOfferings represent
-   * contract definitions in the TMF model, and there are typically few of them.
-   */
-  private static final int MAX_OFFERINGS = 100;
-
-  @Override
-  public @NotNull ServiceResult<Catalog> getCatalog(
-      CatalogRequestMessage catalogRequestMessage, TokenRepresentation tokenRepresentation) {
-    ServiceResult<ParticipantAgent> validatedToken =
-        protocolTokenValidator.verify(
-            tokenRepresentation, RequestCatalogPolicyContext::new, catalogRequestMessage);
-    if (validatedToken.failed()) {
-      return ServiceResult.unauthorized("Request not authorized.");
+    /**
+     * Creates a new TMForum-backed catalog protocol service.
+     *
+     * @param tmfEdcMapper           mapper between TMForum and EDC entities
+     * @param productCatalogApi      client for the TMForum Product Catalog API
+     * @param participantId          the local participant's identifier
+     * @param protocolTokenValidator validator for incoming protocol tokens
+     * @param policyEngine           the EDC policy engine for evaluating access policies
+     */
+    public TMForumBackedCatalogProtocolService(
+            TMFEdcMapper tmfEdcMapper,
+            ProductCatalogApiClient productCatalogApi,
+            String participantId,
+            ProtocolTokenValidator protocolTokenValidator,
+            PolicyEngine policyEngine, Monitor monitor, ObjectMapper objectMapper) {
+        this.tmfEdcMapper = tmfEdcMapper;
+        this.productCatalogApi = productCatalogApi;
+        this.participantId = participantId;
+        this.protocolTokenValidator = protocolTokenValidator;
+        this.policyEngine = policyEngine;
+        this.monitor = monitor;
+        this.objectMapper = objectMapper;
     }
 
-    List<ExtendableProductSpecification> specs =
-        productCatalogApi.getProductSpecifications(
-            catalogRequestMessage.getQuerySpec().getOffset(),
-            catalogRequestMessage.getQuerySpec().getLimit());
-    List<ExtendableProductOffering> offerings =
-        productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+    /**
+     * Maximum number of ProductOfferings (contract definitions) to fetch. ProductOfferings represent
+     * contract definitions in the TMF model, and there are typically few of them.
+     */
+    private static final int MAX_OFFERINGS = 100;
 
-    Catalog.Builder catalogBuilder = Catalog.Builder.newInstance();
-    catalogBuilder.participantId(participantId);
+    @Override
+    public @NotNull ServiceResult<Catalog> getCatalog(
+            CatalogRequestMessage catalogRequestMessage, TokenRepresentation tokenRepresentation) {
+        ServiceResult<ParticipantAgent> validatedToken =
+                protocolTokenValidator.verify(
+                        tokenRepresentation, RequestCatalogPolicyContext::new, catalogRequestMessage);
+        if (validatedToken.failed()) {
+            return ServiceResult.unauthorized("Request not authorized.");
+        }
 
-    specs.stream()
-        .map(Optional::ofNullable)
-        .map(tmfEdcMapper::getDataService)
-        .flatMap(List::stream)
-        .forEach(catalogBuilder::dataService);
+        ParticipantAgent participantAgent = validatedToken.getContent();
 
-    specs.stream()
-        .map(spec -> tmfEdcMapper.datasetFromProductSpecification(spec, offerings))
-        .filter(Optional::isPresent)
-        .map(Optional::get)
-        .forEach(catalogBuilder::dataset);
+        List<ExtendableProductSpecification> specs =
+                productCatalogApi.getProductSpecifications(
+                        catalogRequestMessage.getQuerySpec().getOffset(),
+                        catalogRequestMessage.getQuerySpec().getLimit());
+        List<ExtendableProductOffering> offerings =
+                productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
 
-    return ServiceResult.success(catalogBuilder.build());
-  }
+        List<ExtendableProductOffering> accessibleOfferings =
+                tmfEdcMapper.filterByAccessPolicy(offerings, policyEngine, participantAgent);
 
-  @Override
-  public @NotNull ServiceResult<Dataset> getDataset(
-      String datasetId, TokenRepresentation tokenRepresentation, String protocol) {
+        Catalog.Builder catalogBuilder = Catalog.Builder.newInstance();
+        catalogBuilder.participantId(participantId);
 
-    Optional<ExtendableProductSpecification> spec =
-        productCatalogApi.getProductSpecByExternalId(datasetId);
-    if (spec.isEmpty()) {
-      return ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId));
+        specs.stream()
+                .map(Optional::ofNullable)
+                .map(tmfEdcMapper::getDataService)
+                .flatMap(List::stream)
+                .forEach(catalogBuilder::dataService);
+
+
+        specs.stream()
+                .map(spec -> tmfEdcMapper.datasetFromProductSpecification(spec, accessibleOfferings))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .forEach(catalogBuilder::dataset);
+        return ServiceResult.success(catalogBuilder.build());
     }
 
-    List<ExtendableProductOffering> offerings =
-        productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+    @Override
+    public @NotNull ServiceResult<Dataset> getDataset(
+            String datasetId, TokenRepresentation tokenRepresentation, String protocol) {
 
-    return tmfEdcMapper
-        .datasetFromProductSpecification(spec.get(), offerings)
-        .map(ServiceResult::success)
-        .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
-  }
+        Optional<ExtendableProductSpecification> spec =
+                productCatalogApi.getProductSpecByExternalId(datasetId);
+        if (spec.isEmpty()) {
+            return ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId));
+        }
+
+        List<ExtendableProductOffering> offerings =
+                productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+
+        return tmfEdcMapper
+                .datasetFromProductSpecification(spec.get(), offerings)
+                .map(ServiceResult::success)
+                .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
+    }
 }
