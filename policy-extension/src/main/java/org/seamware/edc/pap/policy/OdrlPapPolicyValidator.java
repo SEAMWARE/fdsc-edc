@@ -617,11 +617,6 @@ public class OdrlPapPolicyValidator implements PolicyValidatorRule<PolicyContext
     Set<String> intersection = null;
 
     for (ScopeMappingRule rule : scopeMappingRules) {
-      try {
-        monitor.info("The rule " + objectMapper.writeValueAsString(rule.match()));
-      } catch (JsonProcessingException e) {
-        throw new RuntimeException(e);
-      }
       if (!ruleMatchesPermission(rule, permMap)) {
         continue;
       }
