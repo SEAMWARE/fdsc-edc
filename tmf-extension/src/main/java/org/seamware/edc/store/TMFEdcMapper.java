@@ -27,11 +27,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
-
 import java.io.StringReader;
 import java.time.Clock;
 import java.util.*;
-
 import org.eclipse.edc.connector.controlplane.asset.spi.domain.Asset;
 import org.eclipse.edc.connector.controlplane.catalog.spi.DataService;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Dataset;
@@ -69,852 +67,856 @@ import org.seamware.tmforum.usage.model.RatedProductUsageVO;
 import org.seamware.tmforum.usage.model.UsageCharacteristicVO;
 import org.seamware.tmforum.usage.model.UsageStatusTypeVO;
 
-/**
- * Mapper between TMForum and EDC entities
- */
+/** Mapper between TMForum and EDC entities */
 public class TMFEdcMapper {
 
-    public static final String POT_NAME_CONTRACT_DEFINITION = "edc:contractDefinition";
-    public static final String CONTRACT_POLICY_KEY = "contractPolicy";
-    public static final String ACCESS_POLICY_KEY = "accessPolicy";
-    public static final String ENDPOINT_URL_KEY = "endpointUrl";
-    public static final String ENDPOINT_DESCRIPTION_KEY = "endpointDescription";
-    public static final String UPSTREAM_ADDRESS_KEY = "upstreamAddress";
-    public static final String UID_KEY = "http://www.w3.org/ns/odrl/2/uid";
-    public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
-    public static final String USAGE_CHARACTERISTIC_CORRELATION_ID = "correlation-id";
-    public static final String USAGE_CHARACTERISTIC_PROTOCOL = "protocol";
-    public static final String USAGE_CHARACTERISTIC_COUNTER_PARTY_ADDRESS = "counter-party-address";
-    public static final String USAGE_CHARACTERISTIC_TRANSFER_TYPE = "transfer-type";
-    public static final String USAGE_CHARACTERISTIC_TYPE = "type";
-    public static final String USAGE_CHARACTERISTIC_CONTRACT_ID = "contract-id";
-    public static final String USAGE_CHARACTERISTIC_RESOURCE_MANIFEST = "resource-manifest";
-    public static final String USAGE_CHARACTERISTIC_DATAPLANE_ID = "dataplane-id";
-    public static final String USAGE_CHARACTERISTIC_CONTENT_DATA_ADDRESS = "content-data-address";
-    public static final String USAGE_TYPE_DSP_TRANSFER = "dspTransfer";
+  public static final String POT_NAME_CONTRACT_DEFINITION = "edc:contractDefinition";
+  public static final String CONTRACT_POLICY_KEY = "contractPolicy";
+  public static final String ACCESS_POLICY_KEY = "accessPolicy";
+  public static final String ENDPOINT_URL_KEY = "endpointUrl";
+  public static final String ENDPOINT_DESCRIPTION_KEY = "endpointDescription";
+  public static final String UPSTREAM_ADDRESS_KEY = "upstreamAddress";
+  public static final String UID_KEY = "http://www.w3.org/ns/odrl/2/uid";
+  public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
+  public static final String USAGE_CHARACTERISTIC_CORRELATION_ID = "correlation-id";
+  public static final String USAGE_CHARACTERISTIC_PROTOCOL = "protocol";
+  public static final String USAGE_CHARACTERISTIC_COUNTER_PARTY_ADDRESS = "counter-party-address";
+  public static final String USAGE_CHARACTERISTIC_TRANSFER_TYPE = "transfer-type";
+  public static final String USAGE_CHARACTERISTIC_TYPE = "type";
+  public static final String USAGE_CHARACTERISTIC_CONTRACT_ID = "contract-id";
+  public static final String USAGE_CHARACTERISTIC_RESOURCE_MANIFEST = "resource-manifest";
+  public static final String USAGE_CHARACTERISTIC_DATAPLANE_ID = "dataplane-id";
+  public static final String USAGE_CHARACTERISTIC_CONTENT_DATA_ADDRESS = "content-data-address";
+  public static final String USAGE_TYPE_DSP_TRANSFER = "dspTransfer";
 
-    public static final String AGREEMENT_CHARACTERISTIC_SIGNING_DATE = "signing-date";
-    public static final String AGREEMENT_CHARACTERISTIC_PROVIDER_ID = "provider-id";
-    public static final String AGREEMENT_CHARACTERISTIC_CONSUMER_ID = "consumer-id";
-    public static final String AGREEMENT_CHARACTERISTIC_ASSET_ID = "asset-id";
-    public static final String AGREEMENT_CHARACTERISTIC_POLICY = "policy";
-    public static final String AGREEMENT_TYPE_DSP = "dspContract";
+  public static final String AGREEMENT_CHARACTERISTIC_SIGNING_DATE = "signing-date";
+  public static final String AGREEMENT_CHARACTERISTIC_PROVIDER_ID = "provider-id";
+  public static final String AGREEMENT_CHARACTERISTIC_CONSUMER_ID = "consumer-id";
+  public static final String AGREEMENT_CHARACTERISTIC_ASSET_ID = "asset-id";
+  public static final String AGREEMENT_CHARACTERISTIC_POLICY = "policy";
+  public static final String AGREEMENT_TYPE_DSP = "dspContract";
 
-    public static final String QUOTE_ITEM_ADD_ACTION = "add";
-    public static final String FDSC_DATA_ADDRESS_TYPE = "FDSC";
+  public static final String QUOTE_ITEM_ADD_ACTION = "add";
+  public static final String FDSC_DATA_ADDRESS_TYPE = "FDSC";
 
-    private final Monitor monitor;
-    private final ObjectMapper objectMapper;
-    private final TMFObjectMapper tmfObjectMapper;
-    private final ParticipantResolver participantResolver;
-    private final TypeTransformerRegistry typeTransformerRegistry;
-    private final JsonLd jsonLd;
-    private final Clock clock;
+  private final Monitor monitor;
+  private final ObjectMapper objectMapper;
+  private final TMFObjectMapper tmfObjectMapper;
+  private final ParticipantResolver participantResolver;
+  private final TypeTransformerRegistry typeTransformerRegistry;
+  private final JsonLd jsonLd;
+  private final Clock clock;
 
-    public TMFEdcMapper(
-            Monitor monitor,
-            ObjectMapper objectMapper,
-            ParticipantResolver participantResolver,
-            TypeTransformerRegistry typeTransformerRegistry,
-            JsonLd jsonLd,
-            Clock clock) {
-        this.monitor = monitor;
-        this.objectMapper = objectMapper;
-        this.participantResolver = participantResolver;
-        this.typeTransformerRegistry = typeTransformerRegistry;
-        this.jsonLd = jsonLd;
-        this.clock = clock;
-        this.tmfObjectMapper = new TMFObjectMapperImpl();
-    }
+  public TMFEdcMapper(
+      Monitor monitor,
+      ObjectMapper objectMapper,
+      ParticipantResolver participantResolver,
+      TypeTransformerRegistry typeTransformerRegistry,
+      JsonLd jsonLd,
+      Clock clock) {
+    this.monitor = monitor;
+    this.objectMapper = objectMapper;
+    this.participantResolver = participantResolver;
+    this.typeTransformerRegistry = typeTransformerRegistry;
+    this.jsonLd = jsonLd;
+    this.clock = clock;
+    this.tmfObjectMapper = new TMFObjectMapperImpl();
+  }
 
-    public ExtendableAgreementVO toAgreement(
-            String negotiationId, ContractAgreement contractAgreement) {
-        ExtendableAgreementVO agreementVO = new ExtendableAgreementVO();
-        agreementVO.setExternalId(contractAgreement.getId());
-        agreementVO.setNegotiationId(negotiationId);
-        agreementVO.agreementType(AGREEMENT_TYPE_DSP);
-        agreementVO.name(
-                String.format(
-                        "DSP Contract between %s - %s for %s.",
-                        contractAgreement.getProviderId(),
-                        contractAgreement.getConsumerId(),
-                        contractAgreement.getAssetId()));
+  public ExtendableAgreementVO toAgreement(
+      String negotiationId, ContractAgreement contractAgreement) {
+    ExtendableAgreementVO agreementVO = new ExtendableAgreementVO();
+    agreementVO.setExternalId(contractAgreement.getId());
+    agreementVO.setNegotiationId(negotiationId);
+    agreementVO.agreementType(AGREEMENT_TYPE_DSP);
+    agreementVO.name(
+        String.format(
+            "DSP Contract between %s - %s for %s.",
+            contractAgreement.getProviderId(),
+            contractAgreement.getConsumerId(),
+            contractAgreement.getAssetId()));
 
-        String consumerId = participantResolver.getTmfId(contractAgreement.getConsumerId());
-        String providerId = participantResolver.getTmfId(contractAgreement.getProviderId());
-        agreementVO
-                .addEngagedPartyItem(new RelatedPartyVO().id(consumerId).role(CONSUMER_ROLE))
-                .addEngagedPartyItem(new RelatedPartyVO().id(providerId).role(PROVIDER_ROLE));
-        agreementVO
-                .addCharacteristicItem(
-                        toAgreementCharacteristic(
-                                AGREEMENT_CHARACTERISTIC_ASSET_ID, contractAgreement.getAssetId()))
-                .addCharacteristicItem(
-                        toAgreementCharacteristic(
-                                AGREEMENT_CHARACTERISTIC_PROVIDER_ID, contractAgreement.getProviderId()))
-                .addCharacteristicItem(
-                        toAgreementCharacteristic(
-                                AGREEMENT_CHARACTERISTIC_POLICY, fromEdcPolicy(contractAgreement.getPolicy())))
-                .addCharacteristicItem(
-                        toAgreementCharacteristic(
-                                AGREEMENT_CHARACTERISTIC_CONSUMER_ID, contractAgreement.getConsumerId()))
-                .addCharacteristicItem(
-                        toAgreementCharacteristic(
-                                AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()));
-        return agreementVO;
-    }
+    String consumerId = participantResolver.getTmfId(contractAgreement.getConsumerId());
+    String providerId = participantResolver.getTmfId(contractAgreement.getProviderId());
+    agreementVO
+        .addEngagedPartyItem(new RelatedPartyVO().id(consumerId).role(CONSUMER_ROLE))
+        .addEngagedPartyItem(new RelatedPartyVO().id(providerId).role(PROVIDER_ROLE));
+    agreementVO
+        .addCharacteristicItem(
+            toAgreementCharacteristic(
+                AGREEMENT_CHARACTERISTIC_ASSET_ID, contractAgreement.getAssetId()))
+        .addCharacteristicItem(
+            toAgreementCharacteristic(
+                AGREEMENT_CHARACTERISTIC_PROVIDER_ID, contractAgreement.getProviderId()))
+        .addCharacteristicItem(
+            toAgreementCharacteristic(
+                AGREEMENT_CHARACTERISTIC_POLICY, fromEdcPolicy(contractAgreement.getPolicy())))
+        .addCharacteristicItem(
+            toAgreementCharacteristic(
+                AGREEMENT_CHARACTERISTIC_CONSUMER_ID, contractAgreement.getConsumerId()))
+        .addCharacteristicItem(
+            toAgreementCharacteristic(
+                AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()));
+    return agreementVO;
+  }
 
-    private CharacteristicVO toAgreementCharacteristic(String key, Object value) {
-        return new CharacteristicVO().name(key).value(value);
-    }
+  private CharacteristicVO toAgreementCharacteristic(String key, Object value) {
+    return new CharacteristicVO().name(key).value(value);
+  }
 
-    public ContractAgreement toContractAgreement(ExtendableAgreementVO agreementVO) {
-        ContractAgreement.Builder agreementBuilder = ContractAgreement.Builder.newInstance();
-        agreementVO
-                .getCharacteristic()
-                .forEach(
-                        c -> {
-                            switch (c.getName()) {
-                                case AGREEMENT_CHARACTERISTIC_SIGNING_DATE -> agreementBuilder.contractSigningDate(((Number) c.getValue()).longValue());
-                                case AGREEMENT_CHARACTERISTIC_PROVIDER_ID -> agreementBuilder.providerId((String) c.getValue());
-                                case AGREEMENT_CHARACTERISTIC_CONSUMER_ID -> agreementBuilder.consumerId((String) c.getValue());
-                                case AGREEMENT_CHARACTERISTIC_ASSET_ID -> agreementBuilder.assetId((String) c.getValue());
-                                case AGREEMENT_CHARACTERISTIC_POLICY -> agreementBuilder.policy(fromOdrl(c.getValue()));
-                            }
-                        });
-        agreementBuilder.id(agreementVO.getExternalId());
-        return agreementBuilder.build();
-    }
+  public ContractAgreement toContractAgreement(ExtendableAgreementVO agreementVO) {
+    ContractAgreement.Builder agreementBuilder = ContractAgreement.Builder.newInstance();
+    agreementVO
+        .getCharacteristic()
+        .forEach(
+            c -> {
+              switch (c.getName()) {
+                case AGREEMENT_CHARACTERISTIC_SIGNING_DATE ->
+                    agreementBuilder.contractSigningDate(((Number) c.getValue()).longValue());
+                case AGREEMENT_CHARACTERISTIC_PROVIDER_ID ->
+                    agreementBuilder.providerId((String) c.getValue());
+                case AGREEMENT_CHARACTERISTIC_CONSUMER_ID ->
+                    agreementBuilder.consumerId((String) c.getValue());
+                case AGREEMENT_CHARACTERISTIC_ASSET_ID ->
+                    agreementBuilder.assetId((String) c.getValue());
+                case AGREEMENT_CHARACTERISTIC_POLICY ->
+                    agreementBuilder.policy(fromOdrl(c.getValue()));
+              }
+            });
+    agreementBuilder.id(agreementVO.getExternalId());
+    return agreementBuilder.build();
+  }
 
-    public Optional<Dataset> datasetFromProductOffering(
-            ExtendableProductOffering extendableProductOffering,
-            Optional<ExtendableProductSpecification> productSpecification) {
-        try {
-            Optional<ExtendableProductOfferingTerm> optionalTerm =
-                    getContractDefinitionTerm(extendableProductOffering);
-            if (optionalTerm.isEmpty()) {
-                return Optional.empty();
-            }
-            Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
-
-            Dataset.Builder datasetBuilder =
-                    Dataset.Builder.newInstance()
-                            .offer(extendableProductOffering.getExternalId(), contractPolicy);
-            productSpecification.ifPresent(pS -> datasetBuilder.id(pS.getExternalId()));
-
-            getDataService(productSpecification).stream()
-                    .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
-                    .forEach(datasetBuilder::distribution);
-            return Optional.of(datasetBuilder.build());
-        } catch (RuntimeException e) {
-            monitor.debug(
-                    String.format(
-                            "Cannot convert offering %s to dataset. Offering does not support the DSP.",
-                            extendableProductOffering.getId()),
-                    e);
-            return Optional.empty();
-        }
-    }
-
-    /**
-     * Builds a {@link Dataset} from a ProductSpecification (asset) and a list of ProductOfferings
-     * (contract definitions). Each ProductOffering that contains a contract definition term produces
-     * an offer entry in the dataset with a proper {@link ContractOfferId} and {@link
-     * PolicyType#OFFER}.
-     *
-     * <p>This mirrors the upstream EDC approach where one dataset is created per asset, with offers
-     * derived from matching contract definitions.
-     *
-     * @param productSpecification the ProductSpecification representing the EDC asset
-     * @param productOfferings     the list of ProductOfferings representing EDC contract definitions
-     * @return an {@link Optional} containing the dataset, or empty if no valid offers were found
-     */
-    public Optional<Dataset> datasetFromProductSpecification(
-            ExtendableProductSpecification productSpecification,
-            List<ExtendableProductOffering> productOfferings) {
-        try {
-            Dataset.Builder datasetBuilder =
-                    Dataset.Builder.newInstance().id(productSpecification.getExternalId());
-
-            boolean hasOffers = false;
-            for (ExtendableProductOffering offering : productOfferings) {
-
-                if (!referencesSpecification(offering, productSpecification)) {
-                    continue;
-                }
-                Optional<ExtendableProductOfferingTerm> optionalTerm = getContractDefinitionTerm(offering);
-                if (optionalTerm.isPresent()) {
-                    Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
-                    ContractOfferId offerId =
-                            ContractOfferId.create(
-                                    offering.getExternalId(), productSpecification.getExternalId());
-                    datasetBuilder.offer(
-                            offerId.toString(), contractPolicy.toBuilder().type(PolicyType.OFFER).build());
-                    hasOffers = true;
-                }
-            }
-
-            if (!hasOffers) {
-                return Optional.empty();
-            }
-
-            getDataService(Optional.of(productSpecification)).stream()
-                    .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
-                    .forEach(datasetBuilder::distribution);
-
-            return Optional.of(datasetBuilder.build());
-        } catch (RuntimeException e) {
-            monitor.debug(
-                    String.format(
-                            "Cannot convert specification %s to dataset.", productSpecification.getId()),
-                    e);
-            return Optional.empty();
-        }
-    }
-
-    private record DataServiceChar(String id, String endpointUrl) {
-    }
-
-    public List<DataService> getDataService(
-            Optional<ExtendableProductSpecification> productSpecification) {
-        DataService.Builder defaultDataserviceBuilder = DataService.Builder.newInstance();
-
-        if (productSpecification.isEmpty()) {
-            return List.of();
-        }
-        List<DataServiceChar> endpoints = new ArrayList<>();
-        productSpecification
-                .map(ExtendableProductSpecification::getProductSpecCharacteristic)
-                .orElse(List.of())
-                .forEach(
-                        spec -> {
-                            switch (spec.getValueType()) {
-                                case ENDPOINT_URL_KEY -> {
-                                    getValue(spec.getProductSpecCharacteristicValue())
-                                            .map(endpointUrl -> new DataServiceChar(spec.getId(), endpointUrl))
-                                            .ifPresent(endpoints::add);
-                                }
-                                case ENDPOINT_DESCRIPTION_KEY -> getValue(spec.getProductSpecCharacteristicValue())
-                                        .ifPresent(defaultDataserviceBuilder::endpointDescription);
-                            }
-                        });
-        String endpointDescription = defaultDataserviceBuilder.build().getEndpointDescription();
-
-        return endpoints.stream()
-                .map(
-                        endpoint ->
-                                DataService.Builder.newInstance()
-                                        .endpointUrl(endpoint.endpointUrl())
-                                        .endpointDescription(endpointDescription)
-                                        .id(endpoint.id())
-                                        .build())
-                .toList();
-    }
-
-    public ContractNegotiation toContractNegotiation(
-            List<ExtendableQuoteVO> quoteVOs,
-            AgreementApiClient agreementApiClient,
-            ParticipantResolver participantResolver,
-            String participantId) {
-
-        ContractNegotiation.Builder contractNegotiationBuilder =
-                ContractNegotiation.Builder.newInstance().clock(clock);
-
-        if (quoteVOs.isEmpty()) {
-            monitor.warning("Tried to map an empty list to a contract negotiation.");
-            return null;
-        }
-
-        // the newest one represents the current state of the negotiation
-        ExtendableQuoteVO newestQuoteVo = getNewest(quoteVOs);
-        ContractNegotiationStates cnState = getContractNegotiationState(newestQuoteVo);
-
-        String externalId =
-                Optional.ofNullable(newestQuoteVo.getExternalId())
-                        .orElseThrow(
-                                () -> new IllegalArgumentException("The quote does not contain an external Id."));
-
-        contractNegotiationBuilder.id(externalId);
-        contractNegotiationBuilder.state(cnState.code());
-
-        NegotiationParticipants negotiationParticipants = new NegotiationParticipants();
-        Optional.ofNullable(newestQuoteVo.getRelatedParty())
-                .orElse(List.of())
-                .forEach(
-                        rp -> {
-                            Optional<OrganizationVO> optionalOrganization =
-                                    participantResolver.getOrganization(rp.getId());
-                            if (optionalOrganization.isEmpty()) {
-                                monitor.warning(
-                                        String.format(
-                                                "Quote contains related party %s that cannot be resolved.", rp.getId()));
-                                return;
-                            }
-                            Optional<String> optionalDid =
-                                    ParticipantResolver.getDidFromOrganization(optionalOrganization.get());
-                            if (optionalDid.isEmpty()) {
-                                monitor.debug(
-                                        String.format("The organization %s does not have a did.", rp.getId()));
-                                return;
-                            }
-                            String did = optionalDid.get();
-                            String role = rp.getRole();
-                            if (role == null) {
-                                monitor.warning("Received a related party without a role.");
-                                return;
-                            }
-                            if (did.equals(participantId)) {
-                                switch (role) {
-                                    case PROVIDER_ROLE -> {
-                                        contractNegotiationBuilder.type(ContractNegotiation.Type.PROVIDER);
-                                        negotiationParticipants.providerId(did);
-                                    }
-                                    case CONSUMER_ROLE -> {
-                                        contractNegotiationBuilder.type(ContractNegotiation.Type.CONSUMER);
-                                        negotiationParticipants.consumerId(did);
-                                    }
-                                }
-                            } else {
-                                switch (role) {
-                                    case PROVIDER_ROLE -> negotiationParticipants.providerId(did);
-                                    case CONSUMER_ROLE -> negotiationParticipants.consumerId(did);
-                                }
-                                if (role.equals(PROVIDER_ROLE) || role.equals(CONSUMER_ROLE)) {
-                                    contractNegotiationBuilder.protocol(
-                                            Dsp2025Constants.DATASPACE_PROTOCOL_HTTP_V_2025_1);
-                                    contractNegotiationBuilder.counterPartyId(did);
-                                    contractNegotiationBuilder.counterPartyAddress(
-                                            newestQuoteVo.getContractNegotiationState().getCounterPartyAddress());
-                                }
-                            }
-                        });
-        ContractNegotiationState contractNegotiationState = newestQuoteVo.getContractNegotiationState();
-        contractNegotiationBuilder.pending(contractNegotiationState.isPending());
-        contractNegotiationBuilder.correlationId(contractNegotiationState.getCorrelationId());
-        quoteVOs.stream()
-                .map(ExtendableQuoteVO::getExtendableQuoteItem)
-                .flatMap(List::stream)
-                .map(this::fromQuoteItem)
-                .forEach(contractNegotiationBuilder::contractOffer);
-        if (cnState.code() >= ContractNegotiationStates.AGREEING.code()
-                && cnState.code() < ContractNegotiationStates.TERMINATING.code()) {
-            agreementApiClient
-                    .findByNegotiationId(newestQuoteVo.getExternalId())
-                    .map(this::toContractAgreement)
-                    .ifPresent(contractNegotiationBuilder::contractAgreement);
-        }
-        return contractNegotiationBuilder.build();
-    }
-
-    private ExtendableQuoteVO getNewest(List<ExtendableQuoteVO> quoteVOs) {
-        quoteVOs.sort(
-                new Comparator<ExtendableQuoteVO>() {
-                    @Override
-                    public int compare(ExtendableQuoteVO quoteVO, ExtendableQuoteVO t1) {
-                        if (quoteVO.getQuoteDate().isBefore(t1.getQuoteDate())) {
-                            return -1;
-                        } else {
-                            return 1;
-                        }
-                    }
-                });
-        return quoteVOs.getLast();
-    }
-
-    public static ContractNegotiationStates toState(String state) {
-        return TMFObjectMapper.mapNegotiationState(state);
-    }
-
-    public static ContractNegotiationStates getContractNegotiationState(ExtendableQuoteVO quoteVO) {
-        String state =
-                Optional.ofNullable(quoteVO.getContractNegotiationState())
-                        .map(ContractNegotiationState::getState)
-                        .orElseThrow(
-                                () ->
-                                        new IllegalArgumentException(
-                                                "The quote does not contain a negotiation state."));
-        return toState(state);
-    }
-
-    public ContractOffer fromQuoteItem(ExtendableQuoteItemVO quoteItemVO) {
-        ContractOffer.Builder contractOfferBuilder = ContractOffer.Builder.newInstance();
-        if (quoteItemVO.getPolicy() != null) {
-            contractOfferBuilder.policy(fromOdrl(quoteItemVO.getPolicy()));
-        }
-
-        return contractOfferBuilder
-                .assetId(quoteItemVO.getDatasetId())
-                .id(quoteItemVO.getExternalId())
-                .build();
-    }
-
-    public ExtendableQuoteItemVO fromConsumerContractOffer(
-            ContractOffer contractOffer, String negotiationState) {
-
-        ContractOfferIdParser.ContractOfferWithUid contractOfferId =
-                ContractOfferIdParser.parseId(contractOffer.getId())
-                        .orElseThrow(
-                                f ->
-                                        new IllegalArgumentException(
-                                                f.getFailureDetail() + " id was " + contractOffer.getId()));
-
-        ExtendableQuoteItemVO extendableQuoteItemVO = new ExtendableQuoteItemVO();
-        extendableQuoteItemVO.setId(contractOfferId.uuid());
-        extendableQuoteItemVO.setDatasetId(contractOffer.getAssetId());
-        extendableQuoteItemVO.setExternalId(contractOffer.getId());
-        extendableQuoteItemVO.setPolicy(fromEdcPolicy(contractOffer.getPolicy()));
-        extendableQuoteItemVO.setState(negotiationState);
-        extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
-        return extendableQuoteItemVO;
-    }
-
-    public ExtendableQuoteItemVO fromProviderContractOffer(
-            ContractOffer contractOffer, String negotiationState, Optional<String> offerTmfId) {
-
-        ContractOfferIdParser.ContractOfferWithUid contractOfferId =
-                ContractOfferIdParser.parseId(contractOffer.getId())
-                        .orElseThrow(
-                                f ->
-                                        new IllegalArgumentException(
-                                                f.getFailureDetail() + " id was " + contractOffer.getId()));
-
-        ExtendableQuoteItemVO extendableQuoteItemVO = new ExtendableQuoteItemVO();
-        extendableQuoteItemVO.setId(contractOfferId.uuid());
-        extendableQuoteItemVO.setDatasetId(contractOffer.getAssetId());
-        extendableQuoteItemVO.setExternalId(contractOfferId.asDecoded());
-        extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
-        offerTmfId.ifPresent(
-                offerId -> extendableQuoteItemVO.productOffering(new ProductOfferingRefVO().id(offerId)));
-        extendableQuoteItemVO.setPolicy(fromEdcPolicy(contractOffer.getPolicy()));
-        extendableQuoteItemVO.setState(negotiationState);
-        return extendableQuoteItemVO;
-    }
-
-    public Optional<String> getValue(
-            List<org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO>
-                    characteristicValueSpecificationVOS) {
-        if (characteristicValueSpecificationVOS == null
-                || characteristicValueSpecificationVOS.isEmpty()) {
-            return Optional.empty();
-        }
-        Optional<String> defaultValue =
-                characteristicValueSpecificationVOS.stream()
-                        .filter(cvs -> Optional.ofNullable(cvs.getIsDefault()).orElse(false))
-                        .map(
-                                org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO
-                                        ::getValue)
-                        .flatMap(v -> extractStringValue(v).stream())
-                        .findAny();
-        if (defaultValue.isPresent()) {
-            return defaultValue;
-        }
-        return characteristicValueSpecificationVOS.stream()
-                .map(org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO::getValue)
-                .flatMap(v -> extractStringValue(v).stream())
-                .findFirst();
-    }
-
-    /**
-     * Extracts a string value from a characteristic value. TMForum stores values either as plain
-     * strings or as nested objects {@code {"value": "..."}}, depending on the backend. This method
-     * handles both representations.
-     *
-     * @param value the raw characteristic value (String or Map)
-     * @return the extracted string value, or empty if extraction is not possible
-     */
-    @SuppressWarnings("unchecked")
-    private static Optional<String> extractStringValue(Object value) {
-        if (value instanceof String s) {
-            return Optional.of(s);
-        }
-        if (value instanceof Map<?, ?> map) {
-            Object inner = map.get("value");
-            if (inner instanceof String s) {
-                return Optional.of(s);
-            }
-        }
+  public Optional<Dataset> datasetFromProductOffering(
+      ExtendableProductOffering extendableProductOffering,
+      Optional<ExtendableProductSpecification> productSpecification) {
+    try {
+      Optional<ExtendableProductOfferingTerm> optionalTerm =
+          getContractDefinitionTerm(extendableProductOffering);
+      if (optionalTerm.isEmpty()) {
         return Optional.empty();
-    }
+      }
+      Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
 
-    public Optional<Asset> assetFromProductSpec(ExtendableProductSpecification productSpecification) {
-        DataAddress.Builder dataAddressBuilder =
-                DataAddress.Builder.newInstance().type(FDSC_DATA_ADDRESS_TYPE);
-        List<ProductSpecificationCharacteristicVO> specChars =
-                productSpecification.getProductSpecCharacteristic();
-        Optional<String> upstreamAddressKey =
-                specChars.stream()
-                        .map(ProductSpecificationCharacteristicVO::getId)
-                        .filter(UPSTREAM_ADDRESS_KEY::equals)
-                        .findAny();
-        if (upstreamAddressKey.isEmpty()) {
-            monitor.info(
-                    "The given product specification cannot be used for DSP, since it does not contain an upstreamAddress.");
-            return Optional.empty();
+      Dataset.Builder datasetBuilder =
+          Dataset.Builder.newInstance()
+              .offer(extendableProductOffering.getExternalId(), contractPolicy);
+      productSpecification.ifPresent(pS -> datasetBuilder.id(pS.getExternalId()));
+
+      getDataService(productSpecification).stream()
+          .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
+          .forEach(datasetBuilder::distribution);
+      return Optional.of(datasetBuilder.build());
+    } catch (RuntimeException e) {
+      monitor.debug(
+          String.format(
+              "Cannot convert offering %s to dataset. Offering does not support the DSP.",
+              extendableProductOffering.getId()),
+          e);
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Builds a {@link Dataset} from a ProductSpecification (asset) and a list of ProductOfferings
+   * (contract definitions). Each ProductOffering that contains a contract definition term produces
+   * an offer entry in the dataset with a proper {@link ContractOfferId} and {@link
+   * PolicyType#OFFER}.
+   *
+   * <p>This mirrors the upstream EDC approach where one dataset is created per asset, with offers
+   * derived from matching contract definitions.
+   *
+   * @param productSpecification the ProductSpecification representing the EDC asset
+   * @param productOfferings the list of ProductOfferings representing EDC contract definitions
+   * @return an {@link Optional} containing the dataset, or empty if no valid offers were found
+   */
+  public Optional<Dataset> datasetFromProductSpecification(
+      ExtendableProductSpecification productSpecification,
+      List<ExtendableProductOffering> productOfferings) {
+    try {
+      Dataset.Builder datasetBuilder =
+          Dataset.Builder.newInstance().id(productSpecification.getExternalId());
+
+      boolean hasOffers = false;
+      for (ExtendableProductOffering offering : productOfferings) {
+
+        if (!referencesSpecification(offering, productSpecification)) {
+          continue;
         }
-        if (productSpecification.getExternalId() == null) {
-            monitor.info(
-                    "The given product specification cannot be used for DSP, since it does not contain an externalId.");
-            return Optional.empty();
+        Optional<ExtendableProductOfferingTerm> optionalTerm = getContractDefinitionTerm(offering);
+        if (optionalTerm.isPresent()) {
+          Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
+          ContractOfferId offerId =
+              ContractOfferId.create(
+                  offering.getExternalId(), productSpecification.getExternalId());
+          datasetBuilder.offer(
+              offerId.toString(), contractPolicy.toBuilder().type(PolicyType.OFFER).build());
+          hasOffers = true;
         }
-        specChars.forEach(
-                spec -> {
-                    switch (spec.getValueType()) {
-                        case ENDPOINT_URL_KEY -> getValue(spec.getProductSpecCharacteristicValue())
-                                .ifPresent(url -> dataAddressBuilder.property(ENDPOINT_URL_KEY, url));
-                        case ENDPOINT_DESCRIPTION_KEY -> getValue(spec.getProductSpecCharacteristicValue())
-                                .ifPresent(desc -> dataAddressBuilder.property(ENDPOINT_DESCRIPTION_KEY, desc));
-                    }
-                });
+      }
 
-        return Optional.of(
-                Asset.Builder.newInstance()
-                        .clock(clock)
-                        .id(productSpecification.getExternalId())
-                        .version(productSpecification.getVersion())
-                        .name(productSpecification.getName())
-                        .description(productSpecification.getDescription())
-                        .dataAddress(dataAddressBuilder.build())
-                        .build());
+      if (!hasOffers) {
+        return Optional.empty();
+      }
+
+      getDataService(Optional.of(productSpecification)).stream()
+          .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
+          .forEach(datasetBuilder::distribution);
+
+      return Optional.of(datasetBuilder.build());
+    } catch (RuntimeException e) {
+      monitor.debug(
+          String.format(
+              "Cannot convert specification %s to dataset.", productSpecification.getId()),
+          e);
+      return Optional.empty();
+    }
+  }
+
+  private record DataServiceChar(String id, String endpointUrl) {}
+
+  public List<DataService> getDataService(
+      Optional<ExtendableProductSpecification> productSpecification) {
+    DataService.Builder defaultDataserviceBuilder = DataService.Builder.newInstance();
+
+    if (productSpecification.isEmpty()) {
+      return List.of();
+    }
+    List<DataServiceChar> endpoints = new ArrayList<>();
+    productSpecification
+        .map(ExtendableProductSpecification::getProductSpecCharacteristic)
+        .orElse(List.of())
+        .forEach(
+            spec -> {
+              switch (spec.getValueType()) {
+                case ENDPOINT_URL_KEY -> {
+                  getValue(spec.getProductSpecCharacteristicValue())
+                      .map(endpointUrl -> new DataServiceChar(spec.getId(), endpointUrl))
+                      .ifPresent(endpoints::add);
+                }
+                case ENDPOINT_DESCRIPTION_KEY ->
+                    getValue(spec.getProductSpecCharacteristicValue())
+                        .ifPresent(defaultDataserviceBuilder::endpointDescription);
+              }
+            });
+    String endpointDescription = defaultDataserviceBuilder.build().getEndpointDescription();
+
+    return endpoints.stream()
+        .map(
+            endpoint ->
+                DataService.Builder.newInstance()
+                    .endpointUrl(endpoint.endpointUrl())
+                    .endpointDescription(endpointDescription)
+                    .id(endpoint.id())
+                    .build())
+        .toList();
+  }
+
+  public ContractNegotiation toContractNegotiation(
+      List<ExtendableQuoteVO> quoteVOs,
+      AgreementApiClient agreementApiClient,
+      ParticipantResolver participantResolver,
+      String participantId) {
+
+    ContractNegotiation.Builder contractNegotiationBuilder =
+        ContractNegotiation.Builder.newInstance().clock(clock);
+
+    if (quoteVOs.isEmpty()) {
+      monitor.warning("Tried to map an empty list to a contract negotiation.");
+      return null;
     }
 
-    public JsonObject jsonObjectFromEdcPolicy(Policy policy) {
-        JsonObject jsonObject =
-                typeTransformerRegistry
-                        .transform(policy, JsonObject.class)
-                        .orElseThrow(
-                                f ->
-                                        new IllegalArgumentException(
-                                                String.format(
-                                                        "Was not able to transform the policy. Failure: %s.",
-                                                        f.getFailureDetail())));
+    // the newest one represents the current state of the negotiation
+    ExtendableQuoteVO newestQuoteVo = getNewest(quoteVOs);
+    ContractNegotiationStates cnState = getContractNegotiationState(newestQuoteVo);
 
-        return jsonLd
-                .expand(jsonObject)
-                .orElseThrow(
-                        f ->
-                                new IllegalArgumentException(
-                                        String.format(
-                                                "Was not able to expand the policy. Failure: %s", f.getFailureDetail())));
+    String externalId =
+        Optional.ofNullable(newestQuoteVo.getExternalId())
+            .orElseThrow(
+                () -> new IllegalArgumentException("The quote does not contain an external Id."));
+
+    contractNegotiationBuilder.id(externalId);
+    contractNegotiationBuilder.state(cnState.code());
+
+    NegotiationParticipants negotiationParticipants = new NegotiationParticipants();
+    Optional.ofNullable(newestQuoteVo.getRelatedParty())
+        .orElse(List.of())
+        .forEach(
+            rp -> {
+              Optional<OrganizationVO> optionalOrganization =
+                  participantResolver.getOrganization(rp.getId());
+              if (optionalOrganization.isEmpty()) {
+                monitor.warning(
+                    String.format(
+                        "Quote contains related party %s that cannot be resolved.", rp.getId()));
+                return;
+              }
+              Optional<String> optionalDid =
+                  ParticipantResolver.getDidFromOrganization(optionalOrganization.get());
+              if (optionalDid.isEmpty()) {
+                monitor.debug(
+                    String.format("The organization %s does not have a did.", rp.getId()));
+                return;
+              }
+              String did = optionalDid.get();
+              String role = rp.getRole();
+              if (role == null) {
+                monitor.warning("Received a related party without a role.");
+                return;
+              }
+              if (did.equals(participantId)) {
+                switch (role) {
+                  case PROVIDER_ROLE -> {
+                    contractNegotiationBuilder.type(ContractNegotiation.Type.PROVIDER);
+                    negotiationParticipants.providerId(did);
+                  }
+                  case CONSUMER_ROLE -> {
+                    contractNegotiationBuilder.type(ContractNegotiation.Type.CONSUMER);
+                    negotiationParticipants.consumerId(did);
+                  }
+                }
+              } else {
+                switch (role) {
+                  case PROVIDER_ROLE -> negotiationParticipants.providerId(did);
+                  case CONSUMER_ROLE -> negotiationParticipants.consumerId(did);
+                }
+                if (role.equals(PROVIDER_ROLE) || role.equals(CONSUMER_ROLE)) {
+                  contractNegotiationBuilder.protocol(
+                      Dsp2025Constants.DATASPACE_PROTOCOL_HTTP_V_2025_1);
+                  contractNegotiationBuilder.counterPartyId(did);
+                  contractNegotiationBuilder.counterPartyAddress(
+                      newestQuoteVo.getContractNegotiationState().getCounterPartyAddress());
+                }
+              }
+            });
+    ContractNegotiationState contractNegotiationState = newestQuoteVo.getContractNegotiationState();
+    contractNegotiationBuilder.pending(contractNegotiationState.isPending());
+    contractNegotiationBuilder.correlationId(contractNegotiationState.getCorrelationId());
+    quoteVOs.stream()
+        .map(ExtendableQuoteVO::getExtendableQuoteItem)
+        .flatMap(List::stream)
+        .map(this::fromQuoteItem)
+        .forEach(contractNegotiationBuilder::contractOffer);
+    if (cnState.code() >= ContractNegotiationStates.AGREEING.code()
+        && cnState.code() < ContractNegotiationStates.TERMINATING.code()) {
+      agreementApiClient
+          .findByNegotiationId(newestQuoteVo.getExternalId())
+          .map(this::toContractAgreement)
+          .ifPresent(contractNegotiationBuilder::contractAgreement);
     }
+    return contractNegotiationBuilder.build();
+  }
 
-    public Map<String, Object> fromEdcPolicy(Policy policy) {
-        try {
-            return objectMapper.readValue(
-                    jsonObjectFromEdcPolicy(policy).toString(), new TypeReference<Map<String, Object>>() {
-                    });
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Did not receive a valid edc policy.", e);
-        }
-    }
-
-    public Policy fromOdrl(Object policy) {
-        // convert to string
-        try {
-            String jsonString = objectMapper.writeValueAsString(policy);
-            try (JsonReader reader = Json.createReader(new StringReader(jsonString))) {
-                JsonObject expandedInput =
-                        jsonLd
-                                .expand(reader.readObject())
-                                .orElseThrow(
-                                        f ->
-                                                new IllegalArgumentException(
-                                                        String.format(
-                                                                "Was not able to expand the json-ld input. Failure: %s.",
-                                                                f.getFailureDetail())));
-
-                return typeTransformerRegistry
-                        .transform(expandedInput, Policy.class)
-                        .orElseThrow(
-                                f ->
-                                        new IllegalArgumentException(
-                                                String.format(
-                                                        "Was not able to transform input to a policy. Failure: %s.",
-                                                        f.getFailureDetail())));
+  private ExtendableQuoteVO getNewest(List<ExtendableQuoteVO> quoteVOs) {
+    quoteVOs.sort(
+        new Comparator<ExtendableQuoteVO>() {
+          @Override
+          public int compare(ExtendableQuoteVO quoteVO, ExtendableQuoteVO t1) {
+            if (quoteVO.getQuoteDate().isBefore(t1.getQuoteDate())) {
+              return -1;
+            } else {
+              return 1;
             }
-        } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Contract definition does not contain a contract policy.");
-        }
+          }
+        });
+    return quoteVOs.getLast();
+  }
+
+  public static ContractNegotiationStates toState(String state) {
+    return TMFObjectMapper.mapNegotiationState(state);
+  }
+
+  public static ContractNegotiationStates getContractNegotiationState(ExtendableQuoteVO quoteVO) {
+    String state =
+        Optional.ofNullable(quoteVO.getContractNegotiationState())
+            .map(ContractNegotiationState::getState)
+            .orElseThrow(
+                () ->
+                    new IllegalArgumentException(
+                        "The quote does not contain a negotiation state."));
+    return toState(state);
+  }
+
+  public ContractOffer fromQuoteItem(ExtendableQuoteItemVO quoteItemVO) {
+    ContractOffer.Builder contractOfferBuilder = ContractOffer.Builder.newInstance();
+    if (quoteItemVO.getPolicy() != null) {
+      contractOfferBuilder.policy(fromOdrl(quoteItemVO.getPolicy()));
     }
 
-    private Policy getContractPolicyFromOfferTerm(
-            ExtendableProductOfferingTerm extendableProductOfferingTerm) {
+    return contractOfferBuilder
+        .assetId(quoteItemVO.getDatasetId())
+        .id(quoteItemVO.getExternalId())
+        .build();
+  }
 
-        Map<String, Object> additionalProperties =
-                extendableProductOfferingTerm.getAdditionalProperties();
+  public ExtendableQuoteItemVO fromConsumerContractOffer(
+      ContractOffer contractOffer, String negotiationState) {
 
-        if (additionalProperties.containsKey(CONTRACT_POLICY_KEY)) {
-            return fromOdrl(additionalProperties.get(CONTRACT_POLICY_KEY));
-        } else {
-            throw new IllegalArgumentException("Contract definition does not contain a contract policy.");
-        }
+    ContractOfferIdParser.ContractOfferWithUid contractOfferId =
+        ContractOfferIdParser.parseId(contractOffer.getId())
+            .orElseThrow(
+                f ->
+                    new IllegalArgumentException(
+                        f.getFailureDetail() + " id was " + contractOffer.getId()));
+
+    ExtendableQuoteItemVO extendableQuoteItemVO = new ExtendableQuoteItemVO();
+    extendableQuoteItemVO.setId(contractOfferId.uuid());
+    extendableQuoteItemVO.setDatasetId(contractOffer.getAssetId());
+    extendableQuoteItemVO.setExternalId(contractOffer.getId());
+    extendableQuoteItemVO.setPolicy(fromEdcPolicy(contractOffer.getPolicy()));
+    extendableQuoteItemVO.setState(negotiationState);
+    extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
+    return extendableQuoteItemVO;
+  }
+
+  public ExtendableQuoteItemVO fromProviderContractOffer(
+      ContractOffer contractOffer, String negotiationState, Optional<String> offerTmfId) {
+
+    ContractOfferIdParser.ContractOfferWithUid contractOfferId =
+        ContractOfferIdParser.parseId(contractOffer.getId())
+            .orElseThrow(
+                f ->
+                    new IllegalArgumentException(
+                        f.getFailureDetail() + " id was " + contractOffer.getId()));
+
+    ExtendableQuoteItemVO extendableQuoteItemVO = new ExtendableQuoteItemVO();
+    extendableQuoteItemVO.setId(contractOfferId.uuid());
+    extendableQuoteItemVO.setDatasetId(contractOffer.getAssetId());
+    extendableQuoteItemVO.setExternalId(contractOfferId.asDecoded());
+    extendableQuoteItemVO.setAction(QUOTE_ITEM_ADD_ACTION);
+    offerTmfId.ifPresent(
+        offerId -> extendableQuoteItemVO.productOffering(new ProductOfferingRefVO().id(offerId)));
+    extendableQuoteItemVO.setPolicy(fromEdcPolicy(contractOffer.getPolicy()));
+    extendableQuoteItemVO.setState(negotiationState);
+    return extendableQuoteItemVO;
+  }
+
+  public Optional<String> getValue(
+      List<org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO>
+          characteristicValueSpecificationVOS) {
+    if (characteristicValueSpecificationVOS == null
+        || characteristicValueSpecificationVOS.isEmpty()) {
+      return Optional.empty();
+    }
+    Optional<String> defaultValue =
+        characteristicValueSpecificationVOS.stream()
+            .filter(cvs -> Optional.ofNullable(cvs.getIsDefault()).orElse(false))
+            .map(
+                org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO
+                    ::getValue)
+            .flatMap(v -> extractStringValue(v).stream())
+            .findAny();
+    if (defaultValue.isPresent()) {
+      return defaultValue;
+    }
+    return characteristicValueSpecificationVOS.stream()
+        .map(org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO::getValue)
+        .flatMap(v -> extractStringValue(v).stream())
+        .findFirst();
+  }
+
+  /**
+   * Extracts a string value from a characteristic value. TMForum stores values either as plain
+   * strings or as nested objects {@code {"value": "..."}}, depending on the backend. This method
+   * handles both representations.
+   *
+   * @param value the raw characteristic value (String or Map)
+   * @return the extracted string value, or empty if extraction is not possible
+   */
+  @SuppressWarnings("unchecked")
+  private static Optional<String> extractStringValue(Object value) {
+    if (value instanceof String s) {
+      return Optional.of(s);
+    }
+    if (value instanceof Map<?, ?> map) {
+      Object inner = map.get("value");
+      if (inner instanceof String s) {
+        return Optional.of(s);
+      }
+    }
+    return Optional.empty();
+  }
+
+  public Optional<Asset> assetFromProductSpec(ExtendableProductSpecification productSpecification) {
+    DataAddress.Builder dataAddressBuilder =
+        DataAddress.Builder.newInstance().type(FDSC_DATA_ADDRESS_TYPE);
+    List<ProductSpecificationCharacteristicVO> specChars =
+        productSpecification.getProductSpecCharacteristic();
+    Optional<String> upstreamAddressKey =
+        specChars.stream()
+            .map(ProductSpecificationCharacteristicVO::getId)
+            .filter(UPSTREAM_ADDRESS_KEY::equals)
+            .findAny();
+    if (upstreamAddressKey.isEmpty()) {
+      monitor.info(
+          "The given product specification cannot be used for DSP, since it does not contain an upstreamAddress.");
+      return Optional.empty();
+    }
+    if (productSpecification.getExternalId() == null) {
+      monitor.info(
+          "The given product specification cannot be used for DSP, since it does not contain an externalId.");
+      return Optional.empty();
+    }
+    specChars.forEach(
+        spec -> {
+          switch (spec.getValueType()) {
+            case ENDPOINT_URL_KEY ->
+                getValue(spec.getProductSpecCharacteristicValue())
+                    .ifPresent(url -> dataAddressBuilder.property(ENDPOINT_URL_KEY, url));
+            case ENDPOINT_DESCRIPTION_KEY ->
+                getValue(spec.getProductSpecCharacteristicValue())
+                    .ifPresent(desc -> dataAddressBuilder.property(ENDPOINT_DESCRIPTION_KEY, desc));
+          }
+        });
+
+    return Optional.of(
+        Asset.Builder.newInstance()
+            .clock(clock)
+            .id(productSpecification.getExternalId())
+            .version(productSpecification.getVersion())
+            .name(productSpecification.getName())
+            .description(productSpecification.getDescription())
+            .dataAddress(dataAddressBuilder.build())
+            .build());
+  }
+
+  public JsonObject jsonObjectFromEdcPolicy(Policy policy) {
+    JsonObject jsonObject =
+        typeTransformerRegistry
+            .transform(policy, JsonObject.class)
+            .orElseThrow(
+                f ->
+                    new IllegalArgumentException(
+                        String.format(
+                            "Was not able to transform the policy. Failure: %s.",
+                            f.getFailureDetail())));
+
+    return jsonLd
+        .expand(jsonObject)
+        .orElseThrow(
+            f ->
+                new IllegalArgumentException(
+                    String.format(
+                        "Was not able to expand the policy. Failure: %s", f.getFailureDetail())));
+  }
+
+  public Map<String, Object> fromEdcPolicy(Policy policy) {
+    try {
+      return objectMapper.readValue(
+          jsonObjectFromEdcPolicy(policy).toString(), new TypeReference<Map<String, Object>>() {});
+    } catch (JsonProcessingException e) {
+      throw new IllegalArgumentException("Did not receive a valid edc policy.", e);
+    }
+  }
+
+  public Policy fromOdrl(Object policy) {
+    // convert to string
+    try {
+      String jsonString = objectMapper.writeValueAsString(policy);
+      try (JsonReader reader = Json.createReader(new StringReader(jsonString))) {
+        JsonObject expandedInput =
+            jsonLd
+                .expand(reader.readObject())
+                .orElseThrow(
+                    f ->
+                        new IllegalArgumentException(
+                            String.format(
+                                "Was not able to expand the json-ld input. Failure: %s.",
+                                f.getFailureDetail())));
+
+        return typeTransformerRegistry
+            .transform(expandedInput, Policy.class)
+            .orElseThrow(
+                f ->
+                    new IllegalArgumentException(
+                        String.format(
+                            "Was not able to transform input to a policy. Failure: %s.",
+                            f.getFailureDetail())));
+      }
+    } catch (JsonProcessingException e) {
+      throw new IllegalArgumentException("Contract definition does not contain a contract policy.");
+    }
+  }
+
+  private Policy getContractPolicyFromOfferTerm(
+      ExtendableProductOfferingTerm extendableProductOfferingTerm) {
+
+    Map<String, Object> additionalProperties =
+        extendableProductOfferingTerm.getAdditionalProperties();
+
+    if (additionalProperties.containsKey(CONTRACT_POLICY_KEY)) {
+      return fromOdrl(additionalProperties.get(CONTRACT_POLICY_KEY));
+    } else {
+      throw new IllegalArgumentException("Contract definition does not contain a contract policy.");
+    }
+  }
+
+  private Policy getAccessPolicyFromOfferTerm(
+      ExtendableProductOfferingTerm extendableProductOfferingTerm) {
+
+    Map<String, Object> additionalProperties =
+        extendableProductOfferingTerm.getAdditionalProperties();
+
+    if (additionalProperties.containsKey(ACCESS_POLICY_KEY)) {
+      return fromOdrl(additionalProperties.get(ACCESS_POLICY_KEY));
+    } else {
+      throw new IllegalArgumentException("Contract definition does not contain an access policy.");
+    }
+  }
+
+  /**
+   * Filters offerings by evaluating each offering's access policy against the authenticated
+   * participant agent. Only offerings whose access policy permits the participant are returned.
+   *
+   * <p>Offerings without a contract definition term or without an access policy are excluded.
+   *
+   * @param offerings the list of all product offerings
+   * @param policyEngine the EDC policy engine for evaluating access policies
+   * @param participantAgent the authenticated counter-party's participant agent
+   * @return the list of offerings whose access policy permits the participant
+   */
+  public List<ExtendableProductOffering> filterByAccessPolicy(
+      List<ExtendableProductOffering> offerings,
+      PolicyEngine policyEngine,
+      ParticipantAgent participantAgent) {
+    return offerings.stream()
+        .filter(
+            offering -> {
+              Optional<ExtendableProductOfferingTerm> term = getContractDefinitionTerm(offering);
+              if (term.isEmpty()) {
+                return false;
+              }
+              try {
+                Policy accessPolicy = getAccessPolicyFromOfferTerm(term.get());
+                CatalogPolicyContext context = new CatalogPolicyContext(participantAgent);
+                return policyEngine.evaluate(accessPolicy, context).succeeded();
+              } catch (RuntimeException e) {
+                monitor.debug(
+                    String.format(
+                        "Cannot evaluate access policy for offering %s, excluding from catalog.",
+                        offering.getExternalId()),
+                    e);
+                return false;
+              }
+            })
+        .toList();
+  }
+
+  private boolean referencesSpecification(
+      ExtendableProductOffering offering, ExtendableProductSpecification specification) {
+    if (offering.getExtendableProductSpecification() == null) {
+      return false;
+    }
+    return Objects.equals(
+        offering.getExtendableProductSpecification().getId(), specification.getId());
+  }
+
+  private Optional<ExtendableProductOfferingTerm> getContractDefinitionTerm(
+      ExtendableProductOffering extendableProductOffering) {
+
+    return extendableProductOffering.getExtendableProductOfferingTerm().stream()
+        .filter(pot -> pot.getName().equals(POT_NAME_CONTRACT_DEFINITION))
+        .findAny();
+  }
+
+  public static String getIdFromPolicy(Policy policy) {
+    return Optional.ofNullable(policy.getExtensibleProperties().get(UID_KEY))
+        .filter(String.class::isInstance)
+        .map(String.class::cast)
+        .orElseThrow(() -> new IllegalArgumentException("Policy does not contain a uid."));
+  }
+
+  public Optional<ContractDefinition> fromProductOffer(
+      ExtendableProductOffering productOfferingVO) {
+    if (productOfferingVO.getExternalId() == null) {
+      return Optional.empty();
+    }
+    ContractDefinition.Builder contractDefinitionBuilder =
+        ContractDefinition.Builder.newInstance().clock(clock).id(productOfferingVO.getExternalId());
+
+    Optional<ExtendableProductOfferingTerm> optionalTerm =
+        getContractDefinitionTerm(productOfferingVO);
+    if (optionalTerm.isEmpty()) {
+      return Optional.empty();
+    }
+    try {
+
+      Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
+      contractDefinitionBuilder.contractPolicyId(getIdFromPolicy(contractPolicy));
+
+      Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
+      contractDefinitionBuilder.accessPolicyId(getIdFromPolicy(accessPolicy));
+
+      return Optional.of(contractDefinitionBuilder.build());
+    } catch (IllegalArgumentException e) {
+      monitor.debug("Was not able to read the policy.", e);
+      return Optional.empty();
+    }
+  }
+
+  public Optional<ValidatableConsumerOffer> consumerOfferFromProductOffering(
+      ExtendableProductOffering productOfferingVO, ContractOfferId offerId) {
+    ValidatableConsumerOffer.Builder consumerOfferBuilder =
+        ValidatableConsumerOffer.Builder.newInstance();
+
+    Optional<ContractDefinition> optionalContractDefinition = fromProductOffer(productOfferingVO);
+    if (optionalContractDefinition.isEmpty()) {
+      return Optional.empty();
     }
 
-    private Policy getAccessPolicyFromOfferTerm(
-            ExtendableProductOfferingTerm extendableProductOfferingTerm) {
-
-        Map<String, Object> additionalProperties =
-                extendableProductOfferingTerm.getAdditionalProperties();
-
-        if (additionalProperties.containsKey(ACCESS_POLICY_KEY)) {
-            return fromOdrl(additionalProperties.get(ACCESS_POLICY_KEY));
-        } else {
-            throw new IllegalArgumentException("Contract definition does not contain an access policy.");
-        }
+    Optional<ExtendableProductOfferingTerm> optionalTerm =
+        getContractDefinitionTerm(productOfferingVO);
+    if (optionalTerm.isEmpty()) {
+      return Optional.empty();
     }
 
-    /**
-     * Filters offerings by evaluating each offering's access policy against the authenticated
-     * participant agent. Only offerings whose access policy permits the participant are returned.
-     *
-     * <p>Offerings without a contract definition term or without an access policy are excluded.
-     *
-     * @param offerings        the list of all product offerings
-     * @param policyEngine     the EDC policy engine for evaluating access policies
-     * @param participantAgent the authenticated counter-party's participant agent
-     * @return the list of offerings whose access policy permits the participant
-     */
-    public List<ExtendableProductOffering> filterByAccessPolicy(
-            List<ExtendableProductOffering> offerings,
-            PolicyEngine policyEngine,
-            ParticipantAgent participantAgent) {
-        return offerings.stream()
-                .filter(
-                        offering -> {
-                            Optional<ExtendableProductOfferingTerm> term = getContractDefinitionTerm(offering);
-                            if (term.isEmpty()) {
-                                return false;
-                            }
-                            try {
-                                Policy accessPolicy = getAccessPolicyFromOfferTerm(term.get());
-                                CatalogPolicyContext context = new CatalogPolicyContext(participantAgent);
-                                return policyEngine.evaluate(accessPolicy, context).succeeded();
-                            } catch (RuntimeException e) {
-                                monitor.debug(
-                                        String.format(
-                                                "Cannot evaluate access policy for offering %s, excluding from catalog.",
-                                                offering.getExternalId()),
-                                        e);
-                                return false;
-                            }
-                        })
-                .toList();
+    try {
+      Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
+      Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
+
+      return Optional.of(
+          consumerOfferBuilder
+              .offerId(offerId)
+              .contractPolicy(contractPolicy)
+              .accessPolicy(accessPolicy)
+              .contractDefinition(optionalContractDefinition.get())
+              .build());
+    } catch (IllegalArgumentException e) {
+      monitor.debug("Was not able to read the policy.", e);
+      return Optional.empty();
+    }
+  }
+
+  public ExtendableAgreementCreateVO toCreate(ExtendableAgreementVO extendableAgreementVO) {
+    return tmfObjectMapper.map(extendableAgreementVO);
+  }
+
+  public ExtendableAgreementUpdateVO toUpdate(ExtendableAgreementVO extendableAgreementVO) {
+    return tmfObjectMapper.mapToUpdate(extendableAgreementVO);
+  }
+
+  public ExtendableQuoteUpdateVO toUpdate(ExtendableQuoteVO extendableQuoteVO) {
+    return tmfObjectMapper.map(extendableQuoteVO);
+  }
+
+  public ProductOrderUpdateVO toUpdate(ProductOrderVO productOrderVO) {
+    return tmfObjectMapper.map(productOrderVO);
+  }
+
+  public ExtendableUsageUpdateVO toUpdate(ExtendableUsageVO extendableUsageVO) {
+    return tmfObjectMapper.map(extendableUsageVO);
+  }
+
+  public ExtendableUsageCreateVO toCreate(ExtendableUsageVO extendableUsageVO) {
+    ExtendableUsageCreateVO extendableUsageCreateVO =
+        tmfObjectMapper.mapToCreate(extendableUsageVO);
+    return extendableUsageCreateVO;
+  }
+
+  private class NegotiationParticipants {
+    private String consumerId;
+    private String providerId;
+
+    public boolean participantsAvailable() {
+      return consumerId != null && providerId != null;
     }
 
-    private boolean referencesSpecification(
-            ExtendableProductOffering offering,
-            ExtendableProductSpecification specification) {
-        if (offering.getExtendableProductSpecification() == null) {
-            return false;
-        }
-        return Objects.equals(
-                offering.getExtendableProductSpecification().getId(), specification.getId());
+    public String getConsumerId() {
+      return consumerId;
     }
 
-    private Optional<ExtendableProductOfferingTerm> getContractDefinitionTerm(
-            ExtendableProductOffering extendableProductOffering) {
-
-        return extendableProductOffering.getExtendableProductOfferingTerm().stream()
-                .filter(pot -> pot.getName().equals(POT_NAME_CONTRACT_DEFINITION))
-                .findAny();
+    public NegotiationParticipants consumerId(String consumerId) {
+      this.consumerId = consumerId;
+      return this;
     }
 
-    public static String getIdFromPolicy(Policy policy) {
-        return Optional.ofNullable(policy.getExtensibleProperties().get(UID_KEY))
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .orElseThrow(() -> new IllegalArgumentException("Policy does not contain a uid."));
+    public String getProviderId() {
+      return providerId;
     }
 
-    public Optional<ContractDefinition> fromProductOffer(
-            ExtendableProductOffering productOfferingVO) {
-        if (productOfferingVO.getExternalId() == null) {
-            return Optional.empty();
-        }
-        ContractDefinition.Builder contractDefinitionBuilder =
-                ContractDefinition.Builder.newInstance().clock(clock).id(productOfferingVO.getExternalId());
+    public NegotiationParticipants providerId(String providerId) {
+      this.providerId = providerId;
+      return this;
+    }
+  }
 
-        Optional<ExtendableProductOfferingTerm> optionalTerm =
-                getContractDefinitionTerm(productOfferingVO);
-        if (optionalTerm.isEmpty()) {
-            return Optional.empty();
-        }
-        try {
+  private TransferProcess.Type fromName(String name) {
+    return switch (name) {
+      case "CONSUMER" -> CONSUMER;
+      case "PROVIDER" -> PROVIDER;
+      default ->
+          throw new IllegalArgumentException(String.format("Type %s is not supported.", name));
+    };
+  }
 
-            Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
-            contractDefinitionBuilder.contractPolicyId(getIdFromPolicy(contractPolicy));
+  public ExtendableUsageVO fromTransferProcess(
+      TransferProcess transferProcess, String assetId, String productId) {
+    ExtendableUsageVO usageVO = new ExtendableUsageVO();
+    usageVO
+        .setTransferState(transferProcess.stateAsString())
+        .setExternalId(transferProcess.getId())
+        .addUsageCharacteristicItem(toUsageCharacteristic(USAGE_CHARACTERISTIC_ASSET_ID, assetId))
+        .addUsageCharacteristicItem(
+            toUsageCharacteristic(
+                USAGE_CHARACTERISTIC_COUNTER_PARTY_ADDRESS,
+                transferProcess.getCounterPartyAddress()))
+        .addUsageCharacteristicItem(
+            toUsageCharacteristic(
+                USAGE_CHARACTERISTIC_CONTRACT_ID, transferProcess.getContractId()))
+        .addUsageCharacteristicItem(
+            toUsageCharacteristic(USAGE_CHARACTERISTIC_PROTOCOL, transferProcess.getProtocol()))
+        .addUsageCharacteristicItem(
+            toUsageCharacteristic(USAGE_CHARACTERISTIC_TYPE, transferProcess.getType().name()))
+        .addUsageCharacteristicItem(
+            toUsageCharacteristic(
+                USAGE_CHARACTERISTIC_TRANSFER_TYPE, transferProcess.getTransferType()))
+        .usageType(USAGE_TYPE_DSP_TRANSFER);
+    Optional.ofNullable(transferProcess.getContentDataAddress())
+        .ifPresent(
+            cda -> {
+              usageVO.addUsageCharacteristicItem(
+                  toUsageCharacteristic(USAGE_CHARACTERISTIC_CONTENT_DATA_ADDRESS, cda));
+            });
+    Optional.ofNullable(transferProcess.getDataPlaneId())
+        .ifPresent(
+            did ->
+                usageVO.addUsageCharacteristicItem(
+                    toUsageCharacteristic(USAGE_CHARACTERISTIC_DATAPLANE_ID, did)));
 
-            Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
-            contractDefinitionBuilder.accessPolicyId(getIdFromPolicy(accessPolicy));
-
-            return Optional.of(contractDefinitionBuilder.build());
-        } catch (IllegalArgumentException e) {
-            monitor.debug("Was not able to read the policy.", e);
-            return Optional.empty();
-        }
+    Optional.ofNullable(transferProcess.getCorrelationId())
+        .ifPresent(
+            cid ->
+                usageVO.addUsageCharacteristicItem(
+                    toUsageCharacteristic(USAGE_CHARACTERISTIC_CORRELATION_ID, cid)));
+    if (transferProcess.getState() < TransferProcessStates.STARTED.code()) {
+      usageVO.status(UsageStatusTypeVO.RECEIVED);
+    } else {
+      usageVO.status(UsageStatusTypeVO.RATED);
+      usageVO.addRatedProductUsageItem(
+          new RatedProductUsageVO()
+              .productRef(new org.seamware.tmforum.usage.model.ProductRefVO().id(productId)));
     }
 
-    public Optional<ValidatableConsumerOffer> consumerOfferFromProductOffering(
-            ExtendableProductOffering productOfferingVO, ContractOfferId offerId) {
-        ValidatableConsumerOffer.Builder consumerOfferBuilder =
-                ValidatableConsumerOffer.Builder.newInstance();
-
-        Optional<ContractDefinition> optionalContractDefinition = fromProductOffer(productOfferingVO);
-        if (optionalContractDefinition.isEmpty()) {
-            return Optional.empty();
-        }
-
-        Optional<ExtendableProductOfferingTerm> optionalTerm =
-                getContractDefinitionTerm(productOfferingVO);
-        if (optionalTerm.isEmpty()) {
-            return Optional.empty();
-        }
-
-        try {
-            Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
-            Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
-
-            return Optional.of(
-                    consumerOfferBuilder
-                            .offerId(offerId)
-                            .contractPolicy(contractPolicy)
-                            .accessPolicy(accessPolicy)
-                            .contractDefinition(optionalContractDefinition.get())
-                            .build());
-        } catch (IllegalArgumentException e) {
-            monitor.debug("Was not able to read the policy.", e);
-            return Optional.empty();
-        }
+    if (transferProcess.getResourceManifest() != null) {
+      usageVO.addUsageCharacteristicItem(
+          toUsageCharacteristic(
+              USAGE_CHARACTERISTIC_RESOURCE_MANIFEST, transferProcess.getResourceManifest()));
     }
 
-    public ExtendableAgreementCreateVO toCreate(ExtendableAgreementVO extendableAgreementVO) {
-        return tmfObjectMapper.map(extendableAgreementVO);
-    }
+    return usageVO;
+  }
 
-    public ExtendableAgreementUpdateVO toUpdate(ExtendableAgreementVO extendableAgreementVO) {
-        return tmfObjectMapper.mapToUpdate(extendableAgreementVO);
-    }
+  public <T> Optional<T> fromCharacteristics(
+      List<UsageCharacteristicVO> characteristicVOS, String key, Class<T> valueType) {
+    return characteristicVOS.stream()
+        .filter(characteristicVO -> characteristicVO.getName().equals(key))
+        .map(UsageCharacteristicVO::getValue)
+        .filter(valueType::isInstance)
+        .map(valueType::cast)
+        .findAny();
+  }
 
-    public ExtendableQuoteUpdateVO toUpdate(ExtendableQuoteVO extendableQuoteVO) {
-        return tmfObjectMapper.map(extendableQuoteVO);
-    }
-
-    public ProductOrderUpdateVO toUpdate(ProductOrderVO productOrderVO) {
-        return tmfObjectMapper.map(productOrderVO);
-    }
-
-    public ExtendableUsageUpdateVO toUpdate(ExtendableUsageVO extendableUsageVO) {
-        return tmfObjectMapper.map(extendableUsageVO);
-    }
-
-    public ExtendableUsageCreateVO toCreate(ExtendableUsageVO extendableUsageVO) {
-        ExtendableUsageCreateVO extendableUsageCreateVO =
-                tmfObjectMapper.mapToCreate(extendableUsageVO);
-        return extendableUsageCreateVO;
-    }
-
-    private class NegotiationParticipants {
-        private String consumerId;
-        private String providerId;
-
-        public boolean participantsAvailable() {
-            return consumerId != null && providerId != null;
-        }
-
-        public String getConsumerId() {
-            return consumerId;
-        }
-
-        public NegotiationParticipants consumerId(String consumerId) {
-            this.consumerId = consumerId;
-            return this;
-        }
-
-        public String getProviderId() {
-            return providerId;
-        }
-
-        public NegotiationParticipants providerId(String providerId) {
-            this.providerId = providerId;
-            return this;
-        }
-    }
-
-    private TransferProcess.Type fromName(String name) {
-        return switch (name) {
-            case "CONSUMER" -> CONSUMER;
-            case "PROVIDER" -> PROVIDER;
-            default -> throw new IllegalArgumentException(String.format("Type %s is not supported.", name));
-        };
-    }
-
-    public ExtendableUsageVO fromTransferProcess(
-            TransferProcess transferProcess, String assetId, String productId) {
-        ExtendableUsageVO usageVO = new ExtendableUsageVO();
-        usageVO
-                .setTransferState(transferProcess.stateAsString())
-                .setExternalId(transferProcess.getId())
-                .addUsageCharacteristicItem(toUsageCharacteristic(USAGE_CHARACTERISTIC_ASSET_ID, assetId))
-                .addUsageCharacteristicItem(
-                        toUsageCharacteristic(
-                                USAGE_CHARACTERISTIC_COUNTER_PARTY_ADDRESS,
-                                transferProcess.getCounterPartyAddress()))
-                .addUsageCharacteristicItem(
-                        toUsageCharacteristic(
-                                USAGE_CHARACTERISTIC_CONTRACT_ID, transferProcess.getContractId()))
-                .addUsageCharacteristicItem(
-                        toUsageCharacteristic(USAGE_CHARACTERISTIC_PROTOCOL, transferProcess.getProtocol()))
-                .addUsageCharacteristicItem(
-                        toUsageCharacteristic(USAGE_CHARACTERISTIC_TYPE, transferProcess.getType().name()))
-                .addUsageCharacteristicItem(
-                        toUsageCharacteristic(
-                                USAGE_CHARACTERISTIC_TRANSFER_TYPE, transferProcess.getTransferType()))
-                .usageType(USAGE_TYPE_DSP_TRANSFER);
-        Optional.ofNullable(transferProcess.getContentDataAddress())
-                .ifPresent(
-                        cda -> {
-                            usageVO.addUsageCharacteristicItem(
-                                    toUsageCharacteristic(USAGE_CHARACTERISTIC_CONTENT_DATA_ADDRESS, cda));
-                        });
-        Optional.ofNullable(transferProcess.getDataPlaneId())
-                .ifPresent(
-                        did ->
-                                usageVO.addUsageCharacteristicItem(
-                                        toUsageCharacteristic(USAGE_CHARACTERISTIC_DATAPLANE_ID, did)));
-
-        Optional.ofNullable(transferProcess.getCorrelationId())
-                .ifPresent(
-                        cid ->
-                                usageVO.addUsageCharacteristicItem(
-                                        toUsageCharacteristic(USAGE_CHARACTERISTIC_CORRELATION_ID, cid)));
-        if (transferProcess.getState() < TransferProcessStates.STARTED.code()) {
-            usageVO.status(UsageStatusTypeVO.RECEIVED);
-        } else {
-            usageVO.status(UsageStatusTypeVO.RATED);
-            usageVO.addRatedProductUsageItem(
-                    new RatedProductUsageVO()
-                            .productRef(new org.seamware.tmforum.usage.model.ProductRefVO().id(productId)));
-        }
-
-        if (transferProcess.getResourceManifest() != null) {
-            usageVO.addUsageCharacteristicItem(
-                    toUsageCharacteristic(
-                            USAGE_CHARACTERISTIC_RESOURCE_MANIFEST, transferProcess.getResourceManifest()));
-        }
-
-        return usageVO;
-    }
-
-    public <T> Optional<T> fromCharacteristics(
-            List<UsageCharacteristicVO> characteristicVOS, String key, Class<T> valueType) {
-        return characteristicVOS.stream()
-                .filter(characteristicVO -> characteristicVO.getName().equals(key))
-                .map(UsageCharacteristicVO::getValue)
-                .filter(valueType::isInstance)
-                .map(valueType::cast)
-                .findAny();
-    }
-
-    private UsageCharacteristicVO toUsageCharacteristic(String name, Object value) {
-        return new UsageCharacteristicVO().name(name).value(value);
-    }
+  private UsageCharacteristicVO toUsageCharacteristic(String name, Object value) {
+    return new UsageCharacteristicVO().name(name).value(value);
+  }
 }

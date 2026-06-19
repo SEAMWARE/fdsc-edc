@@ -29,52 +29,44 @@ import org.seamware.edc.store.TMFEdcMapper;
 import org.seamware.edc.store.TMForumBackedCatalogProtocolService;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
-/**
- * Extension to provide the catalog with contents from TMForum
- */
+/** Extension to provide the catalog with contents from TMForum */
 @Requires(CatalogProtocolService.class)
 public class CatalogProtocolServiceExtension implements ServiceExtension {
 
-    private static final String NAME = "Protocol Service Extension";
+  private static final String NAME = "Protocol Service Extension";
 
-    @Inject
-    public ProductCatalogApiClient productCatalogApi;
+  @Inject public ProductCatalogApiClient productCatalogApi;
 
-    @Inject
-    public Monitor monitor;
-    @Inject
-    public ObjectMapper objectMapper;
+  @Inject public Monitor monitor;
+  @Inject public ObjectMapper objectMapper;
 
-    @Inject
-    public TMFEdcMapper tmfEdcMapper;
+  @Inject public TMFEdcMapper tmfEdcMapper;
 
-    @Inject
-    public ProtocolTokenValidator protocolTokenValidator;
+  @Inject public ProtocolTokenValidator protocolTokenValidator;
 
-    @Inject
-    public PolicyEngine policyEngine;
+  @Inject public PolicyEngine policyEngine;
 
-    @Override
-    public String name() {
-        return NAME;
+  @Override
+  public String name() {
+    return NAME;
+  }
+
+  @Override
+  public void initialize(ServiceExtensionContext context) {
+    TMFConfig tmfConfig = TMFConfig.fromConfig(context.getConfig());
+    if (tmfConfig.isEnabled() && tmfConfig.getCatalogConfig().enabled()) {
+      context.registerService(
+          CatalogProtocolService.class,
+          new TMForumBackedCatalogProtocolService(
+              tmfEdcMapper,
+              productCatalogApi,
+              context.getParticipantId(),
+              protocolTokenValidator,
+              policyEngine,
+              monitor,
+              objectMapper));
+    } else {
+      monitor.info("TMF Catalog Protocol Service is not enabled.");
     }
-
-    @Override
-    public void initialize(ServiceExtensionContext context) {
-        TMFConfig tmfConfig = TMFConfig.fromConfig(context.getConfig());
-        if (tmfConfig.isEnabled() && tmfConfig.getCatalogConfig().enabled()) {
-            context.registerService(
-                    CatalogProtocolService.class,
-                    new TMForumBackedCatalogProtocolService(
-                            tmfEdcMapper,
-                            productCatalogApi,
-                            context.getParticipantId(),
-                            protocolTokenValidator,
-                            policyEngine,
-                            monitor,
-                            objectMapper));
-        } else {
-            monitor.info("TMF Catalog Protocol Service is not enabled.");
-        }
-    }
+  }
 }
