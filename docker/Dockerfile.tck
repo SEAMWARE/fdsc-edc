@@ -11,6 +11,8 @@ WORKDIR /app
 
 COPY ${JAR} edc.jar
 COPY config/tck/edc.properties /app/config/edc.properties
+COPY config/tck/additional-contexts.json /app/config/additional-contexts.json
+COPY config/tck/scope-mappings.json /app/config/scope-mappings.json
 
 # Default JVM memory settings: 512 MB heap prevents OOM when running 96+ extensions
 # with TMForum backend and DEBUG logging. Override via JVM_ARGS build arg.

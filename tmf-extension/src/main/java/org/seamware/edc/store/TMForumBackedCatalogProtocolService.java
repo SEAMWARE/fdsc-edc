@@ -16,6 +16,7 @@
  */
 package org.seamware.edc.store;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Catalog;
@@ -25,29 +26,56 @@ import org.eclipse.edc.connector.controlplane.services.spi.catalog.CatalogProtoc
 import org.eclipse.edc.connector.controlplane.services.spi.protocol.ProtocolTokenValidator;
 import org.eclipse.edc.participant.spi.ParticipantAgent;
 import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
+import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.spi.iam.TokenRepresentation;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.jetbrains.annotations.NotNull;
 import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.domain.ExtendableProductSpecification;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
+/**
+ * TMForum-backed implementation of the EDC CatalogProtocolService. Fetches product specifications
+ * and offerings from the TMForum API and maps them to EDC catalog datasets.
+ *
+ * <p>Access policies from each offering's contract definition are evaluated against the
+ * authenticated participant agent to filter catalog visibility.
+ */
 public class TMForumBackedCatalogProtocolService implements CatalogProtocolService {
 
   private final TMFEdcMapper tmfEdcMapper;
   private final ProductCatalogApiClient productCatalogApi;
   private final String participantId;
   private final ProtocolTokenValidator protocolTokenValidator;
+  private final PolicyEngine policyEngine;
+  private final Monitor monitor;
+  private final ObjectMapper objectMapper;
 
+  /**
+   * Creates a new TMForum-backed catalog protocol service.
+   *
+   * @param tmfEdcMapper mapper between TMForum and EDC entities
+   * @param productCatalogApi client for the TMForum Product Catalog API
+   * @param participantId the local participant's identifier
+   * @param protocolTokenValidator validator for incoming protocol tokens
+   * @param policyEngine the EDC policy engine for evaluating access policies
+   */
   public TMForumBackedCatalogProtocolService(
       TMFEdcMapper tmfEdcMapper,
       ProductCatalogApiClient productCatalogApi,
       String participantId,
-      ProtocolTokenValidator protocolTokenValidator) {
+      ProtocolTokenValidator protocolTokenValidator,
+      PolicyEngine policyEngine,
+      Monitor monitor,
+      ObjectMapper objectMapper) {
     this.tmfEdcMapper = tmfEdcMapper;
     this.productCatalogApi = productCatalogApi;
     this.participantId = participantId;
     this.protocolTokenValidator = protocolTokenValidator;
+    this.policyEngine = policyEngine;
+    this.monitor = monitor;
+    this.objectMapper = objectMapper;
   }
 
   /**
@@ -66,12 +94,17 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
       return ServiceResult.unauthorized("Request not authorized.");
     }
 
+    ParticipantAgent participantAgent = validatedToken.getContent();
+
     List<ExtendableProductSpecification> specs =
         productCatalogApi.getProductSpecifications(
             catalogRequestMessage.getQuerySpec().getOffset(),
             catalogRequestMessage.getQuerySpec().getLimit());
     List<ExtendableProductOffering> offerings =
         productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+
+    List<ExtendableProductOffering> accessibleOfferings =
+        tmfEdcMapper.filterByAccessPolicy(offerings, policyEngine, participantAgent);
 
     Catalog.Builder catalogBuilder = Catalog.Builder.newInstance();
     catalogBuilder.participantId(participantId);
@@ -83,11 +116,10 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
         .forEach(catalogBuilder::dataService);
 
     specs.stream()
-        .map(spec -> tmfEdcMapper.datasetFromProductSpecification(spec, offerings))
+        .map(spec -> tmfEdcMapper.datasetFromProductSpecification(spec, accessibleOfferings))
         .filter(Optional::isPresent)
         .map(Optional::get)
         .forEach(catalogBuilder::dataset);
-
     return ServiceResult.success(catalogBuilder.build());
   }
 

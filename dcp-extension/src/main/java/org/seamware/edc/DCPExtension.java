@@ -127,8 +127,8 @@ public class DCPExtension implements ServiceExtension {
       typeTransformerRegistry.register(
           new FixedJwtToVerifiableCredentialTransformer(context.getMonitor()));
 
-      // --- add policies here
-      // TODO: support odrl-pap based evaluation in the future.
+      // ODRL-PAP based policy evaluation is handled by OdrlPapPolicyExtension
+      // (policy-extension module). Enable via odrlPap.policy.enabled=true.
 
       // makes only sense to be evaluated on requests
       ruleBindingRegistry.bind("dayOfWeek", TransferProcessPolicyContext.TRANSFER_SCOPE);
