@@ -1,0 +1,12 @@
+{
+  "mappings": [
+    {
+      "match": { "http://www.w3.org/ns/odrl/2/leftOperand": "http://www.w3.org/ns/odrl/2/dayOfWeek" },
+      "scopes": ["transfer.process"]
+    },
+    {
+      "match": { "http://www.w3.org/ns/odrl/2/leftOperand": "https://w3id.org/dspace/2024/1/membershipType" },
+      "scopes": ["contract.negotiation", "catalog"]
+    }
+  ]
+}

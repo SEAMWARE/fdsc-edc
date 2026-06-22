@@ -57,6 +57,11 @@
         </dependency>
         <dependency>
             <groupId>org.seamware.edc</groupId>
+            <artifactId>policy-extension</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
             <artifactId>test-extension</artifactId>
             <version>${project.version}</version>
         </dependency>

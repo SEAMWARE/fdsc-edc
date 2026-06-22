@@ -120,6 +120,7 @@ wait_for_tmforum() {
 }
 
 ## Create a ProductSpecification (maps to an EDC Asset).
+## Prints the TMForum-assigned ID to stdout on success.
 create_product_spec() {
   asset_id="$1"
   response=$(curl -s --fail-with-body -X POST "${CATALOG_API}/productSpecification" \
@@ -147,27 +148,38 @@ create_product_spec() {
         }
       ]
     }" 2>&1) || {
-    log "WARNING: Failed to create ProductSpecification for asset ${asset_id}: ${response}"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Failed to create ProductSpecification for asset ${asset_id}: ${response}" >&2
     return 1
   }
+  echo "${response}" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4
   return 0
 }
 
 ## Create a ProductOffering (maps to an EDC ContractDefinition).
+## Parameters:
+##   $1 - offering external ID (e.g., CD123)
+##   $2 - TMForum ID of the referenced ProductSpecification
+##   $3 - ODRL policy UID (must be unique across all offerings)
 create_product_offering() {
   def_id="$1"
+  spec_tmf_id="$2"
+  policy_uid="$3"
+  odrl_policy="{\"@type\":\"http://www.w3.org/ns/odrl/2/Set\",\"http://www.w3.org/ns/odrl/2/uid\":\"${policy_uid}\",\"http://www.w3.org/ns/odrl/2/permission\":[{\"http://www.w3.org/ns/odrl/2/action\":[{\"@id\":\"http://www.w3.org/ns/odrl/2/use\"}]}]}"
   response=$(curl -s --fail-with-body -X POST "${CATALOG_API}/productOffering" \
     -H "Content-Type: application/json" \
     -d "{
       \"name\": \"${def_id}\",
       \"externalId\": \"${def_id}\",
       \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/external-id.json\",
+      \"productSpecification\": {
+        \"id\": \"${spec_tmf_id}\"
+      },
       \"productOfferingTerm\": [
         {
           \"name\": \"edc:contractDefinition\",
           \"@schemaLocation\": \"https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/contract-definition.json\",
-          \"contractPolicy\": ${ODRL_POLICY},
-          \"accessPolicy\": ${ODRL_POLICY}
+          \"contractPolicy\": ${odrl_policy},
+          \"accessPolicy\": ${odrl_policy}
         }
       ]
     }" 2>&1) || {
@@ -257,24 +269,42 @@ CONSUMER_ID=$(curl -X 'POST' \
   ]
 }' | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'); echo ${CONSUMER_ID}
 
-# Create ProductSpecifications (assets)
+# Create ProductSpecifications (assets) and capture TMForum-assigned IDs
 ASSET_COUNT=$(word_count "$ASSET_IDS")
 log "Creating ${ASSET_COUNT} ProductSpecifications (assets)..."
 success=0
+SPEC_MAP=""
 for asset_id in $ASSET_IDS; do
-  if create_product_spec "$asset_id"; then
+  tmf_id=$(create_product_spec "$asset_id") || true
+  if [ -n "$tmf_id" ]; then
     success=$((success + 1))
+    SPEC_MAP="${SPEC_MAP} ${asset_id}|${tmf_id}"
   fi
 done
 log "Created ${success}/${ASSET_COUNT} ProductSpecifications."
 
-# Create ProductOffering (contract definition)
-log "Creating ProductOffering (contract definition: ${CONTRACT_DEF_ID})..."
-if create_product_offering "$CONTRACT_DEF_ID"; then
-  log "ProductOffering created successfully."
-else
-  log "WARNING: ProductOffering creation failed."
-fi
+# Create ProductOfferings (contract definitions) — one per spec so each asset
+# appears as a dataset in the EDC catalog. TMFEdcMapper.referencesSpecification()
+# requires each offering to carry a productSpecification ref matching the spec.
+# The offering for TRANSFER_ASSET_ID uses the well-known CD123 external ID
+# expected by contract negotiation TCK tests.
+log "Creating ProductOfferings (contract definitions)..."
+offering_count=0
+for entry in $SPEC_MAP; do
+  asset_id="${entry%%|*}"
+  tmf_id="${entry#*|}"
+  if [ "$asset_id" = "$TRANSFER_ASSET_ID" ]; then
+    offering_id="$CONTRACT_DEF_ID"
+    policy_uid="$POLICY_ID"
+  else
+    offering_id="CD-${asset_id}"
+    policy_uid="P-${asset_id}"
+  fi
+  if create_product_offering "$offering_id" "$tmf_id" "$policy_uid"; then
+    offering_count=$((offering_count + 1))
+  fi
+done
+log "Created ${offering_count} ProductOfferings (contract definitions)."
 
 # Create provider-side agreements (connector = provider, TCK = consumer)
 PROVIDER_COUNT=$(word_count "$PROVIDER_AGREEMENT_IDS")

@@ -19,6 +19,7 @@ package org.seamware.edc;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.eclipse.edc.connector.controlplane.services.spi.catalog.CatalogProtocolService;
 import org.eclipse.edc.connector.controlplane.services.spi.protocol.ProtocolTokenValidator;
+import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Requires;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -43,6 +44,8 @@ public class CatalogProtocolServiceExtension implements ServiceExtension {
 
   @Inject public ProtocolTokenValidator protocolTokenValidator;
 
+  @Inject public PolicyEngine policyEngine;
+
   @Override
   public String name() {
     return NAME;
@@ -55,7 +58,13 @@ public class CatalogProtocolServiceExtension implements ServiceExtension {
       context.registerService(
           CatalogProtocolService.class,
           new TMForumBackedCatalogProtocolService(
-              tmfEdcMapper, productCatalogApi, context.getParticipantId(), protocolTokenValidator));
+              tmfEdcMapper,
+              productCatalogApi,
+              context.getParticipantId(),
+              protocolTokenValidator,
+              policyEngine,
+              monitor,
+              objectMapper));
     } else {
       monitor.info("TMF Catalog Protocol Service is not enabled.");
     }
