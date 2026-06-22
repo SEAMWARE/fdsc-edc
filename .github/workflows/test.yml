@@ -122,6 +122,9 @@ jobs:
           docker compose -f docker-compose.tck.yml logs scorpio > tck-logs/scorpio.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs tmforum > tck-logs/tmforum.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs tmf-init > tck-logs/tmf-init.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs pap-postgres > tck-logs/pap-postgres.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs opa > tck-logs/opa.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs odrl-pap > tck-logs/odrl-pap.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs edc > tck-logs/edc.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs tck > tck-logs/tck.log 2>&1 || true
 

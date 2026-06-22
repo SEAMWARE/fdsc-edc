@@ -2,7 +2,8 @@
 # Docker Compose for DSP TCK Conformance Testing
 #
 # Orchestrates PostGIS, Scorpio (NGSI-LD context broker), TMForum API,
-# fdsc-edc controlplane, and the Eclipse DSP TCK runner. TMForum uses
+# ODRL-PAP (policy evaluation), fdsc-edc controlplane, and the Eclipse
+# DSP TCK runner. TMForum uses
 # Scorpio as its storage backend, matching the production deployment topology.
 #
 # Usage (recommended — detached mode avoids abort-on-container-exit issues):
@@ -130,6 +131,70 @@ services:
       - tck-net
 
   # -------------------------------------------------------------------------
+  # PAP PostgreSQL — Database backend for ODRL-PAP
+  # -------------------------------------------------------------------------
+  pap-postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: pap
+      POSTGRES_PASSWORD: pap
+      POSTGRES_DB: pap
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pap -d pap"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # OPA — Open Policy Agent for ODRL-PAP policy evaluation
+  # -------------------------------------------------------------------------
+  opa:
+    image: openpolicyagent/opa:1.11.0
+    command: ["run", "--server", "--addr", "0.0.0.0:8181", "-c", "/config/opa.yaml"]
+    volumes:
+      - ./config/tck/opa.yaml:/config/opa.yaml:ro
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "true"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # ODRL-PAP — Policy Administration Point for ODRL policy evaluation
+  # -------------------------------------------------------------------------
+  # Evaluates ODRL policies at Layer 2 (post-authentication) for catalog,
+  # contract negotiation, and transfer process scopes. The EDC policy-extension
+  # delegates policy validation to this service via POST /validate.
+  # -------------------------------------------------------------------------
+  odrl-pap:
+    image: quay.io/wi_stefan/odrl-pap:${ODRL_PAP_VERSION:-local-amd64}
+    environment:
+      QUARKUS_DATASOURCE_USERNAME: pap
+      QUARKUS_DATASOURCE_PASSWORD: pap
+      QUARKUS_DATASOURCE_JDBC_URL: jdbc:postgresql://pap-postgres:5432/pap
+      QUARKUS_REST_CLIENT_OPA_YAML_URL: http://opa:8181
+      QUARKUS_REST_CLIENT_OPA_DATA_URL: http://opa:8181
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/9000 && echo -e \"GET /q/health/live HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n\" >&3 && read -t 2 line <&3 && [[ $$line == *200* ]]'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      pap-postgres:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
   # EDC Controlplane (OID4VC variant) configured for TCK mode
   # -------------------------------------------------------------------------
   edc:
@@ -155,6 +220,8 @@ services:
       start_period: 30s
     depends_on:
       tmf-init:
+        condition: service_healthy
+      odrl-pap:
         condition: service_healthy
     networks:
       - tck-net
