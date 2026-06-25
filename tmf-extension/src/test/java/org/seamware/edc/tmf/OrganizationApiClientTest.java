@@ -88,8 +88,7 @@ public class OrganizationApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals(
-        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
-        recordedRequest.getPath());
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100", recordedRequest.getPath());
   }
 
   @Test
@@ -104,8 +103,7 @@ public class OrganizationApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals(
-        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
-        recordedRequest.getPath());
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100", recordedRequest.getPath());
   }
 
   @Test
@@ -118,8 +116,7 @@ public class OrganizationApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals(
-        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
-        recordedRequest.getPath());
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100", recordedRequest.getPath());
   }
 
   @Test
@@ -132,8 +129,7 @@ public class OrganizationApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals(
-        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
-        recordedRequest.getPath());
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100", recordedRequest.getPath());
   }
 
   @Test
