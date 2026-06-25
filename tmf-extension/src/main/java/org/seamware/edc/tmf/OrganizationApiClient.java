@@ -35,6 +35,7 @@ public class OrganizationApiClient extends ApiClient {
 
   private static final String PARTY_CHARACTERISTIC_NAME = "partyCharacteristic.name";
   private static final String ORGANIZATION_PATH = "organization";
+  private static final int PAGE_SIZE = 100;
 
   private final String baseUrl;
   private final ObjectMapper objectMapper;
@@ -61,28 +62,37 @@ public class OrganizationApiClient extends ApiClient {
   }
 
   public Optional<OrganizationVO> getByDid(String did) {
-    HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
-    urlBuilder.addPathSegment(ORGANIZATION_PATH);
-    urlBuilder.addQueryParameter(PARTY_CHARACTERISTIC_NAME, PARTY_CHARACTERISTIC_DID);
-    Request request = new Request.Builder().url(urlBuilder.build()).build();
-    try (ResponseBody responseBody = executeRequest(request)) {
-      return objectMapper
-          .readValue(responseBody.bytes(), new TypeReference<List<OrganizationVO>>() {})
-          .stream()
-          .filter(
-              organizationVO ->
-                  Optional.ofNullable(organizationVO.getPartyCharacteristic())
-                      .orElse(List.of())
-                      .stream()
-                      .filter(
-                          characteristicVO ->
-                              characteristicVO.getName().equals(PARTY_CHARACTERISTIC_DID))
-                      .anyMatch(characteristicVO -> characteristicVO.getValue().equals(did)))
-          .findAny();
-    } catch (IOException e) {
-      monitor.warning("Was not able to get the organization by did.", e);
-      throw new BadGatewayException("Was not able to get the organization by did.");
+    // Page through the organizations: the TMForum query only filters by characteristic name,
+    // so the matching org may sit beyond the first page. Stop on the first match or when a
+    // short page signals the end, otherwise a present org could be missed and re-created.
+    Optional<OrganizationVO> match = Optional.empty();
+    boolean morePages = true;
+    int offset = 0;
+    while (match.isEmpty() && morePages) {
+      HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
+      urlBuilder.addPathSegment(ORGANIZATION_PATH);
+      urlBuilder.addQueryParameter(PARTY_CHARACTERISTIC_NAME, PARTY_CHARACTERISTIC_DID);
+      urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
+      urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(PAGE_SIZE));
+      Request request = new Request.Builder().url(urlBuilder.build()).build();
+      try (ResponseBody responseBody = executeRequest(request)) {
+        List<OrganizationVO> organizations =
+            objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {});
+        match = organizations.stream().filter(org -> hasDid(org, did)).findAny();
+        morePages = organizations.size() == PAGE_SIZE;
+        offset += PAGE_SIZE;
+      } catch (IOException e) {
+        monitor.warning("Was not able to get the organization by did.", e);
+        throw new BadGatewayException("Was not able to get the organization by did.");
+      }
     }
+    return match;
+  }
+
+  private static boolean hasDid(OrganizationVO organizationVO, String did) {
+    return Optional.ofNullable(organizationVO.getPartyCharacteristic()).orElse(List.of()).stream()
+        .filter(characteristicVO -> characteristicVO.getName().equals(PARTY_CHARACTERISTIC_DID))
+        .anyMatch(characteristicVO -> characteristicVO.getValue().equals(did));
   }
 
   /** Creates the given organization */
