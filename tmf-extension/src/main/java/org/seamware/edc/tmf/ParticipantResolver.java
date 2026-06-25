@@ -60,7 +60,7 @@ public class ParticipantResolver {
   }
 
   public String getTmfId(String did) {
-    return organizationApi.getByDid(did).orElse(createOrganization(did)).getId();
+    return organizationApi.getByDid(did).orElseGet(() -> createOrganization(did)).getId();
   }
 
   private OrganizationVO createOrganization(String did) {
