@@ -19,6 +19,8 @@ package org.seamware.edc.tmf;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.Test;
@@ -85,7 +87,9 @@ public class OrganizationApiClientTest extends AbstractApiTest {
         "The correct organization should be returned.");
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
-    assertEquals("/organization?partyCharacteristic.name=did", recordedRequest.getPath());
+    assertEquals(
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
+        recordedRequest.getPath());
   }
 
   @Test
@@ -99,7 +103,9 @@ public class OrganizationApiClientTest extends AbstractApiTest {
         "The correct organization should be returned.");
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
-    assertEquals("/organization?partyCharacteristic.name=did", recordedRequest.getPath());
+    assertEquals(
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
+        recordedRequest.getPath());
   }
 
   @Test
@@ -111,7 +117,9 @@ public class OrganizationApiClientTest extends AbstractApiTest {
         "If the organization does not exist, it should not be returned.");
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
-    assertEquals("/organization?partyCharacteristic.name=did", recordedRequest.getPath());
+    assertEquals(
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
+        recordedRequest.getPath());
   }
 
   @Test
@@ -123,7 +131,34 @@ public class OrganizationApiClientTest extends AbstractApiTest {
         "If the organization does not exist, it should not be returned.");
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
-    assertEquals("/organization?partyCharacteristic.name=did", recordedRequest.getPath());
+    assertEquals(
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
+        recordedRequest.getPath());
+  }
+
+  @Test
+  public void testGetByDid_success_second_page() throws Exception {
+    // First page is full (100 orgs, none matching) so the loop must fetch a second page,
+    // where the matching org lives.
+    List<OrganizationVO> firstPage =
+        IntStream.range(0, 100)
+            .mapToObj(i -> getValidOrganization("did:web:other-" + i))
+            .collect(Collectors.toList());
+    OrganizationVO testOrganization = getValidOrganization(TEST_ORGANIZATION_DID);
+    mockResponse(200, firstPage);
+    mockResponse(200, List.of(testOrganization));
+
+    assertEquals(
+        testOrganization,
+        organizationApiClient.getByDid(TEST_ORGANIZATION_DID).get(),
+        "The organization on the second page should be returned.");
+
+    assertEquals(
+        "/organization?partyCharacteristic.name=did&offset=0&limit=100",
+        mockWebServer.takeRequest().getPath());
+    assertEquals(
+        "/organization?partyCharacteristic.name=did&offset=100&limit=100",
+        mockWebServer.takeRequest().getPath());
   }
 
   @Test
