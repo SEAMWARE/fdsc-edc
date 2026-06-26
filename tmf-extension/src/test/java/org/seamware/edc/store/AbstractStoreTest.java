@@ -147,6 +147,22 @@ public abstract class AbstractStoreTest {
         Optional.of(TEST_SPEC_DESCRIPTION));
   }
 
+  /** Adds a transferType characteristic to a product spec, mirroring the endpoint pattern. */
+  protected static ExtendableProductSpecification withTransferType(
+      ExtendableProductSpecification spec, String transferType) {
+    spec.addProductSpecCharacteristicItem(
+        new ProductSpecificationCharacteristicVO()
+            .id("transferType")
+            .valueType("transferType")
+            .productSpecCharacteristicValue(
+                List.of(
+                    new CharacteristicValueSpecificationVO()
+                        .value(transferType)
+                        .valueType("transferType")
+                        .isDefault(true))));
+    return spec;
+  }
+
   protected static ExtendableAgreementVO getTestAgreement() {
     ExtendableAgreementVO agreementVO =
         new ExtendableAgreementVO()

@@ -36,7 +36,7 @@ package org.seamware.edc.transfer;
  * #L%
  */
 
-import static org.seamware.edc.FDSCTransferControlExtension.TRANSFER_TYPE_HTTP_PULL;
+import static org.seamware.edc.store.TransferTypes.HTTP_DATA_PULL;
 
 import org.eclipse.edc.connector.controlplane.transfer.spi.provision.ProviderResourceDefinitionGenerator;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinition;
@@ -75,6 +75,6 @@ public class FDSCOID4VPProviderResourceDefinitionGenerator
   @Override
   public boolean canGenerate(
       TransferProcess transferProcess, DataAddress assetAddress, Policy policy) {
-    return transferProcess.getTransferType().equals(TRANSFER_TYPE_HTTP_PULL);
+    return transferProcess.getTransferType().equals(HTTP_DATA_PULL);
   }
 }

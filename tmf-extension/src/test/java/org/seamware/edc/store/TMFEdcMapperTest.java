@@ -283,6 +283,59 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         "Invalid offerings should not be mapped to data sets.");
   }
 
+  @Test
+  public void datasetFromProductOffering_readsSupportedTransferTypeFromSpec()
+      throws JsonProcessingException {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+
+    ExtendableProductSpecification spec =
+        withTransferType(
+            getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))),
+            "HttpData-PULL");
+
+    Optional<Dataset> dataset =
+        tmfEdcMapper.datasetFromProductOffering(
+            offeringWithContractDefinition(), Optional.of(spec));
+
+    assertTrue(dataset.isPresent(), "A supported transferType should yield a dataset.");
+    assertEquals(
+        "HttpData-PULL",
+        dataset.get().getDistributions().getFirst().getFormat(),
+        "The distribution format should match the spec transferType.");
+  }
+
+  @Test
+  public void datasetFromProductOffering_omitsDatasetForUnsupportedTransferType()
+      throws JsonProcessingException {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+
+    ExtendableProductSpecification spec =
+        withTransferType(
+            getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))),
+            "HttpData-PUSH");
+
+    assertFalse(
+        tmfEdcMapper
+            .datasetFromProductOffering(offeringWithContractDefinition(), Optional.of(spec))
+            .isPresent(),
+        "An unsupported transferType should omit the dataset from the catalog.");
+  }
+
+  private static ExtendableProductOffering offeringWithContractDefinition() {
+    ProductOfferingTermVO term =
+        new ExtendableProductOfferingTerm()
+            .additionalProperties(Map.of("contractPolicy", getTestOdrlPolicy()))
+            .name("edc:contractDefinition");
+    ExtendableProductOffering offering =
+        new ExtendableProductOffering().setExternalId(TEST_OFFER_ID);
+    offering.setExtendableProductOfferingTerm(List.of((ExtendableProductOfferingTerm) term));
+    return offering;
+  }
+
   // ---- TO CONTRACT NEGOTIATIONS ----
 
   @ParameterizedTest(name = "{0}")
@@ -1340,7 +1393,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .offers(Map.of(TEST_OFFER_ID, getTestPolicy()))
             .distribution(
                 Distribution.Builder.newInstance()
-                    .format("http")
+                    .format("HttpData-PULL")
                     .dataService(
                         DataService.Builder.newInstance()
                             .id("test-1")
@@ -1371,7 +1424,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .offers(Map.of(TEST_OFFER_ID, getTestPolicy()))
             .distribution(
                 Distribution.Builder.newInstance()
-                    .format("http")
+                    .format("HttpData-PULL")
                     .dataService(
                         DataService.Builder.newInstance()
                             .id("test-1")
@@ -1381,7 +1434,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     .build())
             .distribution(
                 Distribution.Builder.newInstance()
-                    .format("http")
+                    .format("HttpData-PULL")
                     .dataService(
                         DataService.Builder.newInstance()
                             .id("test-2")
