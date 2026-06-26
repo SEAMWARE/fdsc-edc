@@ -71,6 +71,7 @@ import org.seamware.edc.dcp.JwksController;
 import org.seamware.edc.dcp.OidConfigController;
 import org.seamware.edc.pap.OdrlPapClient;
 import org.seamware.edc.store.TMFEdcMapper;
+import org.seamware.edc.store.TransferTypes;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 import org.seamware.edc.transfer.*;
 
@@ -84,8 +85,6 @@ public class FDSCTransferControlExtension implements ServiceExtension {
   public static final String DATAPLANE_OID4VP_ID = "FDSC-OID4VC";
   public static final String DATAPLANE_DCP_ID = "FDSC-DCP";
   public static final String FDSC_TYPE = "FDSC";
-  public static final String TYPE_HTTP_DATA = "HttpData";
-  public static final String TRANSFER_TYPE_HTTP_PULL = "HttpData-PULL";
 
   @Inject public ProvisionManager provisionManager;
 
@@ -201,13 +200,14 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             .url(transferConfig.getApisix().address())
             .state(DataPlaneInstanceStates.AVAILABLE.code())
             .allowedSourceType(FDSC_TYPE)
-            .allowedTransferType(TRANSFER_TYPE_HTTP_PULL)
+            .allowedTransferType(TransferTypes.HTTP_DATA_PULL)
             .build());
     EndpointDataReferenceService endpointDataReferenceService =
         new FDSCDcpEndpointDataReferenceService(
             transferConfig, vault, context.getParticipantId(), clock);
 
-    endpointDataReferenceServiceRegistry.register(TYPE_HTTP_DATA, endpointDataReferenceService);
+    endpointDataReferenceServiceRegistry.register(
+        TransferTypes.TYPE_HTTP_DATA, endpointDataReferenceService);
     endpointDataReferenceServiceRegistry.register(FDSC_TYPE, endpointDataReferenceService);
   }
 
@@ -237,13 +237,14 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             .url(transferConfig.getApisix().address())
             .state(DataPlaneInstanceStates.AVAILABLE.code())
             .allowedSourceType(FDSC_TYPE)
-            .allowedTransferType(TRANSFER_TYPE_HTTP_PULL)
+            .allowedTransferType(TransferTypes.HTTP_DATA_PULL)
             .build());
 
     EndpointDataReferenceService endpointDataReferenceService =
         new FDSCOid4VpEndpointDataReferenceService(transferConfig);
 
-    endpointDataReferenceServiceRegistry.register(TYPE_HTTP_DATA, endpointDataReferenceService);
+    endpointDataReferenceServiceRegistry.register(
+        TransferTypes.TYPE_HTTP_DATA, endpointDataReferenceService);
     endpointDataReferenceServiceRegistry.register(FDSC_TYPE, endpointDataReferenceService);
   }
 

@@ -70,6 +70,10 @@ import org.seamware.tmforum.usage.model.UsageStatusTypeVO;
 /** Mapper between TMForum and EDC entities */
 public class TMFEdcMapper {
 
+  // Product-spec characteristic (valueType) that lets an offering declare its DSP transferType,
+  // which becomes the catalog distribution format the consumer requests. Defaults to HttpData-PULL
+  // when absent; see TransferTypes for the supported set.
+  public static final String TRANSFER_TYPE_KEY = "transferType";
   public static final String POT_NAME_CONTRACT_DEFINITION = "edc:contractDefinition";
   public static final String CONTRACT_POLICY_KEY = "contractPolicy";
   public static final String ACCESS_POLICY_KEY = "accessPolicy";
@@ -203,8 +207,17 @@ public class TMFEdcMapper {
               .offer(extendableProductOffering.getExternalId(), contractPolicy);
       productSpecification.ifPresent(pS -> datasetBuilder.id(pS.getExternalId()));
 
+      Optional<String> transferType = resolveTransferType(productSpecification);
+      if (transferType.isEmpty()) {
+        return Optional.empty();
+      }
       getDataService(productSpecification).stream()
-          .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
+          .map(
+              ds ->
+                  Distribution.Builder.newInstance()
+                      .format(transferType.get())
+                      .dataService(ds)
+                      .build())
           .forEach(datasetBuilder::distribution);
       return Optional.of(datasetBuilder.build());
     } catch (RuntimeException e) {
@@ -259,8 +272,17 @@ public class TMFEdcMapper {
         return Optional.empty();
       }
 
+      Optional<String> transferType = resolveTransferType(Optional.of(productSpecification));
+      if (transferType.isEmpty()) {
+        return Optional.empty();
+      }
       getDataService(Optional.of(productSpecification)).stream()
-          .map(ds -> Distribution.Builder.newInstance().format("http").dataService(ds).build())
+          .map(
+              ds ->
+                  Distribution.Builder.newInstance()
+                      .format(transferType.get())
+                      .dataService(ds)
+                      .build())
           .forEach(datasetBuilder::distribution);
 
       return Optional.of(datasetBuilder.build());
@@ -310,6 +332,38 @@ public class TMFEdcMapper {
                     .id(endpoint.id())
                     .build())
         .toList();
+  }
+
+  /**
+   * Resolves the DSP transferType for an offering from its product-spec {@code transferType}
+   * characteristic, used as the catalog distribution format. Defaults to {@link
+   * TransferTypes#HTTP_DATA_PULL} when the characteristic is absent (backwards compatible). Returns
+   * empty when a value is present but not supported, so the caller omits the dataset from the
+   * catalog.
+   */
+  public Optional<String> resolveTransferType(
+      Optional<ExtendableProductSpecification> productSpecification) {
+    Optional<String> declared =
+        productSpecification
+            .map(ExtendableProductSpecification::getProductSpecCharacteristic)
+            .orElse(List.of())
+            .stream()
+            .filter(spec -> TRANSFER_TYPE_KEY.equals(spec.getValueType()))
+            .flatMap(spec -> getValue(spec.getProductSpecCharacteristicValue()).stream())
+            .findFirst();
+    if (declared.isEmpty()) {
+      return Optional.of(TransferTypes.HTTP_DATA_PULL);
+    }
+    String transferType = declared.get();
+    if (!TransferTypes.SUPPORTED.contains(transferType)) {
+      monitor.warning(
+          String.format(
+              "Unsupported transferType '%s' declared in product spec; omitting dataset."
+                  + " Supported: %s",
+              transferType, TransferTypes.SUPPORTED));
+      return Optional.empty();
+    }
+    return Optional.of(transferType);
   }
 
   public ContractNegotiation toContractNegotiation(
