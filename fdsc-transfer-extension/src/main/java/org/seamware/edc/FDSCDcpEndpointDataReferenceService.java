@@ -108,15 +108,10 @@ public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenc
       var fdscDataAddressBuilder =
           FDSCDataAddress.Builder.newInstance()
               .clientId(dataFlow.getId())
-              .property(EDC_NAMESPACE + "token", signedJWT.serialize())
+              .property(EDC_NAMESPACE + "authorization", "Bearer " + signedJWT.serialize())
               .property(EDC_NAMESPACE + "tokenType", "bearer")
               .property(
-                  EDC_NAMESPACE + "endpoint",
-                  transferConfig.getTransferProtocol()
-                      + "://"
-                      + transferConfig.getTransferHost()
-                      + "/"
-                      + dataFlow.getId())
+                  EDC_NAMESPACE + "endpoint", FDSCEndpoints.buildEndpoint(transferConfig, dataFlow))
               .property(EDC_NAMESPACE + "endpointType", ENDPOINT_TYPE);
 
       return Result.success(fdscDataAddressBuilder.build());

@@ -102,7 +102,40 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
         "https://w3id.org/idsa/v4.1/HTTP",
         dataAddress.getStringProperty(EDC_NAMESPACE + "endpointType"));
     assertEquals("my-flow", dataAddress.getStringProperty("clientId"));
-    assertFalse(dataAddress.getStringProperty(EDC_NAMESPACE + "token").isEmpty());
+    String authorization = dataAddress.getStringProperty(EDC_NAMESPACE + "authorization");
+    assertNotNull(authorization, "The authorization property should be present.");
+    assertTrue(
+        authorization.startsWith("Bearer "),
+        "The authorization value should be prefixed with 'Bearer '.");
+    assertFalse(
+        authorization.substring("Bearer ".length()).isEmpty(),
+        "The authorization value should contain the signed token.");
+  }
+
+  @Test
+  public void testCreateEndpointReference_appendsTransferPath() {
+    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
+
+    DataFlow theFlow = getDataFlow("/ngsi-ld/v1/entities?type=CrowdFlowObserved");
+    DataAddress dataAddress =
+        fdscDcpEndpointDataReferenceService.createEndpointDataReference(theFlow).getContent();
+
+    assertEquals(
+        "https://transfer.host/my-flow/ngsi-ld/v1/entities?type=CrowdFlowObserved",
+        dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
+  }
+
+  @Test
+  public void testCreateEndpointReference_normalizesMissingLeadingSlash() {
+    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
+
+    DataFlow theFlow = getDataFlow("ngsi-ld/v1/entities");
+    DataAddress dataAddress =
+        fdscDcpEndpointDataReferenceService.createEndpointDataReference(theFlow).getContent();
+
+    assertEquals(
+        "https://transfer.host/my-flow/ngsi-ld/v1/entities",
+        dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
   }
 
   @Test
@@ -144,5 +177,16 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
   private static DataFlow getDataFlow() {
     DataFlow theFlow = DataFlow.Builder.newInstance().id("my-flow").build();
     return theFlow;
+  }
+
+  private static DataFlow getDataFlow(String transferPath) {
+    return DataFlow.Builder.newInstance()
+        .id("my-flow")
+        .source(
+            DataAddress.Builder.newInstance()
+                .type("FDSC")
+                .property("transferPath", transferPath)
+                .build())
+        .build();
   }
 }
