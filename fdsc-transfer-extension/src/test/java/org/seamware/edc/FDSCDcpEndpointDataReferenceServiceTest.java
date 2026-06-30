@@ -95,14 +95,14 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
     DataAddress dataAddress = dataAddressResult.getContent();
 
     assertEquals("FDSC", dataAddress.getType());
-    assertEquals("bearer", dataAddress.getStringProperty(EDC_NAMESPACE + "tokenType"));
+    assertEquals("bearer", dataAddress.getStringProperty(EDC_NAMESPACE + "authType"));
     assertEquals(
         "https://transfer.host/my-flow", dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
     assertEquals(
         "https://w3id.org/idsa/v4.1/HTTP",
         dataAddress.getStringProperty(EDC_NAMESPACE + "endpointType"));
     assertEquals("my-flow", dataAddress.getStringProperty("clientId"));
-    assertFalse(dataAddress.getStringProperty(EDC_NAMESPACE + "token").isEmpty());
+    assertFalse(dataAddress.getStringProperty(EDC_NAMESPACE + "authorization").isEmpty());
   }
 
   @Test
