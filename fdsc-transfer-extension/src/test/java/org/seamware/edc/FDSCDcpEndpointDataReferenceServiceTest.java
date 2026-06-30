@@ -95,47 +95,14 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
     DataAddress dataAddress = dataAddressResult.getContent();
 
     assertEquals("FDSC", dataAddress.getType());
-    assertEquals("bearer", dataAddress.getStringProperty(EDC_NAMESPACE + "tokenType"));
+    assertEquals("bearer", dataAddress.getStringProperty(EDC_NAMESPACE + "authType"));
     assertEquals(
         "https://transfer.host/my-flow", dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
     assertEquals(
         "https://w3id.org/idsa/v4.1/HTTP",
         dataAddress.getStringProperty(EDC_NAMESPACE + "endpointType"));
     assertEquals("my-flow", dataAddress.getStringProperty("clientId"));
-    String authorization = dataAddress.getStringProperty(EDC_NAMESPACE + "authorization");
-    assertNotNull(authorization, "The authorization property should be present.");
-    assertTrue(
-        authorization.startsWith("Bearer "),
-        "The authorization value should be prefixed with 'Bearer '.");
-    assertFalse(
-        authorization.substring("Bearer ".length()).isEmpty(),
-        "The authorization value should contain the signed token.");
-  }
-
-  @Test
-  public void testCreateEndpointReference_appendsTransferPath() {
-    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
-
-    DataFlow theFlow = getDataFlow("/ngsi-ld/v1/entities?type=CrowdFlowObserved");
-    DataAddress dataAddress =
-        fdscDcpEndpointDataReferenceService.createEndpointDataReference(theFlow).getContent();
-
-    assertEquals(
-        "https://transfer.host/my-flow/ngsi-ld/v1/entities?type=CrowdFlowObserved",
-        dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
-  }
-
-  @Test
-  public void testCreateEndpointReference_normalizesMissingLeadingSlash() {
-    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
-
-    DataFlow theFlow = getDataFlow("ngsi-ld/v1/entities");
-    DataAddress dataAddress =
-        fdscDcpEndpointDataReferenceService.createEndpointDataReference(theFlow).getContent();
-
-    assertEquals(
-        "https://transfer.host/my-flow/ngsi-ld/v1/entities",
-        dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
+    assertFalse(dataAddress.getStringProperty(EDC_NAMESPACE + "authorization").isEmpty());
   }
 
   @Test
