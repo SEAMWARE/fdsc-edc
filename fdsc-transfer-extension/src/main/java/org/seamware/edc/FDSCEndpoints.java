@@ -36,42 +36,36 @@ package org.seamware.edc;
  * #L%
  */
 
-import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
-
+import java.util.Optional;
 import org.eclipse.edc.connector.dataplane.spi.DataFlow;
-import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
-import org.eclipse.edc.spi.result.Result;
-import org.eclipse.edc.spi.result.ServiceResult;
-import org.eclipse.edc.spi.types.domain.DataAddress;
-import org.seamware.edc.transfer.FDSCDataAddress;
+import org.seamware.edc.store.TMFEdcMapper;
 
-public class FDSCOid4VpEndpointDataReferenceService implements EndpointDataReferenceService {
+/** Helpers shared by the {@code EndpointDataReferenceService} implementations. */
+final class FDSCEndpoints {
 
-  public static final String ENDPOINT_TYPE = "https://w3id.org/idsa/v4.1/HTTP";
+  private FDSCEndpoints() {}
 
-  private final TransferConfig transferConfig;
-
-  public FDSCOid4VpEndpointDataReferenceService(TransferConfig transferConfig) {
-    this.transferConfig = transferConfig;
-  }
-
-  @Override
-  public Result<DataAddress> createEndpointDataReference(DataFlow dataFlow) {
-
-    var fdscDataAddressBuilder =
-        FDSCDataAddress.Builder.newInstance()
-            .clientId(dataFlow.getId())
-            .type(ENDPOINT_TYPE)
-            .property(
-                EDC_NAMESPACE + "endpoint", FDSCEndpoints.buildEndpoint(transferConfig, dataFlow))
-            .property(EDC_NAMESPACE + "endpointType", ENDPOINT_TYPE);
-
-    return Result.success(fdscDataAddressBuilder.build());
-  }
-
-  @Override
-  public ServiceResult<Void> revokeEndpointDataReference(String s, String s1) {
-    // nothing to be revoked, since token handling happens at the OID4VC level
-    return ServiceResult.success();
+  /**
+   * Builds the public transfer endpoint returned in the EDR. The base is {@code
+   * protocol://host/{dataFlowId}}; if the data flow source carries a {@code transferPath} property
+   * (declared on the TMForum product spec and propagated through the asset DataAddress), it is
+   * appended. Absent or blank path keeps the legacy behaviour.
+   */
+  static String buildEndpoint(TransferConfig transferConfig, DataFlow dataFlow) {
+    String base =
+        transferConfig.getTransferProtocol()
+            + "://"
+            + transferConfig.getTransferHost()
+            + "/"
+            + dataFlow.getId();
+    String path =
+        Optional.ofNullable(dataFlow.getSource())
+            .map(source -> source.getStringProperty(TMFEdcMapper.TRANSFER_PATH_KEY))
+            .filter(p -> !p.isBlank())
+            .orElse(null);
+    if (path == null) {
+      return base;
+    }
+    return base + (path.startsWith("/") ? path : "/" + path);
   }
 }

@@ -38,112 +38,72 @@ package org.seamware.edc;
 
 import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
-import com.nimbusds.jose.JWSAlgorithm;
-import com.nimbusds.jose.jwk.KeyUse;
-import com.nimbusds.jose.jwk.RSAKey;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.NoSuchAlgorithmException;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneId;
 import org.eclipse.edc.connector.dataplane.spi.DataFlow;
 import org.eclipse.edc.spi.result.Result;
-import org.eclipse.edc.spi.security.Vault;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-public class FDSCDcpEndpointDataReferenceServiceTest {
+public class FDSCOid4VpEndpointDataReferenceServiceTest {
 
   private static final String TEST_TRANSFER_HOST = "transfer.host";
-  private static final String TEST_ISSUER = "test-issuer";
 
-  private Vault vault;
-  private Clock clock;
-
-  private FDSCDcpEndpointDataReferenceService fdscDcpEndpointDataReferenceService;
+  private FDSCOid4VpEndpointDataReferenceService fdscOid4VpEndpointDataReferenceService;
 
   @BeforeEach
   public void setup() {
-    vault = mock(Vault.class);
-    clock = Clock.fixed(Instant.EPOCH, ZoneId.systemDefault());
-
     TransferConfig transferConfig =
         TransferConfig.Builder.newInstance()
             .transferHost(TEST_TRANSFER_HOST)
             .transferProtocol("https")
             .build();
 
-    fdscDcpEndpointDataReferenceService =
-        new FDSCDcpEndpointDataReferenceService(transferConfig, vault, TEST_ISSUER, clock);
+    fdscOid4VpEndpointDataReferenceService =
+        new FDSCOid4VpEndpointDataReferenceService(transferConfig);
   }
 
   @Test
-  public void testCreateEndpointReference_success() {
-    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
-
-    DataFlow theFlow = getDataFlow();
+  public void testCreateEndpointReference_noPath() {
     Result<DataAddress> dataAddressResult =
-        fdscDcpEndpointDataReferenceService.createEndpointDataReference(theFlow);
+        fdscOid4VpEndpointDataReferenceService.createEndpointDataReference(getDataFlow());
     assertTrue(dataAddressResult.succeeded(), "The data address should have been returned.");
 
     DataAddress dataAddress = dataAddressResult.getContent();
-
-    assertEquals("FDSC", dataAddress.getType());
-    assertEquals("bearer", dataAddress.getStringProperty(EDC_NAMESPACE + "authType"));
     assertEquals(
         "https://transfer.host/my-flow", dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
     assertEquals(
         "https://w3id.org/idsa/v4.1/HTTP",
         dataAddress.getStringProperty(EDC_NAMESPACE + "endpointType"));
     assertEquals("my-flow", dataAddress.getStringProperty("clientId"));
-    assertFalse(dataAddress.getStringProperty(EDC_NAMESPACE + "authorization").isEmpty());
   }
 
   @Test
-  public void testCreateEndpointReference_fail_no_key() {
-    when(vault.resolveSecret(any())).thenReturn(null);
-    assertTrue(
-        fdscDcpEndpointDataReferenceService.createEndpointDataReference(getDataFlow()).failed(),
-        "Without a key, no address should be returned.");
+  public void testCreateEndpointReference_appendsTransferPath() {
+    DataAddress dataAddress =
+        fdscOid4VpEndpointDataReferenceService
+            .createEndpointDataReference(getDataFlow("/ngsi-ld/v1/entities?type=CrowdFlowObserved"))
+            .getContent();
+
+    assertEquals(
+        "https://transfer.host/my-flow/ngsi-ld/v1/entities?type=CrowdFlowObserved",
+        dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
   }
 
   @Test
-  public void testCreateEndpointReference_fail_invalid_key() {
-    when(vault.resolveSecret(any())).thenReturn("my-non-rsa-key");
-    assertTrue(
-        fdscDcpEndpointDataReferenceService.createEndpointDataReference(getDataFlow()).failed(),
-        "Without a valid key, no address should be returned.");
-  }
+  public void testCreateEndpointReference_normalizesMissingLeadingSlash() {
+    DataAddress dataAddress =
+        fdscOid4VpEndpointDataReferenceService
+            .createEndpointDataReference(getDataFlow("ngsi-ld/v1/entities"))
+            .getContent();
 
-  private String getRSAJWK() {
-    KeyPairGenerator kpg = null;
-    try {
-      kpg = KeyPairGenerator.getInstance("RSA");
-    } catch (NoSuchAlgorithmException e) {
-      throw new IllegalArgumentException("RSA is not available.", e);
-    }
-    kpg.initialize(2048);
-    KeyPair keyPair = kpg.generateKeyPair();
-
-    RSAKey rsaJWK =
-        new RSAKey.Builder((java.security.interfaces.RSAPublicKey) keyPair.getPublic())
-            .privateKey((java.security.interfaces.RSAPrivateKey) keyPair.getPrivate())
-            .keyID("sig")
-            .keyUse(KeyUse.SIGNATURE)
-            .algorithm(JWSAlgorithm.RS256)
-            .build();
-    return rsaJWK.toJSONString();
+    assertEquals(
+        "https://transfer.host/my-flow/ngsi-ld/v1/entities",
+        dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
   }
 
   private static DataFlow getDataFlow() {
-    DataFlow theFlow = DataFlow.Builder.newInstance().id("my-flow").build();
-    return theFlow;
+    return DataFlow.Builder.newInstance().id("my-flow").build();
   }
 
   private static DataFlow getDataFlow(String transferPath) {
