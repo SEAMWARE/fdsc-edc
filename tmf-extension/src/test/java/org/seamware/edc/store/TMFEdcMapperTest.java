@@ -66,6 +66,7 @@ import org.seamware.edc.util.NoopMonitor;
 import org.seamware.tmforum.agreement.model.AgreementVO;
 import org.seamware.tmforum.party.model.OrganizationVO;
 import org.seamware.tmforum.productcatalog.model.ProductOfferingTermVO;
+import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 import org.seamware.tmforum.quote.model.ProductOfferingRefVO;
 import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
 
@@ -520,6 +521,54 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     Optional.of("upstream")))
             .isEmpty(),
         "Without an external Id, the product cannot be supported.");
+  }
+
+  @Test
+  public void assetFromProductSpec_readsTransferPathFromSpec() {
+    Optional<Asset> asset =
+        tmfEdcMapper.assetFromProductSpec(
+            withTransferPath(
+                getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))),
+                "/ngsi-ld/v1/entities?type=CrowdFlowObserved"));
+
+    assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
+    assertEquals(
+        "/ngsi-ld/v1/entities?type=CrowdFlowObserved",
+        asset.get().getDataAddress().getStringProperty(TMFEdcMapper.TRANSFER_PATH_KEY),
+        "The transferPath should have been copied to the asset DataAddress.");
+  }
+
+  @Test
+  public void assetFromProductSpec_omitsTransferPathWhenAbsent() {
+    Optional<Asset> asset =
+        tmfEdcMapper.assetFromProductSpec(
+            getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))));
+
+    assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
+    assertNull(
+        asset.get().getDataAddress().getStringProperty(TMFEdcMapper.TRANSFER_PATH_KEY),
+        "Without the characteristic, no transferPath should be set on the DataAddress.");
+  }
+
+  @Test
+  public void assetFromProductSpec_ignoresCharacteristicWithNullValueType() {
+    ExtendableProductSpecification spec =
+        getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point")));
+    // a characteristic with no valueType must not crash the string switch
+    spec.addProductSpecCharacteristicItem(new ProductSpecificationCharacteristicVO().id("orphan"));
+
+    Optional<Asset> asset = tmfEdcMapper.assetFromProductSpec(spec);
+
+    assertTrue(asset.isPresent(), "A null valueType characteristic should be skipped, not fatal.");
+  }
+
+  @Test
+  public void getDataService_ignoresCharacteristicWithNullValueType() {
+    ExtendableProductSpecification spec =
+        getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point")));
+    spec.addProductSpecCharacteristicItem(new ProductSpecificationCharacteristicVO().id("orphan"));
+
+    assertDoesNotThrow(() -> tmfEdcMapper.getDataService(Optional.of(spec)));
   }
 
   // ---- ID FROM POLICY ----

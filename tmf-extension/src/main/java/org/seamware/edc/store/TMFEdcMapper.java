@@ -79,6 +79,10 @@ public class TMFEdcMapper {
   public static final String ACCESS_POLICY_KEY = "accessPolicy";
   public static final String ENDPOINT_URL_KEY = "endpointUrl";
   public static final String ENDPOINT_DESCRIPTION_KEY = "endpointDescription";
+  // Product-spec characteristic (valueType) that lets an offering declare a path to be appended to
+  // the transfer endpoint returned in the EDR. Propagated through the asset DataAddress (the data
+  // flow source) and read by the EndpointDataReferenceService. Optional; absent means no path.
+  public static final String TRANSFER_PATH_KEY = "transferPath";
   public static final String UPSTREAM_ADDRESS_KEY = "upstreamAddress";
   public static final String UID_KEY = "http://www.w3.org/ns/odrl/2/uid";
   public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
@@ -310,6 +314,9 @@ public class TMFEdcMapper {
         .orElse(List.of())
         .forEach(
             spec -> {
+              if (spec.getValueType() == null) {
+                return;
+              }
               switch (spec.getValueType()) {
                 case ENDPOINT_URL_KEY -> {
                   getValue(spec.getProductSpecCharacteristicValue())
@@ -613,6 +620,9 @@ public class TMFEdcMapper {
     }
     specChars.forEach(
         spec -> {
+          if (spec.getValueType() == null) {
+            return;
+          }
           switch (spec.getValueType()) {
             case ENDPOINT_URL_KEY ->
                 getValue(spec.getProductSpecCharacteristicValue())
@@ -620,6 +630,9 @@ public class TMFEdcMapper {
             case ENDPOINT_DESCRIPTION_KEY ->
                 getValue(spec.getProductSpecCharacteristicValue())
                     .ifPresent(desc -> dataAddressBuilder.property(ENDPOINT_DESCRIPTION_KEY, desc));
+            case TRANSFER_PATH_KEY ->
+                getValue(spec.getProductSpecCharacteristicValue())
+                    .ifPresent(path -> dataAddressBuilder.property(TRANSFER_PATH_KEY, path));
           }
         });
 

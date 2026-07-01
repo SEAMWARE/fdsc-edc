@@ -163,6 +163,22 @@ public abstract class AbstractStoreTest {
     return spec;
   }
 
+  /** Adds a transferPath characteristic to a product spec, mirroring the endpoint pattern. */
+  protected static ExtendableProductSpecification withTransferPath(
+      ExtendableProductSpecification spec, String transferPath) {
+    spec.addProductSpecCharacteristicItem(
+        new ProductSpecificationCharacteristicVO()
+            .id("transferPath")
+            .valueType("transferPath")
+            .productSpecCharacteristicValue(
+                List.of(
+                    new CharacteristicValueSpecificationVO()
+                        .value(transferPath)
+                        .valueType("transferPath")
+                        .isDefault(true))));
+    return spec;
+  }
+
   protected static ExtendableAgreementVO getTestAgreement() {
     ExtendableAgreementVO agreementVO =
         new ExtendableAgreementVO()
