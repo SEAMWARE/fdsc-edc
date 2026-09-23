@@ -65,6 +65,11 @@
             <artifactId>test-extension</artifactId>
             <version>${project.version}</version>
         </dependency>
+         <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>otel-observability-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
 
         <dependency>

@@ -37,6 +37,8 @@
 
         <version.org.apache.maven.plugins.maven-surfire-plugin>3.5.3</version.org.apache.maven.plugins.maven-surfire-plugin>
 
+        <version.io.opentelemetry>1.44.1</version.io.opentelemetry>
+
         <main.basedir>${project.basedir}</main.basedir>
         <image.registry>quay.io</image.registry>
         <image.repository>seamware</image.repository>
@@ -49,6 +51,7 @@
         <module>test-extension</module>
         <module>dcp-extension</module>
         <module>policy-extension</module>
+        <module>otel-observability-core</module>
         <module>controlplane-oid4vc</module>
         <module>controlplane-dcp</module>
         <module>controlplane-tck</module>
