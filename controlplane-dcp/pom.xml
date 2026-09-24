@@ -59,6 +59,11 @@
             <artifactId>otel-observability-core</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>otel-audit-extension</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
 
         <dependency>
