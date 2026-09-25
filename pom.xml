@@ -53,6 +53,7 @@
         <module>policy-extension</module>
         <module>otel-observability-core</module>
         <module>otel-audit-extension</module>
+        <module>otel-business-metrics</module>
         <module>controlplane-oid4vc</module>
         <module>controlplane-dcp</module>
         <module>controlplane-tck</module>

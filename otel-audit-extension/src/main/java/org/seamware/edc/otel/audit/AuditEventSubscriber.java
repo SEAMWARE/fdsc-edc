@@ -21,11 +21,6 @@ import io.opentelemetry.api.common.AttributesBuilder;
 import io.opentelemetry.api.logs.Logger;
 import io.opentelemetry.api.logs.Severity;
 import java.time.Clock;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationEvent;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessEvent;
@@ -35,6 +30,8 @@ import org.eclipse.edc.spi.event.Event;
 import org.eclipse.edc.spi.event.EventEnvelope;
 import org.eclipse.edc.spi.event.EventSubscriber;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.seamware.edc.otel.EntityLifecycleTracker;
+import org.seamware.edc.otel.LifecycleStates;
 
 /**
  * Translates contract negotiation and transfer process events into OpenTelemetry audit log records.
@@ -64,31 +61,20 @@ public class AuditEventSubscriber implements EventSubscriber {
   static final String ATTR_CONTRACT_ID = "edc.contract.id";
   static final String ATTR_TRANSFER_TYPE = "edc.transfer.type";
 
-  private static final String NEGOTIATION_PREFIX = "contract.negotiation.";
-  private static final String TRANSFER_PREFIX = "transfer.process.";
-
-  /** States after which no further events are expected for the entity. */
-  private static final Set<String> NEGOTIATION_FINAL_STATES = Set.of("FINALIZED", "TERMINATED");
-
-  private static final Set<String> TRANSFER_FINAL_STATES = Set.of("DEPROVISIONED");
-
   private final Logger otelLogger;
   private final Monitor monitor;
   private final Clock clock;
-  private final Map<String, String> lastStates;
+  private final EntityLifecycleTracker negotiationTracker;
+  private final EntityLifecycleTracker transferTracker;
 
   public AuditEventSubscriber(Logger otelLogger, Monitor monitor, Clock clock, int maxEntries) {
     this.otelLogger = otelLogger;
     this.monitor = monitor;
     this.clock = clock;
-    this.lastStates =
-        Collections.synchronizedMap(
-            new LinkedHashMap<>(16, 0.75f, true) {
-              @Override
-              protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
-                return size() > maxEntries;
-              }
-            });
+    this.negotiationTracker =
+        new EntityLifecycleTracker(maxEntries, LifecycleStates.NEGOTIATION_FINAL_STATES);
+    this.transferTracker =
+        new EntityLifecycleTracker(maxEntries, LifecycleStates.TRANSFER_FINAL_STATES);
   }
 
   @Override
@@ -108,9 +94,9 @@ public class AuditEventSubscriber implements EventSubscriber {
 
   private void auditNegotiation(EventEnvelope<?> envelope, ContractNegotiationEvent event) {
     var entityId = event.getContractNegotiationId();
-    var newState = toState(event.name(), NEGOTIATION_PREFIX);
+    var newState = LifecycleStates.toState(event.name(), LifecycleStates.NEGOTIATION_EVENT_PREFIX);
     var previousState =
-        trackState(DOMAIN_NEGOTIATION, entityId, newState, NEGOTIATION_FINAL_STATES);
+        negotiationTracker.track(entityId, newState, envelope.getAt()).previousState();
 
     var attributes =
         baseAttributes(envelope, DOMAIN_NEGOTIATION, entityId, previousState, newState);
@@ -129,8 +115,8 @@ public class AuditEventSubscriber implements EventSubscriber {
 
   private void auditTransfer(EventEnvelope<?> envelope, TransferProcessEvent event) {
     var entityId = event.getTransferProcessId();
-    var newState = toState(event.name(), TRANSFER_PREFIX);
-    var previousState = trackState(DOMAIN_TRANSFER, entityId, newState, TRANSFER_FINAL_STATES);
+    var newState = LifecycleStates.toState(event.name(), LifecycleStates.TRANSFER_EVENT_PREFIX);
+    var previousState = transferTracker.track(entityId, newState, envelope.getAt()).previousState();
 
     var attributes = baseAttributes(envelope, DOMAIN_TRANSFER, entityId, previousState, newState);
     putIfPresent(attributes, ATTR_ASSET_ID, event.getAssetId());
@@ -143,15 +129,6 @@ public class AuditEventSubscriber implements EventSubscriber {
     }
 
     emit(envelope, event.name(), entityId, previousState, newState, attributes.build());
-  }
-
-  private String trackState(String domain, String entityId, String newState, Set<String> finals) {
-    var key = domain + ":" + entityId;
-    var previous = lastStates.put(key, newState);
-    if (finals.contains(newState)) {
-      lastStates.remove(key);
-    }
-    return previous;
   }
 
   private AttributesBuilder baseAttributes(
@@ -193,12 +170,6 @@ public class AuditEventSubscriber implements EventSubscriber {
         .setBody(body)
         .setAllAttributes(attributes)
         .emit();
-  }
-
-  /** {@code transfer.process.provisioningRequested} -> {@code PROVISIONING_REQUESTED}. */
-  static String toState(String eventName, String prefix) {
-    var suffix = eventName.startsWith(prefix) ? eventName.substring(prefix.length()) : eventName;
-    return suffix.replaceAll("([a-z])([A-Z])", "$1_$2").toUpperCase(Locale.ROOT);
   }
 
   private static void putIfPresent(AttributesBuilder attributes, String key, String value) {

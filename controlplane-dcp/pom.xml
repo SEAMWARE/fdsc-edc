@@ -64,6 +64,11 @@
             <artifactId>otel-audit-extension</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>otel-business-metrics</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
 
         <dependency>
