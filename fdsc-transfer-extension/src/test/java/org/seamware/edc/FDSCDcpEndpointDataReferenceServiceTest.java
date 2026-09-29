@@ -97,7 +97,10 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
     assertEquals("FDSC", dataAddress.getType());
     assertEquals("bearer", dataAddress.getStringProperty(EDC_NAMESPACE + "authType"));
     assertEquals(
-        "https://transfer.host/my-flow", dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
+        // trailing slash on purpose: the gateway route is `/{transferProcessId}/*`
+        // and does not match a URL that ends at the id
+        "https://transfer.host/my-flow/",
+        dataAddress.getStringProperty(EDC_NAMESPACE + "endpoint"));
     assertEquals(
         "https://w3id.org/idsa/v4.1/HTTP",
         dataAddress.getStringProperty(EDC_NAMESPACE + "endpointType"));
