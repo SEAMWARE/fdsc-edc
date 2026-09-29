@@ -49,7 +49,21 @@ final class FDSCEndpoints {
    * Builds the public transfer endpoint returned in the EDR. The base is {@code
    * protocol://host/{dataFlowId}}; if the data flow source carries a {@code transferPath} property
    * (declared on the TMForum product spec and propagated through the asset DataAddress), it is
-   * appended. Absent or blank path keeps the legacy behaviour.
+   * appended.
+   *
+   * <p><b>The result always has something after {@code {dataFlowId}}, and that is load-bearing.</b>
+   * {@code TransferMapper} registers the gateway route for this transfer as {@code
+   * /{transferProcessId}/*}, and APISIX's radixtree does not match that pattern against a URL that
+   * ends at the id. A consumer following the EDR verbatim therefore fell through to some other
+   * route on the same host, whose JWKS does not contain the key this EDR's token is signed with,
+   * and was told {@code 401 invalid_token, error_description="RSA key with id sig not found"} - an
+   * accusation against a token that is perfectly valid. Measured on the demo dataspace: the same
+   * token on the same endpoint answered 401 bare and 404 (i.e. authenticated, upstream empty at the
+   * root) with a single slash appended.
+   *
+   * <p>So with no {@code transferPath} the base gets a trailing slash rather than being returned
+   * as-is. The {@code proxy-rewrite} regex {@code ^/{id}/(.*)} then rewrites it to {@code /}, which
+   * is what that pattern already expected.
    */
   static String buildEndpoint(TransferConfig transferConfig, DataFlow dataFlow) {
     String base =
@@ -64,7 +78,8 @@ final class FDSCEndpoints {
             .filter(p -> !p.isBlank())
             .orElse(null);
     if (path == null) {
-      return base;
+      // must stay matchable by the `/{transferProcessId}/*` route - see the javadoc
+      return base + "/";
     }
     return base + (path.startsWith("/") ? path : "/" + path);
   }
