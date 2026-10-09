@@ -17,10 +17,32 @@ and puts a `participantContextId` on every control-plane entity. Second is the
 ### Working agreement for this plan
 
 - All steps land on the work branch `ticket-72/work`, one PR per step.
-- The six extension modules depend only on EDC artifacts and the parent POM —
-  **not on each other** — so each can be migrated and verified in isolation with
-  `mvn -pl <module> test`. Only `controlplane-oid4vc` / `controlplane-dcp`
-  aggregate them.
+- **The extension modules are not all independent.** Four of the six
+  (`tmf-extension`, `test-extension`, `oid4vc-extension`, `dcp-extension`) depend
+  only on EDC artifacts and the parent POM, but two have compile-scoped sibling
+  dependencies:
+
+  ```
+  policy-extension  depends on  fdsc-transfer-extension  depends on  tmf-extension
+      (policy-extension/pom.xml:18)        (fdsc-transfer-extension/pom.xml:25)
+  ```
+
+  So the build order is `tmf-extension` → `fdsc-transfer-extension` →
+  `policy-extension`.
+
+  Two consequences, both binding on the step order below:
+  - **Always use `mvn -pl <module> -am test`**, never a bare `-pl`. A bare `-pl`
+    resolves the sibling from `~/.m2` at `0.0.1-SNAPSHOT`, where it is either
+    absent or a stale 0.14.1 build — so the step would verify against the wrong
+    code or fail for an unrelated reason. Alternatively end each step with
+    `mvn -pl <module> install -DskipTests`, but `-am` is the safer default
+    because it cannot leave a stale artifact behind.
+  - **Step 5 is hard-blocked by Step 3**, and *within* Step 5
+    `fdsc-transfer-extension` must be migrated before `policy-extension`. The
+    step order below already satisfies this — do not reorder the steps on the
+    assumption that the modules are independent.
+
+  Only `controlplane-oid4vc` / `controlplane-dcp` aggregate all six.
 - Consequently the **full reactor is expected to stay red from Step 2 until
   Step 6**. Each step's acceptance criterion is its *own* module going green.
   The two reactor-wide gates are split so that neither step is asked to pass a
@@ -34,6 +56,17 @@ and puts a `participantContextId` on every control-plane entity. Second is the
   check there is the planned state, not breakage. CI is expected green from
   Step 6 onwards.
 - Do not merge `ticket-72/work` into `main` before Step 9 passes.
+- **Known-wrong line in `AGENTS.md`, read this instead.** The doc-comment bullet in
+  `AGENTS.md` says `@param`/`@return` blocks are "used only in config classes".
+  That is false for this codebase: 19 of the 138 `src/main/java` files use them —
+  all 7 files of `policy-extension`, 5 in `tmf-extension`, 4 in
+  `fdsc-transfer-extension`, 2 in `test-extension` and 1 in `oid4vc-extension`.
+  Read it as "concentrated in config classes and the policy extension". The
+  surrounding density guidance is sound (69 of 138 files carry a `/**` block, so
+  "roughly half" holds) and still applies — match the density of the file you are
+  editing. The line is corrected in `AGENTS.md` itself in Step 9, which owns that
+  file; it is flagged here so no agent running Steps 2–8 acts on the wrong
+  version.
 
 ### Verified findings (do not re-research)
 
@@ -85,12 +118,25 @@ and `dcp-spi` **do** exist at 0.18.1 but are **IdentityHub-side** artifacts
 0.18.1:  Builder toBuilder();            // new
 // dataAddress and dataPlaneId are present at BOTH versions — neither was removed.
 
-// DataFlowController — provision() renamed, four abstract methods added
-0.14.1:  canHandle, provision(TP,Policy), start(TP,Policy), suspend, terminate,
-         transferTypesFor(Asset)
-0.18.1:  canHandle, prepare(TP,Policy),  start(TP,Policy), suspend, terminate,
-         transferTypesFor(Asset), transferTypesFor(String),
-         resume(TP), started(TP), completed(TP)
+// DataFlowController (artifact transfer-spi) — provision() renamed, four methods added
+// Generic type arguments below are read from the Signature attribute (javap erases
+// them in its default output) — they matter, see resume().
+0.14.1:  boolean                      canHandle(TransferProcess)
+         StatusResult<DataFlowResponse> provision(TransferProcess, Policy)
+         StatusResult<DataFlowResponse> start(TransferProcess, Policy)
+         StatusResult<Void>           suspend(TransferProcess)
+         StatusResult<Void>           terminate(TransferProcess)
+         Set<String>                  transferTypesFor(Asset)
+0.18.1:  boolean                      canHandle(TransferProcess)
+         StatusResult<DataFlowResponse> prepare(TransferProcess, Policy)   // was provision
+         StatusResult<DataFlowResponse> start(TransferProcess, Policy)
+         StatusResult<Void>           suspend(TransferProcess)
+         StatusResult<Void>           terminate(TransferProcess)
+         Set<String>                  transferTypesFor(Asset)
+         StatusResult<DataFlowResponse> resume(TransferProcess)     // new — NOT Void
+         StatusResult<Void>           started(TransferProcess)      // new
+         StatusResult<Void>           completed(TransferProcess)    // new
+         Set<String>                  transferTypesFor(String)      // new overload
 
 // DataFlowResponseMessage (artifact core-spi) — UNCHANGED, byte-identical
 // Declares only dataAddress + provisioning at both versions. It never had a
@@ -131,6 +177,30 @@ and trigger subscribers survive.
 
   `participant-context-connector-classic-core` is the **single-participant
   compatibility mode** and is the intended migration path for this connector.
+- **The BOM diff is informational only — BOM membership wires nothing here.**
+  `controlplane-base-bom` is imported under `<dependencyManagement>` with
+  `<scope>import</scope>` (`controlplane-oid4vc/pom.xml:13-21`,
+  `controlplane-dcp/pom.xml` likewise), and every dependency in both controlplane
+  POMs carries an explicit `${edc.version}` — so the BOM manages no version and
+  contributes no artifact to the runtime. Consequence for Steps 2 and 7: each
+  artifact this plan wants added (`participant-context-connector-classic-core`,
+  `data-plane-signaling`) **must be declared explicitly**; it does not arrive by
+  the BOM gaining it. Equally, an artifact the BOM *dropped* is still wired here
+  as long as the POM declares it — which is exactly the
+  `transfer-data-plane-signaling` trap below.
+- **`transfer-data-plane-signaling` is a silent carry-over, not a removal.** The
+  0.18.1 BOM dropped it in favour of `data-plane-signaling`, but both controlplane
+  POMs declare it explicitly (`controlplane-oid4vc/pom.xml:185`,
+  `controlplane-dcp/pom.xml:175`) and **it still resolves at 0.18.1** (confirmed —
+  `data-plane-signaling`, `data-plane-signaling-client`,
+  `transfer-data-plane-signaling` and `data-plane-signaling-oauth2` all return 200
+  at 0.18.1). So nothing in the pipeline catches it: `dependency:resolve` passes,
+  compilation passes, and the connector keeps loading a module upstream
+  deliberately removed from the default controlplane assembly. This is the same
+  shape of runtime-only regression as `callback-http-dispatcher`, and Step 2 owes
+  it an explicit decision. Note both controlplane POMs already declare
+  `data-plane-signaling-client` (`oid4vc:200`, `dcp:190`), which is the
+  *client* module and not a substitute for either of the two above.
 - **`callback-http-dispatcher` is a functional regression risk, not a coordinate
   removal.** The artifact is discontinued outright (last published 0.17.0; 404 at
   0.18.1) and no replacement exists under any name — the only remaining
@@ -196,9 +266,12 @@ Create `docs/migration/EDC-0.18.1-UPGRADE.md` containing:
   `participant-context-connector-classic-core` (single-participant compatibility)
   or the full multi-context core. Recommend `classic`.
 - **DSP protocol impact** — DSP 0.8 and 2024/1 are gone; the repo already targets
-  `2025-1` in `config/tck/tck.properties`, so confirm that dropping `dsp-2024` /
+  `2025-1` in `config/tck/tck.properties` and already declares `dsp-2025` /
+  `dsp-spi-2025` next to the 2024 artifacts, so confirm that dropping `dsp-2024` /
   `dsp-spi-2024` is behaviour-neutral for the TCK, and state the consequence for
-  any external counterparty still on 2024/1.
+  any external counterparty still on 2024/1. Record explicitly that the 2024/1
+  leftOperand IRI in `config/tck/scope-mappings.json:8` is ODRL policy vocabulary,
+  **not** protocol wiring, and must survive the removal (see Step 7).
 - **Config migration table** — `edc.iam.issuer.id` → `edc.participant.did`,
   removal of `edc.dsp.well-known-path.enabled`, addition of
   `edc.participant.context.id`, and the DCP scope config move to map-based
@@ -253,6 +326,22 @@ Expect compilation to fail afterwards; that is this step's output, not a defect.
   `ParticipantContext` in Step 3) and add
   `participant-context-connector-classic-core` to both controlplane modules, per
   the Step 1 decision.
+- **Decide `transfer-data-plane-signaling` explicitly** in both controlplane POMs
+  (`controlplane-oid4vc/pom.xml:185`, `controlplane-dcp/pom.xml:175`). It still
+  resolves at 0.18.1, so it will not surface on its own — see "Other confirmed
+  facts" above. Two admissible outcomes, and the PR description must state which
+  and why:
+  - **Drop it and declare `data-plane-signaling` in its place** (plus
+    `data-plane-signaling-oauth2` only if the OAuth2 data-plane path is actually
+    used — this repo does not currently declare it), following upstream's own
+    controlplane assembly; or
+  - **keep it**, with a recorded reason naming what in
+    `fdsc-transfer-extension` still needs it.
+
+  Because the BOM is import-scoped here, the replacement must be declared with an
+  explicit `${edc.version}` like every other dependency in those POMs. Whichever
+  way this goes, it is a runtime-behaviour change that no compile gate covers, so
+  it folds into Step 7's data-flow verification.
 - Delete the stray `org/eclipse/edc/iam/identitytrust/spi/DcpConstants.java` at the
   repo root; if anything actually references it, move it into a module source root
   under an `org.seamware` package instead.
@@ -291,7 +380,9 @@ refactor hits hardest.
 - Update the 28 test files; prefer `@ParameterizedTest` where a new participant-context
   dimension multiplies existing cases rather than copying test methods.
 
-Acceptance: `mvn -pl tmf-extension test` green; `mvn -pl tmf-extension spotless:check` clean.
+Acceptance: `mvn -pl tmf-extension -am test` green; `mvn -pl tmf-extension spotless:check`
+clean. (`tmf-extension` has no sibling dependency, so `-am` only pulls in the parent
+POM here — but use it anyway for consistency with Steps 4 and 5.)
 
 ### Step 4: Migrate the identity stack (`dcp-extension`, `oid4vc-extension`)
 
@@ -319,7 +410,8 @@ Acceptance: `mvn -pl tmf-extension test` green; `mvn -pl tmf-extension spotless:
   so there is nothing to rename here, but `DCPExtension` should be checked for any
   hard-coded issuer/DID resolution that upstream now derives from the new key.
 
-Acceptance: `mvn -pl dcp-extension test` and `mvn -pl oid4vc-extension test` green.
+Acceptance: `mvn -pl dcp-extension -am test` and `mvn -pl oid4vc-extension -am test` green.
+Neither module depends on a sibling, so these two can be done in either order.
 
 ### Step 5: Migrate `fdsc-transfer-extension` and `policy-extension`
 
@@ -336,7 +428,9 @@ Acceptance: `mvn -pl dcp-extension test` and `mvn -pl oid4vc-extension test` gre
   gained `toBuilder()`; `DataFlowController.provision(TransferProcess, Policy)` was
   renamed `prepare(...)` and the interface gained four more abstract methods —
   `resume(TransferProcess)`, `started(TransferProcess)`,
-  `completed(TransferProcess)` and a `transferTypesFor(String)` overload.
+  `completed(TransferProcess)` and a `transferTypesFor(String)` overload. The four
+  do not share a return type — `resume` returns `StatusResult<DataFlowResponse>`,
+  not `StatusResult<Void>`; see the table in Step 6.
   `DataFlowResponseMessage` (artifact `core-spi`) is **byte-identical** between
   0.14.1 and 0.18.1 — it never had a `dataPlaneId`, so nothing was removed there.
   Audit `fdsc-transfer-extension` for `DataFlowController` implementations and
@@ -347,8 +441,11 @@ Acceptance: `mvn -pl dcp-extension test` and `mvn -pl oid4vc-extension test` gre
   `ContractAgreement` / `TransferProcess` (0.17.0), which may simplify how the PAP
   input is assembled.
 
-Acceptance: `mvn -pl fdsc-transfer-extension test` and `mvn -pl policy-extension test`
-green.
+Acceptance: `mvn -pl fdsc-transfer-extension -am test` and `mvn -pl policy-extension -am test`
+green. The `-am` is load-bearing in this step: `fdsc-transfer-extension` depends on the
+`tmf-extension` migrated in Step 3 and `policy-extension` depends on
+`fdsc-transfer-extension`, so a bare `-pl` resolves a stale or missing
+`0.0.1-SNAPSHOT` sibling. Migrate `fdsc-transfer-extension` first.
 
 ### Step 6: Migrate `test-extension` and decide on upstream's `tck-extension`
 
@@ -374,14 +471,23 @@ green.
   both `DataFlowResponse` builders (lines 64 and 75); and implement the four
   methods `DataFlowController` added — `resume(TransferProcess)`,
   `started(TransferProcess)`, `completed(TransferProcess)` and the
-  `transferTypesFor(String)` overload. A no-op controller can return
-  `StatusResult.success(...)` for all four, but make that choice deliberately: the
-  TCK drives transfer state through these callbacks. Registration at
+  `transferTypesFor(String)` overload. **The four do not share a return type**, so
+  a blanket `StatusResult.success(...)` will not compile:
+
+  | New method | Return type | No-op implementation |
+  |---|---|---|
+  | `resume(TransferProcess)` | `StatusResult<DataFlowResponse>` | needs a `DataFlowResponse` payload — build one from the same `noopDataAddress()` helper the existing `provision`/`start` bodies use; `StatusResult.success()` with no argument does **not** satisfy it |
+  | `started(TransferProcess)` | `StatusResult<Void>` | `StatusResult.success()` |
+  | `completed(TransferProcess)` | `StatusResult<Void>` | `StatusResult.success()` |
+  | `transferTypesFor(String)` | `Set<String>` | mirror the existing `transferTypesFor(Asset)` body |
+
+  Make these choices deliberately rather than by autocompletion: the TCK drives
+  transfer state through these callbacks. Registration at
   `TckGuardExtension.java:149` is unaffected.
 - `edc/ProviderRequestedStateFixListener.java`: verify against the
   data-plane-signaling defaults.
 
-Acceptance: `mvn -pl test-extension test` green, **and** `mvn clean test` green
+Acceptance: `mvn -pl test-extension -am test` green, **and** `mvn clean test` green
 across the whole reactor — this is the step where the build comes back. The
 image-producing `mvn clean package` gate belongs to Step 7, which owns the
 controlplane assembly those images depend on.
@@ -390,7 +496,21 @@ controlplane assembly those images depend on.
 
 - `config/tck/edc.properties`: apply the Step 1 config migration table — add
   `edc.participant.context.id` (stable value matching `edc.participant.id`) and drop
-  any 2024/1 protocol wiring. Note that neither `edc.iam.issuer.id` nor
+  any 2024/1 protocol *wiring* — of which there is in fact none in that file, so
+  expect this to be a no-op. **Do not confuse protocol wiring with the ODRL
+  vocabulary.** `config/tck/scope-mappings.json:8` matches the leftOperand IRI
+  `https://w3id.org/dspace/2024/1/membershipType`, which maps to the
+  `contract.negotiation` and `catalog` scopes. That is a policy vocabulary
+  identifier consumed by `policy-extension` via
+  `odrlPap.policy.scopeMappingsPath` (`config/tck/edc.properties:140`) — it has
+  nothing to do with the DSP 2024/1 *protocol binding*, and deleting it on a
+  string match for "2024" would silently break scope mapping for negotiation and
+  catalog. **Leave that IRI untouched.** Dropping `dsp-2024` / `dsp-spi-2024` is
+  behaviour-neutral precisely because `dsp-2025` and `dsp-spi-2025` are already
+  declared alongside them (`controlplane-oid4vc/pom.xml:80`,
+  `controlplane-dcp/pom.xml:69`, `tmf-extension/pom.xml:153`,
+  `test-extension/pom.xml:128`) and `config/tck/tck.properties` already targets
+  `2025-1`. Note that neither `edc.iam.issuer.id` nor
   `edc.dsp.well-known-path.enabled` is set anywhere in this repo, so those two
   upstream changes are no-ops here — but both *are* likely set in the surrounding
   FIWARE Data Space Connector deployment (Helm values), so they belong in the
@@ -408,10 +528,17 @@ controlplane assembly those images depend on.
   the state-change notification to it. This is the only gate in the plan that can
   catch the dropped HTTP callback transport; neither `dependency:resolve` nor
   compilation will.
+- **Exercise a data-plane transfer end to end**, acting on the Step 2 decision
+  about `transfer-data-plane-signaling` vs `data-plane-signaling`. Like the
+  callback case, swapping (or keeping) that module is invisible to
+  `dependency:resolve` and to the compiler — the failure mode is a data flow that
+  never starts at runtime. Drive one transfer through the compose stack and
+  confirm the data plane is selected and the flow reaches `STARTED`.
 
 Acceptance: `mvn clean package` green across the whole reactor — both controlplane
 images build; a container starts against the TCK compose stack and logs no
-missing-config or unresolved-service errors.
+missing-config or unresolved-service errors; and both runtime gates above — one
+callback delivered, one transfer started — are observed, not assumed.
 
 ### Step 8: Re-pin and green the DSP TCK conformance run
 
@@ -444,10 +571,15 @@ from `TCK_FILTER`.
   `OdrlPapClient`, `TMFEdcMapper`, `TMForumBackedCatalogProtocolService` and
   `DataAssembly`. Reword to "concentrated in config classes and the policy
   extension" or drop the parenthetical. (The "roughly half" density claim is
-  accurate — 59 of 138 files carry a `/**` block — and stays.) This is deferred to
-  Step 9 rather than fixed on the plan branch because editing `AGENTS.md` outside
-  its owning step invalidates the cached agent prompt prefix for every chained
-  session.
+  accurate — 69 of 138 files carry a `/**` block — and stays; an earlier revision of
+  this plan said 59, which was a miscount.) This is deferred to
+  Step 9 rather than fixed on the plan branch because `AGENTS.md` is appended to
+  every agent's system prompt: the rename landed in commit `a655f1b` and is
+  therefore already in the cached prefix, so a further edit now invalidates that
+  cache for every chained session downstream rather than riding along for free.
+  The interim correction is recorded in the working agreement at the top of this
+  plan, which every step agent reads, so no one executing Steps 2–8 acts on the
+  wrong version in the meantime.
 - `README.md` and `TRANSACTION_README.md`: update version references and any
   renamed config keys.
 - Add `releases/notes/RELEASE_NOTES_EDC_0_18_1.md` covering the operator-facing
