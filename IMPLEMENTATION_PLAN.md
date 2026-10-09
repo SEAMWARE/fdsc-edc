@@ -2,7 +2,7 @@
 
 ## Overview
 
-Upgrade `fdsc-edc` from Eclipse EDC `0.14.1` to `0.18.1` (six upstream releases:
+Upgrade `fdsc-edc` from Eclipse EDC `0.14.1` to `0.18.1` (seven upstream releases:
 0.15.0, 0.15.1, 0.16.0, 0.16.1, 0.17.0, 0.18.0, 0.18.1 — there is no 0.17.1).
 The ticket scopes the *first* deliverable as a written compatibility overview; the
 remaining steps carry out the migration module by module, ending with a green DSP
@@ -22,8 +22,17 @@ and puts a `participantContextId` on every control-plane entity. Second is the
   `mvn -pl <module> test`. Only `controlplane-oid4vc` / `controlplane-dcp`
   aggregate them.
 - Consequently the **full reactor is expected to stay red from Step 2 until
-  Step 7**. Each step's acceptance criterion is its *own* module going green;
-  `mvn clean package` green across the reactor is the exit criterion of Step 7.
+  Step 6**. Each step's acceptance criterion is its *own* module going green.
+  The two reactor-wide gates are split so that neither step is asked to pass a
+  gate depending on work scoped to the next one:
+  - **Step 6** — `mvn clean test` green across the reactor (every module
+    compiles, all unit tests pass). This is where the build comes back.
+  - **Step 7** — `mvn clean package` green across the reactor. `package` also
+    builds the two controlplane Docker images, which is Step 7's own deliverable.
+- `.github/workflows/test.yml` triggers on every push, so **CI will be red on the
+  PRs for Steps 2–5 by design**. Say so in each of those PR descriptions; a red
+  check there is the planned state, not breakage. CI is expected green from
+  Step 6 onwards.
 - Do not merge `ticket-72/work` into `main` before Step 9 passes.
 
 ### Verified findings (do not re-research)
@@ -40,7 +49,7 @@ These were confirmed directly against Maven Central and by `javap` on the publis
 | `identity-trust-transform` | 0.14.1 | `decentralized-claims-transform` |
 | `dsp-2024` | 0.15.1 | *none* — DSP 2024/1 support deleted in 0.16.0 |
 | `dsp-spi-2024` | 0.15.1 | *none* — same |
-| `callback-http-dispatcher` | 0.17.0 | *none found* — **needs verification** (Step 1) |
+| `callback-http-dispatcher` | 0.17.0 | *none* — **behaviour change, see below** (Step 1) |
 
 The other 66 artifacts resolve unchanged at 0.18.1. Beware a false friend: `dcp-core`
 and `dcp-spi` **do** exist at 0.18.1 but are **IdentityHub-side** artifacts
@@ -69,10 +78,36 @@ and `dcp-spi` **do** exist at 0.18.1 but are **IdentityHub-side** artifacts
 // AudienceResolver — parameter type narrowed
 0.14.1:  Result<String> resolve(RemoteMessage)
 0.18.1:  Result<String> resolve(ProtocolRemoteMessage)
+
+// DataFlowResponse (artifact transfer-spi) — dataPlaneId KEPT, provisioning renamed
+0.14.1:  boolean provisioning;  isProvisioning();  Builder.provisioning(boolean)
+0.18.1:  boolean async;         isAsync();         Builder.async(boolean)
+0.18.1:  Builder toBuilder();            // new
+// dataAddress and dataPlaneId are present at BOTH versions — neither was removed.
+
+// DataFlowController — provision() renamed, four abstract methods added
+0.14.1:  canHandle, provision(TP,Policy), start(TP,Policy), suspend, terminate,
+         transferTypesFor(Asset)
+0.18.1:  canHandle, prepare(TP,Policy),  start(TP,Policy), suspend, terminate,
+         transferTypesFor(Asset), transferTypesFor(String),
+         resume(TP), started(TP), completed(TP)
+
+// DataFlowResponseMessage (artifact core-spi) — UNCHANGED, byte-identical
+// Declares only dataAddress + provisioning at both versions. It never had a
+// dataPlaneId; do not confuse it with DataFlowResponse above.
 ```
 
 `ParticipantContext` lives in the **new** artifact `connector-participant-context-spi`
-as `org.eclipse.edc.participantcontext.spi.types.ParticipantContext`.
+(404 at 0.14.1) as `org.eclipse.edc.participantcontext.spi.types.ParticipantContext`.
+
+**Second false friend — pick the right participant artifact.** Three similarly named
+artifacts resolve at 0.18.1 and only the first is the one this plan means:
+
+| Artifact | Package root | What it is |
+|---|---|---|
+| `connector-participant-context-spi` | `org.eclipse.edc.participantcontext.spi` | **Correct.** Connector-side `ParticipantContext`, `ParticipantContextService`, `ParticipantContextStore`. New at 0.18.1. |
+| `participant-context-spi` | `org.eclipse.edc.identityhub.spi.participantcontext` | IdentityHub-side. Its `ParticipantContext` was **renamed** `IdentityHubParticipantContext` at 0.18.1 and its store/state types moved to the connector artifact. |
+| `participant-spi` | `org.eclipse.edc.participant.spi` | Unrelated to participant *context* — `ParticipantAgent`, `ParticipantAgentPolicyContext`, `ParticipantIdMapper`. **This repo already declares it**; do not mistake it for either of the above. |
 
 `ContractDefinitionStore`, `ContractNegotiationStore`, `AssetIndex` and
 `PolicyDefinitionStore` declare **no** changed methods of their own — but
@@ -83,12 +118,35 @@ and trigger subscribers survive.
 **Other confirmed facts:**
 
 - Bytecode target is still Java 17 at 0.18.1; the Java 21 toolchain is fine.
-- `controlplane-base-bom` at 0.18.1 no longer carries `callback-http-dispatcher`;
-  it gained `participant-context-connector-core`,
-  `participant-context-connector-classic-core`, `control-plane-contract-manager`,
-  `control-plane-transfer-manager`, `data-plane-signaling`, `auth-configuration`.
+- `controlplane-base-bom` is a flat `<dependencies>` POM (31 deps at 0.14.1, 39 at
+  0.18.1). Full diff, confirmed by fetching both POMs:
+  - **removed:** `callback-http-dispatcher`, `transfer-data-plane-signaling`
+  - **added:** `participant-context-connector-core`,
+    `participant-context-connector-classic-core`, `control-plane-contract-manager`,
+    `control-plane-transfer-manager`, `data-plane-signaling`,
+    `data-plane-signaling-oauth2`, `catalog-crawler-core`, `console-monitor`,
+    `federated-catalog-api`, `oauth2-client`
+  - `auth-configuration` was **already** a BOM dependency at 0.14.1 — it is not a
+    gain, and Step 7 should not treat it as new.
+
   `participant-context-connector-classic-core` is the **single-participant
   compatibility mode** and is the intended migration path for this connector.
+- **`callback-http-dispatcher` is a functional regression risk, not a coordinate
+  removal.** The artifact is discontinued outright (last published 0.17.0; 404 at
+  0.18.1) and no replacement exists under any name — the only remaining
+  `*-http-dispatcher` artifacts at 0.18.1 are DSP *protocol* message dispatchers
+  (`dsp-catalog-`, `dsp-negotiation-`, `dsp-transfer-process-http-dispatcher`),
+  not callback transports. Meanwhile `callback-event-dispatcher` and
+  `callback-static-endpoint` both **still exist at 0.18.1** and are both declared
+  by this repo (`controlplane-oid4vc/pom.xml:205,215`;
+  `controlplane-dcp/pom.xml:195,205`). Removing only the HTTP dispatcher therefore
+  leaves the event dispatcher and static endpoints wired with **no HTTP
+  transport**. This matters concretely here:
+  `tmf-extension/.../domain/TMFContractNegotiation.java:24` persists a
+  `List<TMFCallbackAddress>`, i.e. the connector stores consumer-supplied callback
+  addresses it is expected to dispatch to. No `dependency:resolve` or compile gate
+  will catch this — it needs a runtime check (see Step 1 open questions and the
+  Step 7 acceptance criterion).
 - Upstream now publishes `dsp-tck-connector-under-test` and `tck-extension` at
   0.18.1 — overlapping with this repo's hand-rolled `test-extension`.
 - The DSP TCK runtime image has a released **1.0.2**; this repo pins `1.0.0-RC6`.
@@ -109,15 +167,24 @@ and trigger subscribers survive.
 ### Step 1: Migration overview and compatibility report
 
 The ticket's explicit first deliverable: a written overview of what changes, what is
-incompatible, and what adjacent components must move in lockstep. No code changes.
+incompatible, and what adjacent components must move in lockstep. The only code-
+adjacent task is capturing the TCK baseline (last bullet), which must happen while
+the build is still at 0.14.1 and green.
+
+**Move and extend, do not rewrite.** The "Verified findings" section above is the
+seed of this document, not a parallel copy of it. Cut that section out of
+`IMPLEMENTATION_PLAN.md`, paste it into `docs/migration/EDC-0.18.1-UPGRADE.md`,
+and leave behind a one-line pointer to the new file. Two copies of the same
+artifact table will drift; there must be exactly one.
 
 Create `docs/migration/EDC-0.18.1-UPGRADE.md` containing:
 
 - **Release-by-release summary** of 0.15.0 → 0.18.1 with the breaking change for
   each, linked to the upstream release notes and PR numbers.
 - **Artifact coordinate table** — the six removed artifacts and their replacements,
-  reproduced from the "Verified findings" section above, plus the full list of the
-  72 declared EDC artifacts with a resolve-status column.
+  moved over from the "Verified findings" section above, plus the full list of the
+  72 declared EDC artifacts with a resolve-status column, and the two false-friend
+  warnings (`dcp-*`, `*participant-context-spi`) recorded there.
 - **API break inventory** — the `javap`-confirmed signature changes above, each
   mapped to the concrete files in this repo that implement them:
   `TMFBackedContractNegotiationStore`, `TMForumBackedCatalogProtocolService`,
@@ -142,14 +209,31 @@ Create `docs/migration/EDC-0.18.1-UPGRADE.md` containing:
   IdentityHub 0.18.0 replaced the `CredentialFormat` enum with profile strings,
   bumped Admin APIs to v1beta and swapped roles for scopes). Flag the TMForum,
   Scorpio and ODRL-PAP images as unaffected.
-- **Open questions** — at minimum: the `callback-http-dispatcher` replacement
-  (verify against the 0.18.0 release notes and the BOM; if callbacks are now
-  dispatched without it, record that), and whether to adopt upstream's
-  `tck-extension` in place of the hand-rolled `test-extension`.
+- **Open questions** — at minimum:
+  - **Are EDC `CallbackAddress` notifications still delivered at 0.18.1 without
+    `callback-http-dispatcher`, and if so by which artifact?** The coordinate is
+    gone with no same-named replacement (see "Verified findings"), while
+    `callback-event-dispatcher` and `callback-static-endpoint` remain wired.
+    Answer it concretely: read `callback-event-dispatcher`'s 0.18.1 extension to
+    see what `CallbackRegistry`/transport it now resolves, and name the artifact
+    that must be added in its place — or record that HTTP callback dispatch is
+    genuinely gone and what that costs the TMForum callback addresses stored in
+    `TMFContractNegotiation`. Do not close this one as "resolve succeeds".
+  - Whether to adopt upstream's `tck-extension` in place of the hand-rolled
+    `test-extension`.
+- **TCK baseline capture** (do this *first*, while the tree is still at 0.14.1 and
+  green): run `./scripts/run-tck.sh` with `TCK_FILTER` unset and commit the
+  resulting per-test pass/fail list as `docs/migration/tck-baseline-0.14.1.md`.
+  The repo records no TCK baseline anywhere today, so without this file Step 8 has
+  no way to tell a genuine regression from a test that never passed — and by then
+  the 0.14.1 build no longer exists on the branch. Note in the file whether the
+  run was fully green or already had failures.
 
 Acceptance: the document resolves every "needs verification" item above or states
-explicitly why it remains open, and Steps 2–9 can be executed from it without
-further upstream research.
+explicitly why it remains open; `docs/migration/tck-baseline-0.14.1.md` is
+committed; the "Verified findings" section has been moved out of this plan rather
+than copied; and Steps 2–9 can be executed from it without further upstream
+research.
 
 ### Step 2: Bump `edc.version` and migrate dependency coordinates
 
@@ -173,9 +257,14 @@ Expect compilation to fail afterwards; that is this step's output, not a defect.
   repo root; if anything actually references it, move it into a module source root
   under an `org.seamware` package instead.
 
-Acceptance: `mvn -DskipTests dependency:resolve` succeeds for every module (no
-`Could not resolve` / 404). Capture the full `mvn -DskipTests compile` error output
-and attach it to the PR description as the breakage inventory driving Steps 3–6.
+Acceptance: `mvn -DskipTests dependency:resolve` emits **no
+`Could not resolve ... org.eclipse.edc:*`** line. Note that the command as a whole
+is expected to fail: `controlplane-oid4vc` and `controlplane-dcp` depend on the
+five extension modules at `0.0.1-SNAPSHOT`, which this step deliberately leaves
+non-compiling and therefore uninstalled — a red exit code caused by
+`org.seamware.edc:*-extension` is the planned state. Only EDC coordinates are
+being proved here. Capture the full `mvn -DskipTests compile` error output and
+attach it to the PR description as the breakage inventory driving Steps 3–6.
 
 ### Step 3: Migrate `tmf-extension` to the Participant Context store SPIs
 
@@ -238,10 +327,20 @@ Acceptance: `mvn -pl dcp-extension test` and `mvn -pl oid4vc-extension test` gre
   0.16.0 and `DataAddress` now lives in the vault rather than the store (0.16.0) —
   rework `FDSCProvisioner`, `FDSCDcpProvisioner`, `FDSCOID4VPProvisioner`,
   `FDSCProvisionedResource` and the two `*EndpointDataReferenceService`
-  implementations accordingly. `dataplaneId` was removed from
-  `DataFlowResponseMessage` (0.17.0). The Data Plane Framework is deprecated in
+  implementations accordingly. The Data Plane Framework is deprecated in
   favour of data-plane-signaling, which is the BOM default at 0.18.0 — confirm
   `FDSCEndpointGenerator` and `FDSCDataAddress` still fit the signaling flow.
+- **Data-flow API renames** (`javap`-confirmed, see the API break inventory):
+  `DataFlowResponse` (artifact `transfer-spi`) kept `dataPlaneId` but renamed
+  `boolean provisioning` / `isProvisioning()` → `boolean async` / `isAsync()` and
+  gained `toBuilder()`; `DataFlowController.provision(TransferProcess, Policy)` was
+  renamed `prepare(...)` and the interface gained four more abstract methods —
+  `resume(TransferProcess)`, `started(TransferProcess)`,
+  `completed(TransferProcess)` and a `transferTypesFor(String)` overload.
+  `DataFlowResponseMessage` (artifact `core-spi`) is **byte-identical** between
+  0.14.1 and 0.18.1 — it never had a `dataPlaneId`, so nothing was removed there.
+  Audit `fdsc-transfer-extension` for `DataFlowController` implementations and
+  `DataFlowResponse` builder calls; the one in `test-extension` is Step 6's.
 - `policy-extension`: check `PolicyContextInputMapper`, `ScopeMappingRule` and
   `OdrlPapPolicyExtension` against the new `ParticipantAgentPolicyContext`
   (introduced 0.15.0) and the request-policy-context SPI. Claims are now stored on
@@ -269,11 +368,23 @@ green.
   `EventSubscriber` are unchanged, so these should need no signature work — but
   protocol services now call `breakLease` explicitly, so re-check the interaction
   with `StepRecorder`. Handle the new `TransferProcessPrepared` event.
-- `edc/NoopDataFlowController.java` and `edc/ProviderRequestedStateFixListener.java`:
-  verify against the data-plane-signaling defaults.
+- `edc/NoopDataFlowController.java`: **will not compile at 0.18.1** — three
+  confirmed breaks. Rename the `provision(TransferProcess, Policy)` override
+  (line 58) to `prepare(...)`; change `.provisioning(false)` to `.async(false)` in
+  both `DataFlowResponse` builders (lines 64 and 75); and implement the four
+  methods `DataFlowController` added — `resume(TransferProcess)`,
+  `started(TransferProcess)`, `completed(TransferProcess)` and the
+  `transferTypesFor(String)` overload. A no-op controller can return
+  `StatusResult.success(...)` for all four, but make that choice deliberately: the
+  TCK drives transfer state through these callbacks. Registration at
+  `TckGuardExtension.java:149` is unaffected.
+- `edc/ProviderRequestedStateFixListener.java`: verify against the
+  data-plane-signaling defaults.
 
-Acceptance: `mvn -pl test-extension test` green, **and** `mvn clean package` green
-across the whole reactor — this is the step where the build comes back.
+Acceptance: `mvn -pl test-extension test` green, **and** `mvn clean test` green
+across the whole reactor — this is the step where the build comes back. The
+image-producing `mvn clean package` gate belongs to Step 7, which owns the
+controlplane assembly those images depend on.
 
 ### Step 7: Update runtime configuration and controlplane assembly
 
@@ -291,9 +402,16 @@ across the whole reactor — this is the step where the build comes back.
   runtime support extends to Java 25 — no change forced, but confirm).
 - Re-run `./scripts/verify-tck-config.sh` and extend it if the new keys are not
   covered.
+- **Exercise a callback delivery end to end**, acting on the Step 1 answer about
+  `callback-http-dispatcher`. Run a negotiation against the compose stack with a
+  consumer-supplied HTTP `CallbackAddress` and assert the connector actually POSTs
+  the state-change notification to it. This is the only gate in the plan that can
+  catch the dropped HTTP callback transport; neither `dependency:resolve` nor
+  compilation will.
 
-Acceptance: both controlplane images build; a container starts against the TCK
-compose stack and logs no missing-config or unresolved-service errors.
+Acceptance: `mvn clean package` green across the whole reactor — both controlplane
+images build; a container starts against the TCK compose stack and logs no
+missing-config or unresolved-service errors.
 
 ### Step 8: Re-pin and green the DSP TCK conformance run
 
@@ -304,17 +422,32 @@ compose stack and logs no missing-config or unresolved-service errors.
   cleanly — record the choice.
 - `scripts/init-tmforum.sh`: if `participantContextId` became part of the TMForum
   entity shape in Step 3, the seeded test data must carry it.
-- Run `./scripts/run-tck.sh` and drive the suite to the same pass set as on 0.14.1.
-  Any test that passed before and fails now is a regression to fix, not to filter out.
+- Run `./scripts/run-tck.sh` and diff the result against
+  `docs/migration/tck-baseline-0.14.1.md`, captured in Step 1. Any test that passes
+  in the baseline and fails now is a regression to fix, not to filter out.
 
-Acceptance: the TCK job passes locally and in CI with no new entries in
-`docker/tck-filter`.
+Acceptance: the TCK job passes locally and in CI with `TCK_FILTER` unset (its
+compose default, `docker-compose.tck.yml:244`), `docker/tck-filter/src/.../DisplayNameFilter.java`
+unmodified, and no test that passes in `docs/migration/tck-baseline-0.14.1.md`
+failing. Note `docker/tck-filter` is a JUnit extension source tree, not a list of
+skipped tests — filtering is driven only by the `tck.filter` system property fed
+from `TCK_FILTER`.
 
 ### Step 9: Update documentation and release notes
 
 - `AGENTS.md`: update the EDC version, the module/artifact names changed in Step 2,
   the DSP protocol note, and the TCK architecture section if Step 6 adopted
-  upstream's `tck-extension`.
+  upstream's `tck-extension`. Also correct the doc-comment convention: the
+  parenthetical "`@param`/`@return` blocks are rare (used only in config classes)"
+  is wrong — 19 of 138 `src/main/java` files use `@param`, concentrated in the
+  whole of `policy-extension` plus `FDSCDcpProvisioner`, `FDSCOID4VPProvisioner`,
+  `OdrlPapClient`, `TMFEdcMapper`, `TMForumBackedCatalogProtocolService` and
+  `DataAssembly`. Reword to "concentrated in config classes and the policy
+  extension" or drop the parenthetical. (The "roughly half" density claim is
+  accurate — 59 of 138 files carry a `/**` block — and stays.) This is deferred to
+  Step 9 rather than fixed on the plan branch because editing `AGENTS.md` outside
+  its owning step invalidates the cached agent prompt prefix for every chained
+  session.
 - `README.md` and `TRANSACTION_README.md`: update version references and any
   renamed config keys.
 - Add `releases/notes/RELEASE_NOTES_EDC_0_18_1.md` covering the operator-facing
