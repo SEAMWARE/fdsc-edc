@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Codebase context for AI agents working in this repository.
 
 ## Overview
 
@@ -66,6 +66,7 @@ fdsc-edc/
 ├── oid4vc-extension/                # OpenID4VP authentication
 ├── dcp-extension/                   # DCP authentication with TIR support
 ├── fdsc-transfer-extension/         # FDSC data transfer provisioning
+├── policy-extension/                # ODRL PAP policy evaluation (OPA-backed)
 ├── controlplane-oid4vc/             # Shaded JAR + Docker image (OID4VC variant)
 ├── controlplane-dcp/                # Shaded JAR + Docker image (DCP variant)
 ├── config/tck/
@@ -124,6 +125,9 @@ Java 21 is required. The project uses Maven (no Gradle — `.gradle` files under
 - **Annotation processing:** Lombok for boilerplate, MapStruct for object mapping.
 - **HTTP clients:** OkHttp for TMForum API calls.
 - **JSON:** Jackson with `jackson-datatype-jsr310`.
+- **Doc comments:** roughly half of the `src/main/java` classes carry a short class-level Javadoc; method-level Javadoc is the exception, and `@param`/`@return` blocks are rare (used only in config classes). Match this density — add a one-line Javadoc stating what a type is and why, and do not retrofit docs onto code you did not touch.
+- **Constants:** no inline magic values — EDC property keys, IDs and limits are declared as named `static final` constants (see `TMFConfig`, `TransferConfig`, `OID4VPConfig`, `DataAssembly`).
+- **Tests:** JUnit 5 with `@ParameterizedTest` + `@MethodSource`/`@CsvSource` where a case table applies; Mockito for EDC SPI collaborators.
 
 ## Important Files
 
