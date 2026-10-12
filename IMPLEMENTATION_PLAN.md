@@ -308,6 +308,13 @@ green. The `-am` is load-bearing in this step: `fdsc-transfer-extension` depends
   `EventSubscriber` are unchanged, so these should need no signature work — but
   protocol services now call `breakLease` explicitly, so re-check the interaction
   with `StepRecorder`. Handle the new `TransferProcessPrepared` event.
+- **Do not revert the lease retry in `DelayedActionGuard`.** Step 1 found that the
+  guard dropped a queued action whenever the state machine still held the entity
+  lease, stranding the entity as `pending` and hanging the TCK run indefinitely; it
+  now re-queues on a short delay. The 0.14.1 baseline is only green with that fix
+  (`docs/migration/tck-baseline-0.14.1.md`). `StateEntityStore.save` returning
+  `StoreResult<Void>` touches the same method — port it, keep the retry, and keep
+  `DelayedActionGuardTest` passing.
 - `edc/NoopDataFlowController.java`: **will not compile at 0.18.1** — three
   confirmed breaks. Rename the `provision(TransferProcess, Policy)` override
   (line 58) to `prepare(...)`; change `.provisioning(false)` to `.async(false)` in
@@ -393,8 +400,9 @@ callback delivered, one transfer started — are observed, not assumed.
 - `scripts/init-tmforum.sh`: if `participantContextId` became part of the TMForum
   entity shape in Step 3, the seeded test data must carry it.
 - Run `./scripts/run-tck.sh` and diff the result against
-  `docs/migration/tck-baseline-0.14.1.md`, captured in Step 1. Any test that passes
-  in the baseline and fails now is a regression to fix, not to filter out.
+  `docs/migration/tck-baseline-0.14.1.md`, captured in Step 1. That baseline is
+  **fully green — 65 of 65** — so the gate is absolute: any failure at 0.18.1 is a
+  regression to fix, not to filter out. There is no pre-existing failure to discount.
 
 Acceptance: the TCK job passes locally and in CI with `TCK_FILTER` unset (its
 compose default, `docker-compose.tck.yml:244`), `docker/tck-filter/src/.../DisplayNameFilter.java`

@@ -739,3 +739,29 @@ correct.
 - UNCONFIRMED: exact DDL delta per release was not reconstructed from migration scripts; column changes above are taken from PR bodies flagged `BREAKING CHANGE` and from diffing the `*-schema.sql` files between tags v0.14.1 and v0.18.1.
 
 
+
+---
+
+## 10. TCK baseline at 0.14.1
+
+Captured in Step 1, before the build moved: [`tck-baseline-0.14.1.md`](tck-baseline-0.14.1.md).
+**65 tests, 65 passed, 0 failed** — fully green across `CAT`, `CN`, `CN_C`, `MET`,
+`TP` and `TP_C`, on DSP TCK `1.0.0-RC6` against DSP `2025-1`.
+
+Because the baseline is clean, the re-run gate after the upgrade is absolute: any
+failure at 0.18.1 is a regression introduced by this migration. There is no
+pre-existing failure to discount.
+
+Two things the baseline file records that the migration must carry forward:
+
+- **It is only green with a fix to `DelayedActionGuard`.** On the unmodified tree the
+  suite hung indefinitely (twice, at different tests) because the guard dropped a
+  queued action whenever the state machine still held the entity lease, stranding the
+  entity as `pending`. The guard now retries the lease. This is harness code the
+  `test-extension` migration step will touch — do not revert the retry while porting
+  it to the 0.18.1 `StateEntityStore` signatures, where `save` returns
+  `StoreResult<Void>` and `breakLease` becomes abstract (§3).
+- **The TCK image must not move in the same step as the connector version** (§7.3).
+  The baseline is pinned to `1.0.0-RC6`; re-pinning to `1.0.1` / `1.0.2` is a separate,
+  later change so that a TCK-version difference can never be mistaken for a
+  connector regression.
