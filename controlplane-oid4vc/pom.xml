@@ -82,11 +82,6 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-2024</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
             <artifactId>management-api-configuration</artifactId>
             <version>${edc.version}</version>
         </dependency>
@@ -112,6 +107,13 @@
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>control-plane-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <!-- single-participant ("classic") participant-context mode; seeds one
+             ParticipantContext from edc.participant.context.id -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>participant-context-connector-classic-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -182,12 +184,19 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>transfer-data-plane-signaling</artifactId>
+            <artifactId>data-plane-selector-api</artifactId>
             <version>${edc.version}</version>
         </dependency>
+        <!-- Replaces transfer-data-plane-signaling, the legacy flow controller, from
+             0.18.x onwards. data-plane-signaling-client is dropped with it: that
+             artifact is the legacy client half of the same pair and its only
+             consumer was transfer-data-plane-signaling, while data-plane-signaling
+             brings its own ClientFactory. Note this also opens a new "signaling" web
+             context (web.http.signaling.*, default port 8182); see
+             docs/migration/EDC-0.18.1-UPGRADE.md section 8.2.1. -->
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-selector-api</artifactId>
+            <artifactId>data-plane-signaling</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -197,17 +206,7 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-signaling-client</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
             <artifactId>callback-event-dispatcher</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>callback-http-dispatcher</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
