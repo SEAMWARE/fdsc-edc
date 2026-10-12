@@ -119,12 +119,6 @@
 
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-spi-2024</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
             <artifactId>dsp-spi-2025</artifactId>
             <version>${edc.version}</version>
             <scope>compile</scope>

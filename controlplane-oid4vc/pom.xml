@@ -82,11 +82,6 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-2024</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
             <artifactId>management-api-configuration</artifactId>
             <version>${edc.version}</version>
         </dependency>
@@ -112,6 +107,13 @@
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>control-plane-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <!-- single-participant ("classic") participant-context mode; seeds one
+             ParticipantContext from edc.participant.context.id -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>participant-context-connector-classic-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -182,12 +184,14 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>transfer-data-plane-signaling</artifactId>
+            <artifactId>data-plane-selector-api</artifactId>
             <version>${edc.version}</version>
         </dependency>
+        <!-- replaces transfer-data-plane-signaling, which is the legacy flow
+             controller from 0.18.x onwards -->
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-selector-api</artifactId>
+            <artifactId>data-plane-signaling</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -203,11 +207,6 @@
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>callback-event-dispatcher</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>callback-http-dispatcher</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
