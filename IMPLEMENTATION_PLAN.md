@@ -182,7 +182,11 @@ Expect compilation to fail afterwards; that is this step's output, not a defect.
     `fdsc-transfer-extension` still needs it.
 
   Because the BOM is import-scoped here, the replacement must be declared with an
-  explicit `${edc.version}` like every other dependency in those POMs. Whichever
+  explicit `${edc.version}` like every other dependency in those POMs. Note that at
+  0.18.1 only **one** `DataFlowController` may be provided, and `test-extension`
+  contributes a noop one — resolving that conflict for the TCK assembly belongs to
+  Step 6 (see `docs/migration/EDC-0.18.1-UPGRADE.md` §8.3), so state the decision made
+  here clearly enough for Step 6 to act on. Whichever
   way this goes, it is a runtime-behaviour change that no compile gate covers, so
   it folds into Step 7's data-flow verification.
 - Delete the stray `org/eclipse/edc/iam/identitytrust/spi/DcpConstants.java` at the
@@ -332,8 +336,19 @@ green. The `-am` is load-bearing in this step: `fdsc-transfer-extension` depends
   | `transferTypesFor(String)` | `Set<String>` | mirror the existing `transferTypesFor(Asset)` body |
 
   Make these choices deliberately rather than by autocompletion: the TCK drives
-  transfer state through these callbacks. Registration at
-  `TckGuardExtension.java:149` is unaffected.
+  transfer state through these callbacks.
+- **`TckGuardExtension` registration will not compile either — and this step owns the
+  single-`DataFlowController` decision.** `DataFlowManager` was removed from
+  `transfer-spi` in 0.16.0, so the `@Inject`ed manager and the
+  `dataFlowManager.register(noopPriority, new NoopDataFlowController(monitor))` call at
+  `TckGuardExtension.java:151` (import at :50, field at :88) must go; the noop controller
+  is contributed as a `@Provider`-ed `DataFlowController` instead and `noopPriority`
+  becomes meaningless. See `docs/migration/EDC-0.18.1-UPGRADE.md` §8.3. Because 0.18.1
+  wires **exactly one** `DataFlowController`, the TCK runtime cannot provide the noop one
+  *and* a signaling module (`transfer-data-plane-signaling` or `data-plane-signaling`)
+  without failing at startup on a duplicate provider — no compile gate catches this.
+  Decide here which one the TCK assembly wires, in the light of Step 2's keep-or-replace
+  call on `transfer-data-plane-signaling`, and record the decision in the PR.
 - `edc/ProviderRequestedStateFixListener.java`: verify against the
   data-plane-signaling defaults.
 

@@ -684,7 +684,9 @@ Not previously recorded, found while mapping §3.2 and confirmed by `javap`:
   `data-plane-signaling-core` (`DataPlaneSignalingFlowControllerExtension#dataFlowController()`,
   reached through the `data-plane-signaling` aggregator POM). A runtime that wires the noop
   controller **and** a signaling module will fail on a duplicate provider, so the TCK
-  assembly has to pick one.
+  assembly has to pick one. **Owner: Step 6**, informed by Step 2's keep-or-replace call on
+  `transfer-data-plane-signaling` (§8.2) — no compile or `dependency:resolve` gate catches
+  a duplicate provider, it surfaces as a runtime startup failure.
 
 This also sharpens §8.2's open item: at 0.18.1 `transfer-data-plane-signaling` is explicitly
 the *legacy* flow controller and `data-plane-signaling(-core)` is the current one — which is
@@ -718,7 +720,9 @@ correct.
   and only then evaluate the swap against the baseline in §10.
 - **`transfer-data-plane-signaling` vs `data-plane-signaling`** — both resolve at
   0.18.1, the BOM dropped the former, this repo declares it explicitly. Needs an
-  explicit keep-or-replace decision plus a runtime transfer check (§8.2).
+  explicit keep-or-replace decision in Step 2 plus a runtime transfer check (§8.2), and
+  Step 6 then has to make the TCK assembly provide exactly one `DataFlowController`
+  (§8.3).
 - **The `dcp.scopes.*` wiring** in `dcp-extension` predates upstream's dynamic DCP
   scope configuration (0.16.0, PR #5485) and its 0.18.0 `prefix.mapping` form.
   Keeping the hand-rolled version is valid; adopting upstream's is a separate

@@ -17,20 +17,27 @@
 package org.seamware.edc.edc;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
 import org.eclipse.edc.spi.persistence.StateEntityStore;
 import org.eclipse.edc.spi.result.StoreResult;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class DelayedActionGuardTest {
@@ -38,6 +45,9 @@ class DelayedActionGuardTest {
   private static final String NEGOTIATION_ID = "negotiation-1";
   private static final int ACTION_TIMEOUT_SECONDS = 30;
   private static final long SAVE_TIMEOUT_MS = 30_000;
+
+  /** Long enough to cover the initial guard delay plus several lease retries. */
+  private static final long NO_RETRY_WINDOW_MS = 3_000;
 
   /**
    * The state machine commonly still holds the lease when a queued action comes up, so a lease
@@ -47,6 +57,8 @@ class DelayedActionGuardTest {
   @ValueSource(ints = {0, 1, 5})
   void runsActionOnceTheLeaseIsGranted(int leaseFailures) throws Exception {
     var negotiation = negotiation();
+    // EDC core sets pending before the guarded entity is saved; the guard must clear it again.
+    negotiation.setPending(true);
     var attempts = new AtomicInteger();
     StateEntityStore<ContractNegotiation> store = mock();
     when(store.findByIdAndLease(NEGOTIATION_ID))
@@ -69,6 +81,42 @@ class DelayedActionGuardTest {
     } finally {
       guard.stop();
     }
+  }
+
+  /** A failure the lease cannot recover from must be reported at once, not waited out. */
+  @ParameterizedTest
+  @MethodSource("nonRetryableFailures")
+  void dropsEntryOnNonRetryableStoreFailure(
+      String name, Function<String, StoreResult<ContractNegotiation>> failure) {
+    StateEntityStore<ContractNegotiation> store = mock();
+    when(store.findByIdAndLease(NEGOTIATION_ID)).thenReturn(failure.apply(name));
+
+    var actionRan = new CountDownLatch(1);
+    var guard =
+        new DelayedActionGuard<ContractNegotiation>(
+            entity -> true, entity -> actionRan.countDown(), store);
+    guard.start();
+    try {
+      assertTrue(guard.test(negotiation()));
+      verify(store, after(NO_RETRY_WINDOW_MS)).findByIdAndLease(NEGOTIATION_ID);
+      verify(store, never()).save(any(ContractNegotiation.class));
+      assertEquals(1, actionRan.getCount());
+    } finally {
+      guard.stop();
+    }
+  }
+
+  private static Stream<Arguments> nonRetryableFailures() {
+    return Stream.of(
+        Arguments.of(
+            "not found",
+            (Function<String, StoreResult<ContractNegotiation>>) StoreResult::notFound),
+        Arguments.of(
+            "already exists",
+            (Function<String, StoreResult<ContractNegotiation>>) StoreResult::alreadyExists),
+        Arguments.of(
+            "duplicate keys",
+            (Function<String, StoreResult<ContractNegotiation>>) StoreResult::duplicateKeys));
   }
 
   private static ContractNegotiation negotiation() {
