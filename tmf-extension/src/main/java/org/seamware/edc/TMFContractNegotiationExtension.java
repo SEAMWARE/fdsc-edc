@@ -16,7 +16,6 @@
  */
 package org.seamware.edc;
 
-import static org.eclipse.edc.protocol.dsp.spi.type.Dsp2024Constants.DSP_TRANSFORMER_CONTEXT_V_2024_1;
 import static org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants.DSP_TRANSFORMER_CONTEXT_V_2025_1;
 import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
 
@@ -155,10 +154,6 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
         .forEach(typeTransformerRegistry::register);
     typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
 
-    registerTypePreservingTransformers(
-        DSP_TRANSFORMER_CONTEXT_V_2024_1,
-        typePreservingPolicyTransformer,
-        typePreservingConstraintTransformer);
     registerTypePreservingTransformers(
         DSP_TRANSFORMER_CONTEXT_V_2025_1,
         typePreservingPolicyTransformer,

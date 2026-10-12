@@ -355,6 +355,13 @@ follow their production class and are not listed separately):
 | entities gain `participantContextId` (§4) | `tmf-extension/.../store/TMFEdcMapper.java` and all four TMF-backed stores | builders never set it |
 | `ContractAgreement` gains `agreementId` (distinct from `id`) and `claims`; transfer-request lookup is by `(agreementId, participantContextId)` | `tmf-extension/.../store/TMFEdcMapper.java:176`; `tmf-extension/.../store/TMFBackedContractNegotiationStore.java:163,196` | `toContractAgreement` sets only `id(externalId)`; `findContractAgreement(String)` / `queryAgreements(QuerySpec)` resolve on `id` alone |
 | `DataFlowManager` removed; `DataFlowController` is a single injected service (§8.3) | `test-extension/.../edc/TckGuardExtension.java:50,88,151` | `@Inject DataFlowManager` + `register(noopPriority, controller)` |
+| `LeaseContext.acquireLease` / `breakLease` return `StoreResult<Void>` instead of `void` | `tmf-extension/.../store/TMFLeaseContext.java:46,61` | `public void breakLease(String)` / `public void acquireLease(String)` |
+| `ProtocolTokenValidator.verify` gains a leading `ParticipantContext` | `tmf-extension/.../store/TMForumBackedCatalogProtocolService.java:91` | `verify(TokenRepresentation, ctor::new, CatalogRequestMessage)` |
+| `ServiceExtensionContext.getParticipantId()` removed (participant context, §4) | `tmf-extension/.../CatalogProtocolServiceExtension.java:63`; `tmf-extension/.../TMFContractNegotiationExtension.java:290` | `context.getParticipantId()` |
+| `Asset.Builder.version(String)` removed | `tmf-extension/.../store/TMFEdcMapper.java:643` | `.version(...)` on the asset builder |
+| Control-plane provisioning SPI removed: `TransferProcess.getResourceManifest()` and `TransferProcessStates.PROVISIONING_REQUESTED` are gone | `tmf-extension/.../store/TMFEdcMapper.java:967,970`; `tmf-extension/.../store/TMFObjectMapper.java:68` | reads the resource manifest and the provisioning state onto the TMForum model |
+| `RequestVersionPolicyContext` no longer in `org.eclipse.edc.policy.context.request.spi`; `SignatureSuiteRegistry` moved with the DCP rename | `dcp-extension/.../DCPExtension.java:51,82` | 0.14.1 imports |
+| DSP 2024/1 transformer context gone with `dsp-spi-2024` — **delete the registration, do not port it** | `tmf-extension/.../TMFContractNegotiationExtension.java:19,159` | `registerTypePreservingTransformers(DSP_TRANSFORMER_CONTEXT_V_2024_1, ...)`. Removed in Step 2 (§3.3), since it is the direct consequence of dropping the artifact. The `2025_1` registration on the next line stays |
 
 Two non-breaks worth stating, because both look like breaks:
 
@@ -368,6 +375,41 @@ Two non-breaks worth stating, because both look like breaks:
 - **`DataFlowResponseMessage` (`core-spi`) is byte-identical** between 0.14.1 and
   0.18.1 and still declares `provisioning`. Only the `provisioning` field of
   `DataFlowResponse` (`transfer-spi`) was renamed. Do not "fix" the former.
+
+### 3.3 Observed breakage inventory at 0.18.1
+
+Output of `mvn -B -fae -DskipTests compile` on the Step 2 tree (parent SUCCESS,
+`fdsc-transfer-extension` / `policy-extension` / both controlplanes SKIPPED behind the
+failures below). 37 distinct compiler errors across 13 files:
+
+| Module | File | Errors | Owner |
+|---|---|---|---|
+| `tmf-extension` | `store/TMFLeaseContext.java` | 5 | Step 3 |
+| `tmf-extension` | `store/TMForumBackedCatalogProtocolService.java` | 4 | Step 3 |
+| `tmf-extension` | `store/TMFEdcMapper.java` | 3 | Step 3 |
+| `tmf-extension` | `store/TMFBackedContractNegotiationStore.java` | 3 | Step 3 |
+| `tmf-extension` | `store/TMFObjectMapper.java` | 1 | Step 3 |
+| `tmf-extension` | `CatalogProtocolServiceExtension.java` | 1 | Step 3 |
+| `tmf-extension` | `TMFContractNegotiationExtension.java` | 1 | Step 3 |
+| `dcp-extension` | `DCPExtension.java` | 6 | Step 4 |
+| `dcp-extension` | `policy/CredentialScopeExtractorRegistry.java` | 4 | Step 4 |
+| `dcp-extension` | `FixedJwtToVerifiableCredentialTransformer.java` | 2 | Step 4 |
+| `oid4vc-extension` | `identity/OID4VPIdentityService.java` | 3 | Step 4 |
+| `oid4vc-extension` | `identity/CounterPartyAddressAudienceResolver.java` | 2 | Step 4 |
+| `test-extension` | `edc/TckGuardExtension.java` | 2 | Step 6 |
+
+Every one of them maps to a row of §3.2.
+
+**This inventory is only trustworthy because the dead DSP 2024/1 import was removed first.**
+With `import static ...Dsp2024Constants.DSP_TRANSFORMER_CONTEXT_V_2024_1` still present,
+`tmf-extension` reported **4** errors, all in `TMFContractNegotiationExtension`, and the 14
+real errors in `store/` never appeared: the module runs Lombok and MapStruct annotation
+processors, and an error raised in the first processing round aborts the later rounds before
+those classes are analysed. Any step that reads a compile log from this repo as a complete
+breakage list must first clear the import-level errors and recompile — otherwise the list is
+silently truncated, and the truncation looks exactly like "that module is nearly done".
+
+---
 
 ---
 
@@ -496,6 +538,14 @@ Three independent checks:
   2024 artifacts, and both 2025 artifacts resolve at 0.18.1 (§2.4).
 - DSP 0.8 and 2024/1 were deleted upstream in 0.16.0 (PR #5452), so staying on the
   2024 modules is not an option in any case.
+
+**One code site went with the artifact.** `TMFContractNegotiationExtension` registered its
+type-preserving policy and constraint transformers under *both* transformer contexts, and the
+2024/1 half (`:19` import, `:159` registration) has no counterpart at 0.18.1. It is deleted,
+not ported — see the last row of §3.2. The `DSP_TRANSFORMER_CONTEXT_V_2025_1` registration
+immediately below it is the one that matters and is untouched. Nothing else in `src/main/java`
+references a 2024/1 *protocol* symbol; the remaining `2024/1` strings in `policy-extension` are
+the ODRL vocabulary IRIs ring-fenced below.
 
 **Consequence for counterparties.** After the upgrade this connector speaks DSP
 2025/1 only. Any external counterparty still on DSP 2024/1 (or 0.8) can no longer
@@ -688,16 +738,71 @@ Not previously recorded, found while mapping §3.2 and confirmed by `javap`:
   **This will not compile at 0.18.1.** `NoopDataFlowController` has to be contributed as a
   `@Provider`-ed `DataFlowController` instead, and the `noopPriority` constant becomes
   meaningless.
-- Because exactly one `DataFlowController` can exist, the noop controller now *conflicts*
+- Because only one `DataFlowController` can be injected, the noop controller now *conflicts*
   with whatever else provides one. Both candidates do:
   `transfer-data-plane-signaling` 0.18.1 (`TransferDataPlaneSignalingExtension#dataFlowController()`,
   now holding only a `LegacyDataPlaneSignalingFlowController`) and
   `data-plane-signaling-core` (`DataPlaneSignalingFlowControllerExtension#dataFlowController()`,
-  reached through the `data-plane-signaling` aggregator POM). A runtime that wires the noop
-  controller **and** a signaling module will fail on a duplicate provider, so the TCK
-  assembly has to pick one. **Owner: Step 6**, informed by Step 2's keep-or-replace call on
-  `transfer-data-plane-signaling` (§8.2) — no compile or `dependency:resolve` gate catches
-  a duplicate provider, it surfaces as a runtime startup failure.
+  reached through the `data-plane-signaling` aggregator POM). **Owner: Step 6**, informed by
+  Step 2's keep-or-replace call on `transfer-data-plane-signaling` (§8.2). The shape of that
+  conflict is not what it first looks like — see below.
+
+#### 8.3.1 The conflict is silent, and it reaches the production images
+
+An earlier draft of this hand-off said the duplicate provider "fails at startup" and framed
+it as a TCK-assembly problem. Both halves were wrong. Three facts, each verified against
+0.18.1 and against this repo:
+
+1. **There is no TCK-only assembly.** `test-extension` is an unconditional `<dependency>` of
+   both controlplane modules (`controlplane-oid4vc/pom.xml:65`, `controlplane-dcp/pom.xml:54`),
+   and `docker/Dockerfile.tck` is handed the *same* shaded jar as the production
+   `docker/Dockerfile` — `docker-compose.tck.yml:206` passes
+   `JAR=controlplane-oid4vc/target/context/controlplane-oid4vc.jar`. The TCK image differs
+   from the production image in its baked-in config, not in its classpath. So once Step 6
+   makes `TckGuardExtension` compile, `NoopDataFlowController` and
+   `DataPlaneSignalingFlowControllerExtension#dataFlowController()` are both on the
+   **production** classpath. Nothing about this is TCK-specific.
+2. **A `@Provider` method cannot be conditional on config.** Today the noop controller is
+   registered behind `if (testConfig.isEnabled())` (`TckGuardExtension#initialize` ->
+   `registerNoopDataFlowController()`, `TckGuardExtension.java:100,110,149`), and that runtime
+   switch is the only thing currently keeping it out of a production runtime. Provider methods
+   are discovered and invoked by the boot layer regardless of any config value, so the switch
+   disappears along with the registry.
+3. **A duplicate provider does not fail startup — it silently overwrites.** `DependencyGraph.of`
+   invokes every non-default `@Provider`; `DefaultServiceExtensionContext#registerService` then
+   logs `"A service of the type ... was already registered and has now been replaced with a ..."`
+   and does `services.put(type, service)`. There is no duplicate-provider check anywhere in
+   `core/common/boot`. The outcome is **last writer wins, decided by extension load order**,
+   with one WARNING line as the only signal. Both candidate providers are plain `@Provider`
+   (`isDefault = false`; confirmed by `javap -v` on `DataPlaneSignalingFlowControllerExtension`
+   and `TransferDataPlaneSignalingExtension` at 0.18.1, both printing an empty
+   `RuntimeVisibleAnnotations` entry).
+
+Consequence: porting the registration to a bare `@Provider` ships a production image whose
+data-plane flow controller is whichever of the two loaded last. That is a silent data-plane
+outage, not a startup error, and no gate in this plan catches it except Step 7's end-to-end
+transfer check.
+
+#### 8.3.2 What Step 6 must actually choose
+
+`@Provider(isDefault = true)` on the noop is **safe but not by itself a solution**: a default
+provider is consulted only when no non-default provider supplied the service
+(`ServiceInjectionPoint#resolve` calls the default supplier only when `!context.hasService(...)`),
+so with `data-plane-signaling` on the classpath the signaling controller wins *always* —
+including in TCK mode, where the noop becomes dead code and TCK transfers are driven by the
+real signaling flow controller with no data plane behind it. It removes the silent overwrite
+by removing the noop.
+
+So the decision is about the classpath, not the annotation:
+
+| Option | Production image | TCK image | Cost |
+|---|---|---|---|
+| **A. Split the assembly** — move the noop controller into a module that only a TCK-specific runtime depends on, and give `docker/Dockerfile.tck` its own shaded jar | signaling only | noop only, signaling module absent | a TCK controlplane module plus a compose/Dockerfile change. The honest fix: it also stops shipping `InMemoryVault` and `TestIdentityService` in the production images (see the vault-exclusion comment at `controlplane-oid4vc/pom.xml:47-50`) |
+| **B. One jar, noop as `@Provider(isDefault = true)`** | signaling wins | signaling wins too — noop unused | cheap, but the TCK then has to pass against the real signaling flow controller; diff against `docs/migration/tck-baseline-0.14.1.md` before committing to it |
+| **C. One jar, drop `data-plane-signaling` from it** | noop controller in production | works as today | ruled out — production would have no real data plane |
+
+Step 6 picks A or B and records which. Step 7's end-to-end transfer check (§8.2) is the gate
+either way, and a bare `@Provider` (no `isDefault`) is not an admissible outcome.
 
 This also sharpens §8.2's open item: at 0.18.1 `transfer-data-plane-signaling` is explicitly
 the *legacy* flow controller and `data-plane-signaling(-core)` is the current one — which is
@@ -717,6 +822,7 @@ correct.
 | Where does `participantContextId` live in the TMForum entity model? | Nowhere — it is not persisted. It is stamped onto mapped entities from configuration. | §4.3 |
 | Is dropping `dsp-2024` / `dsp-spi-2024` behaviour-neutral? | Yes for this connector; not for 2024/1 counterparties. | §5 |
 | Does `DataFlowResponseMessage` need renaming? | No. It is byte-identical at 0.18.1; only `DataFlowResponse` changed. | §3.2 |
+| Does a duplicate `DataFlowController` provider fail startup? | No — last non-default provider wins, by load order, with only a WARNING. The noop/signaling clash is therefore silent and reaches the production images. | §8.3.1 |
 
 ### 9.2 Still open — decide during the migration
 
@@ -732,8 +838,9 @@ correct.
 - **`transfer-data-plane-signaling` vs `data-plane-signaling`** — both resolve at
   0.18.1, the BOM dropped the former, this repo declares it explicitly. Needs an
   explicit keep-or-replace decision in Step 2 plus a runtime transfer check (§8.2), and
-  Step 6 then has to make the TCK assembly provide exactly one `DataFlowController`
-  (§8.3).
+  Step 6 then has to make **every** shipped runtime — production images included, since
+  they share one shaded jar with the TCK image — resolve to exactly one
+  `DataFlowController` (§8.3.1, §8.3.2).
 - **The `dcp.scopes.*` wiring** in `dcp-extension` predates upstream's dynamic DCP
   scope configuration (0.16.0, PR #5485) and its 0.18.0 `prefix.mapping` form.
   Keeping the hand-rolled version is valid; adopting upstream's is a separate
