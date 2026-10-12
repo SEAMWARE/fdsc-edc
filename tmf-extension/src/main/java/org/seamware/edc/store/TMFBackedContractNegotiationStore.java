@@ -62,6 +62,12 @@ import org.seamware.tmforum.quote.model.RelatedPartyVO;
 public class TMFBackedContractNegotiationStore implements ContractNegotiationStore {
 
   public static final String CUSTOMER_ROLE = "Customer";
+
+  /** Reason recorded when {@link #save} releases the lease it took for the save. */
+  private static final String LEASE_RELEASED_AFTER_SAVE = "Finally saved.";
+
+  /** Reason recorded when the state machine abandons an entity via {@link #breakLease}. */
+  private static final String LEASE_BROKEN_BY_STATE_MACHINE = "Lease broken.";
   private final Monitor monitor;
   private final ObjectMapper objectMapper;
   private final QuoteApiClient quoteApi;
@@ -371,7 +377,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   @Override
-  public void save(ContractNegotiation contractNegotiation) {
+  public StoreResult<Void> save(ContractNegotiation contractNegotiation) {
 
     // Per-negotiation lock prevents concurrent saves for the same negotiation within this
     // JVM. Without this, two DSP message handlers can enter handleAgreeStates simultaneously
@@ -411,10 +417,29 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
       } finally {
         // always give up the lock
-        leaseHolder.freeLease(contractNegotiation.getId(), "Finally saved.");
+        leaseHolder.freeLease(contractNegotiation.getId(), LEASE_RELEASED_AFTER_SAVE);
         activeNegotiations.remove(contractNegotiation.getId());
       }
     }
+    return StoreResult.success();
+  }
+
+  /**
+   * Releases the lease held on a negotiation without writing it back, mirroring the release half of
+   * {@link #save}. The state machine calls this when it abandons an entity it has leased.
+   */
+  @Override
+  public StoreResult<Void> breakLease(ContractNegotiation contractNegotiation) {
+    String negotiationId = contractNegotiation.getId();
+    try {
+      leaseHolder.freeLease(negotiationId, LEASE_BROKEN_BY_STATE_MACHINE);
+    } catch (RuntimeException e) {
+      monitor.warning(String.format("Failed to break lease for %s.", negotiationId), e);
+      return StoreResult.generalError(e.getMessage());
+    } finally {
+      activeNegotiations.remove(negotiationId);
+    }
+    return StoreResult.success();
   }
 
   private void handleTerminationStates(ContractNegotiation contractNegotiation) {

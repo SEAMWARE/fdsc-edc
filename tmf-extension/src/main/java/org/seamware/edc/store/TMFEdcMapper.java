@@ -18,6 +18,7 @@ package org.seamware.edc.store;
 
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.CONSUMER;
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.PROVIDER;
+import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
 import static org.seamware.edc.tmf.ParticipantResolver.CONSUMER_ROLE;
 import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
 
@@ -85,6 +86,12 @@ public class TMFEdcMapper {
   public static final String TRANSFER_PATH_KEY = "transferPath";
   public static final String UPSTREAM_ADDRESS_KEY = "upstreamAddress";
   public static final String UID_KEY = "http://www.w3.org/ns/odrl/2/uid";
+
+  /** Asset name property; EDC 0.18.1 removed {@code Asset.PROPERTY_NAME} and its builder setter. */
+  public static final String ASSET_PROPERTY_NAME = EDC_NAMESPACE + "name";
+
+  /** Asset version property; EDC 0.18.1 removed {@code Asset.PROPERTY_VERSION} and its builder setter. */
+  public static final String ASSET_PROPERTY_VERSION = EDC_NAMESPACE + "version";
   public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
   public static final String USAGE_CHARACTERISTIC_CORRELATION_ID = "correlation-id";
   public static final String USAGE_CHARACTERISTIC_PROTOCOL = "protocol";
@@ -92,7 +99,6 @@ public class TMFEdcMapper {
   public static final String USAGE_CHARACTERISTIC_TRANSFER_TYPE = "transfer-type";
   public static final String USAGE_CHARACTERISTIC_TYPE = "type";
   public static final String USAGE_CHARACTERISTIC_CONTRACT_ID = "contract-id";
-  public static final String USAGE_CHARACTERISTIC_RESOURCE_MANIFEST = "resource-manifest";
   public static final String USAGE_CHARACTERISTIC_DATAPLANE_ID = "dataplane-id";
   public static final String USAGE_CHARACTERISTIC_CONTENT_DATA_ADDRESS = "content-data-address";
   public static final String USAGE_TYPE_DSP_TRANSFER = "dspTransfer";
@@ -114,6 +120,7 @@ public class TMFEdcMapper {
   private final TypeTransformerRegistry typeTransformerRegistry;
   private final JsonLd jsonLd;
   private final Clock clock;
+  private final String participantContextId;
 
   public TMFEdcMapper(
       Monitor monitor,
@@ -121,13 +128,15 @@ public class TMFEdcMapper {
       ParticipantResolver participantResolver,
       TypeTransformerRegistry typeTransformerRegistry,
       JsonLd jsonLd,
-      Clock clock) {
+      Clock clock,
+      String participantContextId) {
     this.monitor = monitor;
     this.objectMapper = objectMapper;
     this.participantResolver = participantResolver;
     this.typeTransformerRegistry = typeTransformerRegistry;
     this.jsonLd = jsonLd;
     this.clock = clock;
+    this.participantContextId = participantContextId;
     this.tmfObjectMapper = new TMFObjectMapperImpl();
   }
 
@@ -191,7 +200,13 @@ public class TMFEdcMapper {
                     agreementBuilder.policy(fromOdrl(c.getValue()));
               }
             });
-    agreementBuilder.id(agreementVO.getExternalId());
+    // TMForum knows a single identifier per agreement, so the EDC row id and the DSP-visible
+    // agreement id are both the external id. Leaving agreementId unset would make the builder
+    // generate a random UUID that no counterparty can resolve.
+    agreementBuilder
+        .id(agreementVO.getExternalId())
+        .agreementId(agreementVO.getExternalId())
+        .participantContextId(participantContextId);
     return agreementBuilder.build();
   }
 
@@ -380,7 +395,9 @@ public class TMFEdcMapper {
       String participantId) {
 
     ContractNegotiation.Builder contractNegotiationBuilder =
-        ContractNegotiation.Builder.newInstance().clock(clock);
+        ContractNegotiation.Builder.newInstance()
+            .clock(clock)
+            .participantContextId(participantContextId);
 
     if (quoteVOs.isEmpty()) {
       monitor.warning("Tried to map an empty list to a contract negotiation.");
@@ -640,8 +657,9 @@ public class TMFEdcMapper {
         Asset.Builder.newInstance()
             .clock(clock)
             .id(productSpecification.getExternalId())
-            .version(productSpecification.getVersion())
-            .name(productSpecification.getName())
+            .participantContextId(participantContextId)
+            .property(ASSET_PROPERTY_VERSION, productSpecification.getVersion())
+            .property(ASSET_PROPERTY_NAME, productSpecification.getName())
             .description(productSpecification.getDescription())
             .dataAddress(dataAddressBuilder.build())
             .build());
@@ -799,7 +817,10 @@ public class TMFEdcMapper {
       return Optional.empty();
     }
     ContractDefinition.Builder contractDefinitionBuilder =
-        ContractDefinition.Builder.newInstance().clock(clock).id(productOfferingVO.getExternalId());
+        ContractDefinition.Builder.newInstance()
+            .clock(clock)
+            .id(productOfferingVO.getExternalId())
+            .participantContextId(participantContextId);
 
     Optional<ExtendableProductOfferingTerm> optionalTerm =
         getContractDefinitionTerm(productOfferingVO);
@@ -962,12 +983,6 @@ public class TMFEdcMapper {
       usageVO.addRatedProductUsageItem(
           new RatedProductUsageVO()
               .productRef(new org.seamware.tmforum.usage.model.ProductRefVO().id(productId)));
-    }
-
-    if (transferProcess.getResourceManifest() != null) {
-      usageVO.addUsageCharacteristicItem(
-          toUsageCharacteristic(
-              USAGE_CHARACTERISTIC_RESOURCE_MANIFEST, transferProcess.getResourceManifest()));
     }
 
     return usageVO;

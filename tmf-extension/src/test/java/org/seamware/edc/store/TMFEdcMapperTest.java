@@ -101,7 +101,13 @@ class TMFEdcMapperTest extends AbstractStoreTest {
 
     tmfEdcMapper =
         new TMFEdcMapper(
-            monitor, objectMapper, participantResolver, typeTransformerRegistry, jsonLd, clock);
+            monitor,
+            objectMapper,
+            participantResolver,
+            typeTransformerRegistry,
+            jsonLd,
+            clock,
+            TEST_PARTICIPANT_CONTEXT_ID);
   }
 
   // ---- TO AGREEMENT ----
@@ -864,8 +870,9 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     return Asset.Builder.newInstance()
         .clock(clock)
         .id(assetId)
-        .version(assetVersion)
-        .name(name)
+        .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
+        .property(TMFEdcMapper.ASSET_PROPERTY_VERSION, assetVersion)
+        .property(TMFEdcMapper.ASSET_PROPERTY_NAME, name)
         .description(description)
         .dataAddress(dataAddress)
         .build();

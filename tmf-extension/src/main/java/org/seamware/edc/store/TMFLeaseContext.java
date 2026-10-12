@@ -24,6 +24,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.persistence.LeaseContext;
+import org.eclipse.edc.spi.result.StoreResult;
 import org.eclipse.edc.transaction.spi.TransactionContext;
 
 // TODO: reevaluate usage together with Usage as TransferProcess representation
@@ -43,33 +44,37 @@ public class TMFLeaseContext implements LeaseContext {
     this.transactionContext = transactionContext;
   }
 
+  /** Releasing a lease that was never held is not an error - the entity ends up unleased either way. */
   @Override
-  public void breakLease(String s) {
-    transactionContext.execute(
+  public StoreResult<Void> breakLease(String s) {
+    return transactionContext.execute(
         () -> {
           synchronized (leaseList) {
-            if (leaseList.contains(s)) {
-              leaseList.remove(s);
+            if (leaseList.remove(s)) {
               monitor.debug(String.format("Broke lease %s", s));
             } else {
               monitor.debug("Lease does not exist " + s);
             }
           }
+          return StoreResult.success();
         });
   }
 
+  /** Returns {@link StoreResult#alreadyLeased} rather than throwing when the entity is held. */
   @Override
-  public void acquireLease(String entity) {
-    transactionContext.execute(
+  public StoreResult<Void> acquireLease(String entity) {
+    return transactionContext.execute(
         () -> {
           synchronized (leaseList) {
             if (leaseList.contains(entity)) {
-              throw new IllegalStateException(String.format("%s is currently leased", entity));
+              return StoreResult.<Void>alreadyLeased(
+                  String.format("%s is currently leased", entity));
             }
             leaseList.add(entity);
             monitor.debug("Acquired lease " + entity);
           }
           scheduleBreak(entity);
+          return StoreResult.success();
         });
   }
 

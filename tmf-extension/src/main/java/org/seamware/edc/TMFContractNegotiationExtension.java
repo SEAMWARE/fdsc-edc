@@ -186,7 +186,8 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               participantResolver(config),
               typeTransformerRegistry,
               jsonLd,
-              clock);
+              clock,
+              config.getParticipantContextId());
     }
     return tmfEdcMapper;
   }
@@ -287,7 +288,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               productInventoryApi(tmfConfig),
               participantResolver(tmfConfig),
               tmfEdcMapper(tmfConfig),
-              serviceExtensionContext.getParticipantId(),
+              tmfConfig.getParticipantId(),
               controlplane,
               criterionOperatorRegistry,
               new TMFBackedLeaseHolder(
@@ -309,7 +310,8 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   public PolicyDefinitionStore policyDefinitionStore(TMFConfig tmfConfig) {
     if (policyDefinitionStore == null) {
       policyDefinitionStore =
-          new TMFBackedPolicyDefinitionStore(monitor, productCatalogApi(tmfConfig));
+          new TMFBackedPolicyDefinitionStore(
+              monitor, productCatalogApi(tmfConfig), tmfConfig.getParticipantContextId());
     }
     return policyDefinitionStore;
   }

@@ -24,11 +24,18 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.EqualsAndHashCode;
 import org.eclipse.edc.spi.EdcException;
+import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.system.configuration.Config;
 
 /** Configuration of the TMForum Extension. */
 @EqualsAndHashCode
 public class TMFConfig {
+
+  /** EDC core setting holding the identity this runtime acts on behalf of. */
+  public static final String EDC_PARTICIPANT_ID_SETTING = "edc.participant.id";
+
+  /** EDC core setting holding the participant context id; falls back to the participant id. */
+  public static final String EDC_PARTICIPANT_CONTEXT_ID_SETTING = "edc.participant.context.id";
 
   private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";
   private static final String TMF_EXTENSION_CATALOG_CONFIG_PATH = "tmfExtension.catalog";
@@ -53,6 +60,11 @@ public class TMFConfig {
   private URL partyCatalogApi;
   // base uri for the json-schemas to be used when extending the TMForum objects.
   private URI schemaBaseUri;
+
+  // identity this runtime acts on behalf of, mirrors edc.participant.id
+  private String participantId;
+  // participant context stamped onto every entity, mirrors edc.participant.context.id
+  private String participantContextId;
 
   // configuration for the catalog endpoint
   private CatalogConfig catalogConfig;
@@ -93,6 +105,14 @@ public class TMFConfig {
     return schemaBaseUri;
   }
 
+  public String getParticipantId() {
+    return participantId;
+  }
+
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
   public CatalogConfig getCatalogConfig() {
     return catalogConfig;
   }
@@ -120,6 +140,15 @@ public class TMFConfig {
     getNullSafeFromConfig(() -> tmfExtensionConfig.getString("schemaBaseUri"))
         .ifPresent(tmfConfigBuilder::schemaBaseUri);
 
+    // Mirrors ClassicParticipantContextDefaultServicesExtension: an unset context id falls back
+    // to the participant id, so stamped entities match the context EDC seeds and filters by.
+    String participantId =
+        config.getString(
+            EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
+    tmfConfigBuilder.participantId(participantId);
+    tmfConfigBuilder.participantContextId(
+        config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));
+
     CatalogConfig.Builder catalogConfigBuilder = new CatalogConfig.Builder();
     Config catalogConfig = config.getConfig(TMF_EXTENSION_CATALOG_CONFIG_PATH);
     getNullSafeFromConfig(() -> catalogConfig.getBoolean("enabled"))
@@ -142,6 +171,16 @@ public class TMFConfig {
 
     public Builder schemaBaseUri(String schemaBaseUri) {
       tmfConfig.schemaBaseUri = URI.create(schemaBaseUri);
+      return this;
+    }
+
+    public Builder participantId(String participantId) {
+      tmfConfig.participantId = participantId;
+      return this;
+    }
+
+    public Builder participantContextId(String participantContextId) {
+      tmfConfig.participantContextId = participantContextId;
       return this;
     }
 
