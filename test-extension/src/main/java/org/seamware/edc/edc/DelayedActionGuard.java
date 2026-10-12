@@ -61,6 +61,15 @@ public class DelayedActionGuard<T extends StatefulEntity<T>> implements PendingG
   /** Delay in milliseconds before a queued guard action is executed. */
   private static final long GUARD_DELAY_MS = 500;
 
+  /** Delay before retrying a queued action whose entity is still leased by the state machine. */
+  private static final long LEASE_RETRY_DELAY_MS = 200;
+
+  /**
+   * Maximum number of lease attempts for a queued action before it is abandoned. Sized so that
+   * retrying spans about a minute, i.e. the EDC default state-machine lease duration.
+   */
+  private static final int MAX_LEASE_ATTEMPTS = 300;
+
   /** Poll timeout in milliseconds for the delay queue. */
   private static final long POLL_TIMEOUT_MS = 10;
 
@@ -92,10 +101,17 @@ public class DelayedActionGuard<T extends StatefulEntity<T>> implements PendingG
                 // (e.g., AGREED → TERMINATING) since it was queued.
                 var result = store.findByIdAndLease(entry.entity.getId());
                 if (result.failed()) {
-                  LOG.warning(
-                      String.format(
-                          "Guard background: could not lease entity=%s: %s",
-                          entry.entity.getId(), result.getFailureDetail()));
+                  // The state machine usually still holds the lease for a second or two after
+                  // test() queued the entry. Dropping the entry here would strand the entity
+                  // with pending=true forever and hang the TCK run, so retry on a short delay.
+                  if (entry.attempt < MAX_LEASE_ATTEMPTS) {
+                    queue.put(entry.retry());
+                  } else {
+                    LOG.warning(
+                        String.format(
+                            "Guard background: giving up on entity=%s after %d lease attempts: %s",
+                            entry.entity.getId(), entry.attempt, result.getFailureDetail()));
+                  }
                   continue;
                 }
                 var current = result.getContent();
@@ -153,11 +169,24 @@ public class DelayedActionGuard<T extends StatefulEntity<T>> implements PendingG
   /** A delayed entry that holds an entity for deferred guard processing. */
   protected class GuardDelay implements Delayed {
     private final long start;
+    private final long delayMs;
+    final int attempt;
     final T entity;
 
     GuardDelay(T entity) {
+      this(entity, GUARD_DELAY_MS, 1);
+    }
+
+    private GuardDelay(T entity, long delayMs, int attempt) {
       this.entity = entity;
+      this.delayMs = delayMs;
+      this.attempt = attempt;
       start = System.currentTimeMillis();
+    }
+
+    /** Re-queues this entry on the shorter lease-retry delay, counting one more attempt. */
+    GuardDelay retry() {
+      return new GuardDelay(entity, LEASE_RETRY_DELAY_MS, attempt + 1);
     }
 
     @Override
@@ -170,7 +199,7 @@ public class DelayedActionGuard<T extends StatefulEntity<T>> implements PendingG
 
     @Override
     public long getDelay(@NotNull TimeUnit timeUnit) {
-      return timeUnit.convert(GUARD_DELAY_MS - (System.currentTimeMillis() - start), MILLISECONDS);
+      return timeUnit.convert(delayMs - (System.currentTimeMillis() - start), MILLISECONDS);
     }
   }
 }
