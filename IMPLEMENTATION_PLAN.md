@@ -221,9 +221,16 @@ refactor hits hardest.
   `TMFBackedPolicyDefinitionStore.java`: their declared methods are unchanged, but
   entities now carry `participantContextId`. Implement the persistence and
   `QuerySpec`/`Criterion` filtering decided in Step 1, in `TMFEdcMapper`.
-- `TMFEdcMapper.java`: map `participantContextId` in both directions. Introduce it
-  as a named constant alongside the existing TMForum field-name constants — no
-  inline literals.
+- `TMFEdcMapper.java`: map `participantContextId` in both directions, on **every**
+  entity it builds — including `ContractAgreement` (`:176`), which implements
+  `ParticipantResource` at 0.18.1. Introduce it as a named constant alongside the
+  existing TMForum field-name constants — no inline literals.
+- `ContractAgreement` also gains `agreementId`, distinct from `id`, and
+  transfer-request lookup is by `(agreementId, participantContextId)` — so
+  `toContractAgreement`, `findContractAgreement` and `queryAgreements`
+  (`TMFBackedContractNegotiationStore.java:163,196`) all need a decision on which
+  TMForum field carries the agreement id. See
+  `docs/migration/EDC-0.18.1-UPGRADE.md` §3.2 and §4.2.
 - Update the 28 test files; prefer `@ParameterizedTest` where a new participant-context
   dimension multiplies existing cases rather than copying test methods.
 

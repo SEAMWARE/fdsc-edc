@@ -353,6 +353,7 @@ follow their production class and are not listed separately):
 | `DataFlowController.provision` -> `prepare`, plus new `resume` / `started` / `completed` / `transferTypesFor(String)` | `test-extension/.../edc/NoopDataFlowController.java:35` | implements the 0.14.1 six-method interface; `provision` at :58 |
 | `DataFlowResponse.Builder.provisioning` -> `async` | `test-extension/.../edc/NoopDataFlowController.java:64,75` | `.provisioning(false)` |
 | entities gain `participantContextId` (§4) | `tmf-extension/.../store/TMFEdcMapper.java` and all four TMF-backed stores | builders never set it |
+| `ContractAgreement` gains `agreementId` (distinct from `id`) and `claims`; transfer-request lookup is by `(agreementId, participantContextId)` | `tmf-extension/.../store/TMFEdcMapper.java:176`; `tmf-extension/.../store/TMFBackedContractNegotiationStore.java:163,196` | `toContractAgreement` sets only `id(externalId)`; `findContractAgreement(String)` / `queryAgreements(QuerySpec)` resolve on `id` alone |
 | `DataFlowManager` removed; `DataFlowController` is a single injected service (§8.3) | `test-extension/.../edc/TckGuardExtension.java:50,88,151` | `@Inject DataFlowManager` + `register(noopPriority, controller)` |
 
 Two non-breaks worth stating, because both look like breaks:
@@ -404,6 +405,8 @@ Which control-plane entities carry it at 0.18.1 (none of them did at 0.14.1):
 | `TransferProcess` | `extends StatefulEntity` | same shape as `ContractNegotiation` |
 | `Asset` | `extends Entity` | `extends AbstractParticipantResource` |
 | `ContractDefinition` | `extends Entity` | `extends AbstractParticipantResource` |
+| `PolicyDefinition` | `extends Entity` | `extends AbstractParticipantResource` |
+| `ContractAgreement` | plain class, no `participantContextId`, no `agreementId` | `implements ParticipantResource`; also gains `agreementId` (distinct from `id`) and `claims` — see §3.2 |
 
 ### 4.2 Why this is a silent failure here, not a compile error
 
@@ -421,11 +424,19 @@ mocks the registry. The same reasoning applies to the contract-definition and
 policy-definition stores, which filter the same way.
 
 **Therefore the hard requirement is:** `TMFEdcMapper` must set
-`participantContextId` on every entity it builds (`Asset`, `ContractDefinition`,
-`ContractNegotiation`, `PolicyDefinition` where applicable), and the value must be
-the same one the runtime is configured with. This belongs in the `tmf-extension`
-step and must be covered by a test that asserts a non-null `participantContextId`
-on mapper output.
+`participantContextId` on every entity it builds — `Asset`, `ContractDefinition`,
+`PolicyDefinition`, `ContractNegotiation` **and `ContractAgreement`** — and the
+value must be the same one the runtime is configured with. This belongs in the
+`tmf-extension` step and must be covered by a test that asserts a non-null
+`participantContextId` on mapper output.
+
+`ContractAgreement` is not an afterthought on that list.
+`TMFBackedContractNegotiationStore.queryAgreements` (:196) filters through the
+same in-memory `CriterionOperatorRegistry` path as `queryAssets`, so an agreement
+query carrying a `participantContextId` criterion comes back empty in exactly the
+same silent way — and 0.15.0 additionally looks agreements up by
+`(agreementId, participantContextId)` on the transfer request, which is the
+`agreementId` row in §3.2.
 
 ### 4.3 Where `participantContextId` should live in the TMForum model
 
