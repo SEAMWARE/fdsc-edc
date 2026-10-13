@@ -134,7 +134,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
   }
 
   @Test
-  public void testSave_reports_a_failed_lease_release_as_a_general_error() {
+  public void testSave_succeeds_when_the_lease_release_fails_after_the_write() {
     String negotiationId = "negotiation-id";
     stubSuccessfulInitialSave(negotiationId);
     // The release is two HTTP calls against TMForum and can fail on its own.
@@ -146,9 +146,9 @@ public class TMFBackedContractNegotiationStoreLeaseTest
 
     StoreResult<Void> result = tmfBackedContractNegotiationStore.save(negotiation);
 
-    assertTrue(result.failed(), "A lease that could not be given back must be reported.");
-    assertEquals(StoreFailure.Reason.GENERAL_ERROR, result.reason());
-    assertNotNull(result.getFailureDetail(), "A StoreResult without a message is useless.");
+    // The DSP request/offer paths turn a failed result into HTTP 400, which the counterparty takes
+    // as fatal - the wrong answer for a negotiation that was persisted.
+    assertTrue(result.succeeded(), "The write landed, only handing the lease back failed.");
     // The exception must not escape the finally block and replace the save outcome.
     verify(quoteApiClient, times(1)).createQuote(any());
   }

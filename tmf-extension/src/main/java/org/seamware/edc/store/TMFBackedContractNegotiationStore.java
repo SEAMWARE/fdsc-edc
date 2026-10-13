@@ -451,9 +451,11 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   /**
-   * Gives up the lease {@link #save} took and turns the outcome into that method's result. Never
-   * throws: it runs in a {@code finally} block, where an exception would replace the {@link
-   * EdcPersistenceException} describing the persistence failure that got it there.
+   * Gives up the lease {@link #save} took and turns the outcome into that method's result. Only
+   * genuine contention is reported; a backend failure is logged and reported as success, because
+   * the negotiation has already been written by the time this runs. Never throws: it runs in a
+   * {@code finally} block, where an exception would replace the {@link EdcPersistenceException}
+   * describing the persistence failure that got it there.
    */
   private StoreResult<Void> releaseLeaseAfterSave(String negotiationId) {
     try {
@@ -472,9 +474,17 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       }
       return StoreResult.success();
     } catch (RuntimeException e) {
-      // The lease may still stand; it now expires by TTL rather than being handed back.
-      monitor.warning(String.format("Failed to release the lease for %s.", negotiationId), e);
-      return StoreResult.generalError(failureMessage(e));
+      // Deliberately reported as success: the negotiation is persisted, and only the handing back
+      // of the lease failed. ContractNegotiationProtocolServiceImpl maps a failed result of the
+      // synchronous requested/offered actions to HTTP 400, which the counterparty treats as a fatal
+      // protocol error and never resends - for a message this store did persist. The lease is not
+      // leaked either, it expires by TTL instead of being handed back.
+      monitor.warning(
+          String.format(
+              "Failed to release the lease for %s after saving it; it now expires by timeout.",
+              negotiationId),
+          e);
+      return StoreResult.success();
     }
   }
 
