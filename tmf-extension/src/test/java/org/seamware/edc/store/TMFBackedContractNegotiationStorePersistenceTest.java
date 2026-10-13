@@ -28,6 +28,7 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.Con
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -1480,24 +1481,12 @@ public class TMFBackedContractNegotiationStorePersistenceTest
   @ParameterizedTest(name = "{0}")
   @MethodSource("getAgreementClaimCases")
   public void testVerificationSave_persists_claims_attached_after_agreement_creation(
-      String name, boolean claimsChanged, int expectedAgreementUpdates) {
-    tmfBackedContractNegotiationStore =
-        new TMFBackedContractNegotiationStore(
-            mock(Monitor.class),
-            objectMapper,
-            quoteApiClient,
-            agreementApiClient,
-            productOrderApiClient,
-            productCatalogApiClient,
-            productInventoryApiClient,
-            participantResolver,
-            tmfEdcMapper,
-            TEST_PROVIDER_ID,
-            TEST_CONTROL_PLANE_ID,
-            criterionOperatorRegistry,
-            leaseHolder,
-            new TMFTransactionContext(mock(Monitor.class)),
-            lockManager);
+      String name,
+      Map<String, Object> claims,
+      boolean claimsChanged,
+      int expectedAgreementLookups,
+      int expectedAgreementUpdates) {
+    useStoreOwnedByTestProvider();
 
     when(participantResolver.getTmfId(eq(TEST_PROVIDER_ID))).thenReturn(TMF_TEST_PROVIDER_ID);
     when(participantResolver.getTmfId(eq(TEST_CONSUMER_ID))).thenReturn(TMF_TEST_CONSUMER_ID);
@@ -1509,7 +1498,8 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                 List.of(getOffer(TEST_OFFER_ID + ":asset:123")),
                 ContractNegotiation.Type.PROVIDER,
                 ContractNegotiationStates.VERIFYING,
-                TEST_CONSUMER_ID));
+                TEST_CONSUMER_ID),
+            claims);
 
     ExtendableAgreementVO storedAgreement = getTestAgreement();
     when(agreementApiClient.findByContractId(
@@ -1529,6 +1519,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
         false,
         expectedQuoteUpdate("VERIFYING", QuoteStateTypeVO.ACCEPTED, List.of(getQuoteItem("123"))));
 
+    verify(agreementApiClient, times(expectedAgreementLookups)).findByContractId(any());
     verify(agreementApiClient, times(expectedAgreementUpdates)).updateAgreement(any(), any());
   }
 
@@ -1536,9 +1527,78 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     return Stream.of(
         Arguments.of(
             "Claims EDC attaches at verification time reach the already created agreement.",
+            TEST_AGREEMENT_CLAIMS,
             true,
+            1,
             1),
-        Arguments.of("An agreement whose claims did not change is not rewritten.", false, 0));
+        Arguments.of(
+            "An agreement whose claims did not change is not rewritten.",
+            TEST_AGREEMENT_CLAIMS,
+            false,
+            1,
+            0),
+        Arguments.of(
+            "An agreement without claims is not looked up at all.", Map.of(), false, 0, 0));
+  }
+
+  /**
+   * Rebinds the store to {@code TEST_PROVIDER_ID} so the agreement paths resolve the provider the
+   * agreement fixtures are built for, rather than the generic participant id of the base setup.
+   */
+  private void useStoreOwnedByTestProvider() {
+    tmfBackedContractNegotiationStore =
+        new TMFBackedContractNegotiationStore(
+            mock(Monitor.class),
+            objectMapper,
+            quoteApiClient,
+            agreementApiClient,
+            productOrderApiClient,
+            productCatalogApiClient,
+            productInventoryApiClient,
+            participantResolver,
+            tmfEdcMapper,
+            TEST_PROVIDER_ID,
+            TEST_CONTROL_PLANE_ID,
+            criterionOperatorRegistry,
+            leaseHolder,
+            new TMFTransactionContext(mock(Monitor.class)),
+            lockManager);
+  }
+
+  @Test
+  public void testVerificationSave_fails_when_the_agreement_carrying_the_claims_is_missing() {
+    useStoreOwnedByTestProvider();
+
+    when(participantResolver.getTmfId(eq(TEST_PROVIDER_ID))).thenReturn(TMF_TEST_PROVIDER_ID);
+    when(participantResolver.getTmfId(eq(TEST_CONSUMER_ID))).thenReturn(TMF_TEST_CONSUMER_ID);
+
+    ContractNegotiation contractNegotiation =
+        addAgreement(
+            getValidNegotiationWithIdOfferAndType(
+                TEST_NEGOTIATION_ID,
+                List.of(getOffer(TEST_OFFER_ID + ":asset:123")),
+                ContractNegotiation.Type.PROVIDER,
+                ContractNegotiationStates.VERIFYING,
+                TEST_CONSUMER_ID),
+            TEST_AGREEMENT_CLAIMS);
+
+    when(quoteApiClient.findByNegotiationId(eq(TEST_NEGOTIATION_ID)))
+        .thenReturn(
+            setActiveQuote(
+                ContractNegotiationStates.AGREED,
+                "active-id",
+                getQuotes(TEST_NEGOTIATION_ID, TEST_CONTROL_PLANE_ID, 5),
+                QuoteStateTypeVO.ACCEPTED));
+    when(agreementApiClient.findByContractId(
+            eq(contractNegotiation.getContractAgreement().getId())))
+        .thenReturn(Optional.empty());
+
+    // Dropping the claims silently would lose them for good: no later state re-sends them.
+    assertThrows(
+        EdcPersistenceException.class,
+        () -> tmfBackedContractNegotiationStore.save(contractNegotiation));
+
+    verify(agreementApiClient, never()).updateAgreement(any(), any());
   }
 
   private static Stream<Arguments> getVerificationStates() {

@@ -50,6 +50,8 @@ public abstract class AbstractStoreTest {
   // Since 0.18.1 the DSP-visible agreement id is independent of the EDC row id, so the
   // fixtures keep them distinct - equal ids would hide a mapper that conflates the two.
   protected static final String TEST_DSP_AGREEMENT_ID = "dsp-agreement-id";
+  protected static final Map<String, Object> TEST_AGREEMENT_CLAIMS =
+      Map.of("sub", TEST_CONSUMER_DID);
   protected static final String TEST_NEGOTIATION_ID = "negotiation-id";
   protected static final String TEST_CORRELATION_ID = "correlation-id";
   protected static final String TEST_OFFER_ID = "offer-id";

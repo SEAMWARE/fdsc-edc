@@ -628,6 +628,28 @@ absent → it requires an `AuthorizationService` and otherwise throws
 participant mode.")`. Dropping the classic core would therefore not fall back
 gracefully — it would fail startup (§8.2).
 
+### 4.5 `SingleParticipantContextSupplier` is config-derived, so resolving it at `initialize()` is safe
+
+`TMFContractNegotiationExtension` resolves the participant context eagerly, inside
+the `@Provider` that builds `TMFConfig`. That is only correct if the supplier is
+usable before any store is populated. Confirmed against the 0.18.1 bytecode:
+
+- `SingleParticipantContextSupplier` comes from a **`@Provider` method** on
+  `ClassicParticipantContextDefaultServicesExtension`, built from its two
+  `@Setting` fields (`edc.participant.id`, `edc.participant.context.id`). It reads
+  no store, and default-services extensions are loaded before regular ones, so the
+  supplier exists by the time any `@Inject`ing extension is initialized.
+- The store write lives elsewhere — `ClassicParticipantContextServicesExtension#prepare()`
+  seeds the `ParticipantContextStore`. `prepare()` runs *after* `initialize()`, but
+  nothing on this path reads that store, so the ordering does not matter here.
+- The supplier's result is a constant success in classic mode, so the
+  `orElseThrow(... EdcException ...)` is unreachable there; it guards the
+  multi-participant case. A runtime with no supplier at all falls back to the
+  `edc.participant.*` settings with a warning.
+
+Still worth observing rather than assuming: the Step 7 container-start gate should
+confirm the boot log carries no participant-context warning and that persisted
+entities carry the configured `edc.participant.context.id`.
 ---
 
 ## 5. DSP protocol impact

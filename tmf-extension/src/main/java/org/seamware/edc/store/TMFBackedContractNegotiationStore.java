@@ -388,9 +388,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     // Per-negotiation lock prevents concurrent saves for the same negotiation within this
     // JVM. Without this, two DSP message handlers can enter handleAgreeStates simultaneously
     // and both create agreements before either sees the other's, producing duplicates.
-    Object lock = negotiationLocks.computeIfAbsent(contractNegotiation.getId(), k -> new Object());
     LeaseHolder.LeaseRelease release;
-    synchronized (lock) {
+    synchronized (lockFor(contractNegotiation.getId())) {
       try {
         leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
       } catch (RuntimeException e) {
@@ -472,22 +471,32 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   @Override
   public StoreResult<Void> breakLease(ContractNegotiation contractNegotiation) {
     String negotiationId = contractNegotiation.getId();
-    try {
-      // Single backend pass: breaking a lease happens on virtually every state machine tick, and
-      // checking the holder separately from freeing leaves a window for it to change hands.
-      LeaseHolder.LeaseRelease release =
-          leaseHolder.releaseLease(negotiationId, lockId, LEASE_BROKEN_BY_STATE_MACHINE);
-      if (release == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
-        return StoreResult.alreadyLeased(
-            String.format("%s is leased by another instance.", negotiationId));
+    // Same monitor as save(): a DSP handler breaking the lease while the state machine is mid-save
+    // would drop it under the in-flight writes, which is the duplicate-agreement window the lock
+    // exists to close.
+    synchronized (lockFor(negotiationId)) {
+      try {
+        // Single backend pass: breaking a lease happens on virtually every state machine tick, and
+        // checking the holder separately from freeing leaves a window for it to change hands.
+        LeaseHolder.LeaseRelease release =
+            leaseHolder.releaseLease(negotiationId, lockId, LEASE_BROKEN_BY_STATE_MACHINE);
+        if (release == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
+          return StoreResult.alreadyLeased(
+              String.format("%s is leased by another instance.", negotiationId));
+        }
+      } catch (RuntimeException e) {
+        monitor.warning(String.format("Failed to break lease for %s.", negotiationId), e);
+        return StoreResult.generalError(failureMessage(e));
+      } finally {
+        activeNegotiations.remove(negotiationId);
       }
-    } catch (RuntimeException e) {
-      monitor.warning(String.format("Failed to break lease for %s.", negotiationId), e);
-      return StoreResult.generalError(failureMessage(e));
-    } finally {
-      activeNegotiations.remove(negotiationId);
     }
     return StoreResult.success();
+  }
+
+  /** The per-negotiation monitor guarding every lease transition, shared by save and breakLease. */
+  private Object lockFor(String negotiationId) {
+    return negotiationLocks.computeIfAbsent(negotiationId, k -> new Object());
   }
 
   /** {@link Throwable#getMessage()} is nullable; a StoreResult without a message is useless. */
@@ -531,26 +540,37 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   /**
    * Writes back claims EDC attached to an agreement that already exists in TMForum. On the provider
    * the counter-party claims only arrive with the verification message, so the create path cannot
-   * have seen them; without this they would never be persisted.
+   * have seen them; without this they would never be persisted. Throws {@link
+   * EdcPersistenceException} when there are claims but no agreement row to put them on.
    */
   private void persistAgreementClaims(ContractNegotiation contractNegotiation) {
     ContractAgreement contractAgreement = contractNegotiation.getContractAgreement();
-    if (contractAgreement == null) {
+    if (contractAgreement == null
+        || contractAgreement.getClaims() == null
+        || contractAgreement.getClaims().isEmpty()) {
       return;
     }
-    agreementApi
-        .findByContractId(contractAgreement.getId())
-        .ifPresent(
-            agreementVO -> {
-              if (!tmfEdcMapper.applyClaims(agreementVO, contractAgreement.getClaims())) {
-                return;
-              }
-              // Deliberately not compensated, unlike the other agreement writes in this class:
-              // the claims come from the negotiation being saved, so a rollback followed by the
-              // state machine's retry writes the exact same value. Reverting would also need the
-              // previous claims, which registerAgreementCompensation cannot carry.
-              agreementApi.updateAgreement(agreementVO.getId(), tmfEdcMapper.toUpdate(agreementVO));
-            });
+    // This is the only path that ever stores the counter-party claims provider-side, so a missing
+    // row must not pass silently: it would lose them for good, and the VERIFIED save that follows
+    // would not retry. The agreement is written at AGREED, so by now it is only absent if the
+    // backend has not caught up - which the state machine's retry of this save resolves.
+    ExtendableAgreementVO agreementVO =
+        agreementApi
+            .findByContractId(contractAgreement.getId())
+            .orElseThrow(
+                () ->
+                    new EdcPersistenceException(
+                        String.format(
+                            "Cannot store the claims of agreement %s: no agreement found.",
+                            contractAgreement.getId())));
+    if (!tmfEdcMapper.applyClaims(agreementVO, contractAgreement.getClaims())) {
+      return;
+    }
+    // Deliberately not compensated, unlike the other agreement writes in this class:
+    // the claims come from the negotiation being saved, so a rollback followed by the
+    // state machine's retry writes the exact same value. Reverting would also need the
+    // previous claims, which registerAgreementCompensation cannot carry.
+    agreementApi.updateAgreement(agreementVO.getId(), tmfEdcMapper.toUpdate(agreementVO));
   }
 
   private void handleVerificationStates(ContractNegotiation contractNegotiation) {

@@ -246,12 +246,18 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
   }
 
   protected static ContractNegotiation addAgreement(ContractNegotiation contractNegotiation) {
+    return addAgreement(contractNegotiation, Map.of());
+  }
+
+  protected static ContractNegotiation addAgreement(
+      ContractNegotiation contractNegotiation, Map<String, Object> claims) {
     ContractAgreement contractAgreement =
         ContractAgreement.Builder.newInstance()
             .providerId(TEST_PROVIDER_ID)
             .consumerId(TEST_CONSUMER_ID)
             .assetId(TEST_ASSET_ID)
             .policy(getTestPolicy())
+            .claims(claims)
             .build();
     contractNegotiation.setContractAgreement(contractAgreement);
     return contractNegotiation;
