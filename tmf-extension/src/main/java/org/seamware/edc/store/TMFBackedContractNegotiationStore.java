@@ -367,13 +367,13 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
               leaseHolder.acquireLease(s, lockId);
               activeNegotiations.add(s);
               return StoreResult.success(contractNegotiation);
-            } catch (IllegalStateException e) {
+            } catch (LeaseContentionException e) {
               return StoreResult.alreadyLeased(String.format("%s is already leased.", s));
             }
           });
     } catch (Exception e) {
       monitor.warning("Failed to find", e);
-      return StoreResult.generalError(e.getMessage());
+      return StoreResult.generalError(failureMessage(e));
     }
   }
 
@@ -387,13 +387,20 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     synchronized (lock) {
       try {
         leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
-      } catch (RuntimeException e) {
+      } catch (LeaseContentionException e) {
         // Contention is the one failure the StoreResult return type exists for, so report it
         // instead of throwing. The lease must not be freed here - it belongs to whoever holds it.
         monitor.warning(
             String.format("Failed to lease negotiation %s.", contractNegotiation.getId()), e);
         activeNegotiations.remove(contractNegotiation.getId());
-        return StoreResult.alreadyLeased(e.getMessage());
+        return StoreResult.alreadyLeased(failureMessage(e));
+      } catch (RuntimeException e) {
+        // A backend outage or a missing quote is not contention: reporting it as alreadyLeased
+        // would make the state machine retry forever instead of surfacing the failure.
+        monitor.warning(
+            String.format("Failed to lease negotiation %s.", contractNegotiation.getId()), e);
+        activeNegotiations.remove(contractNegotiation.getId());
+        return StoreResult.generalError(failureMessage(e));
       }
       try {
         transactionContext.execute(
@@ -428,8 +435,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         throw new EdcPersistenceException(
             String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
       } finally {
-        // always give up the lock
-        leaseHolder.freeLease(contractNegotiation.getId(), LEASE_RELEASED_AFTER_SAVE);
+        // always give up the lock, but only the one this instance holds
+        leaseHolder.releaseLease(contractNegotiation.getId(), lockId, LEASE_RELEASED_AFTER_SAVE);
         activeNegotiations.remove(contractNegotiation.getId());
       }
     }
@@ -445,19 +452,26 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   public StoreResult<Void> breakLease(ContractNegotiation contractNegotiation) {
     String negotiationId = contractNegotiation.getId();
     try {
-      if (leaseHolder.isLeasedBy(negotiationId, lockId)) {
-        leaseHolder.freeLease(negotiationId, LEASE_BROKEN_BY_STATE_MACHINE);
-      } else if (leaseHolder.isLeased(negotiationId)) {
+      // Single backend pass: breaking a lease happens on virtually every state machine tick, and
+      // checking the holder separately from freeing leaves a window for it to change hands.
+      LeaseHolder.LeaseRelease release =
+          leaseHolder.releaseLease(negotiationId, lockId, LEASE_BROKEN_BY_STATE_MACHINE);
+      if (release == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
         return StoreResult.alreadyLeased(
             String.format("%s is leased by another instance.", negotiationId));
       }
     } catch (RuntimeException e) {
       monitor.warning(String.format("Failed to break lease for %s.", negotiationId), e);
-      return StoreResult.generalError(e.getMessage());
+      return StoreResult.generalError(failureMessage(e));
     } finally {
       activeNegotiations.remove(negotiationId);
     }
     return StoreResult.success();
+  }
+
+  /** {@link Throwable#getMessage()} is nullable; a StoreResult without a message is useless. */
+  private String failureMessage(Exception e) {
+    return e.getMessage() != null ? e.getMessage() : e.getClass().getName();
   }
 
   private void handleTerminationStates(ContractNegotiation contractNegotiation) {

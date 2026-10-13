@@ -42,7 +42,8 @@ public class HashMapLeaseHolder implements LeaseHolder {
       monitor.info("Acquire lease " + id + " - " + lockId);
       leases.put(id, new Lease(lockId, clock.millis(), leaseTime.toMillis()));
     } else {
-      throw new IllegalStateException("Cannot acquire lease, is already leased by someone else!");
+      throw new LeaseContentionException(
+          "Cannot acquire lease, is already leased by someone else!");
     }
   }
 
@@ -54,10 +55,18 @@ public class HashMapLeaseHolder implements LeaseHolder {
   }
 
   @Override
-  public void freeLease(String id, String reason) {
+  public LeaseRelease releaseLease(String id, String lockId, String reason) {
     synchronized (leases) {
+      Lease lease = leases.get(id);
+      if (lease == null || lease.isExpired(clock.millis())) {
+        return LeaseRelease.NOT_LEASED;
+      }
+      if (!lease.getLeasedBy().equals(lockId)) {
+        return LeaseRelease.HELD_BY_OTHER;
+      }
       monitor.info("Free lease " + id + " because " + reason);
       leases.remove(id);
+      return LeaseRelease.RELEASED;
     }
   }
 

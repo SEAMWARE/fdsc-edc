@@ -516,7 +516,9 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
     List<ExtendableQuoteVO> extendableQuoteVOS =
         getQuotes(negotiationId, TEST_CONTROL_PLANE_ID, 10);
 
-    doThrow(new IllegalStateException()).when(leaseHolder).acquireLease(eq(negotiationId), any());
+    doThrow(new LeaseContentionException("already leased"))
+        .when(leaseHolder)
+        .acquireLease(eq(negotiationId), any());
     when(quoteApiClient.findByNegotiationId(eq(negotiationId))).thenReturn(extendableQuoteVOS);
     when(tmfEdcMapper.toContractNegotiation(eq(extendableQuoteVOS), any(), any(), any()))
         .thenReturn(negotiation);
@@ -529,6 +531,37 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
         StoreFailure.Reason.ALREADY_LEASED,
         storeResult.reason(),
         "The correct reason should be returned.");
+  }
+
+  @Test
+  public void testFindByIdAndLease_backend_failure_is_a_general_error() {
+    when(lockManager.writeLock(any()))
+        .thenAnswer(
+            invocationOnMock -> {
+              Supplier<List<ContractNegotiation>> work = invocationOnMock.getArgument(0);
+              return work.get();
+            });
+    String negotiationId = "negotiation-id";
+    List<ExtendableQuoteVO> extendableQuoteVOS =
+        getQuotes(negotiationId, TEST_CONTROL_PLANE_ID, 10);
+
+    // Not contention: a missing quote or an unreachable TMForum must not be retried as a lease
+    // conflict, or the state machine spins on it forever.
+    doThrow(new IllegalStateException("No quote found for negotiation " + negotiationId))
+        .when(leaseHolder)
+        .acquireLease(eq(negotiationId), any());
+    when(quoteApiClient.findByNegotiationId(eq(negotiationId))).thenReturn(extendableQuoteVOS);
+    when(tmfEdcMapper.toContractNegotiation(eq(extendableQuoteVOS), any(), any(), any()))
+        .thenReturn(getValidNegotiation());
+
+    StoreResult<ContractNegotiation> storeResult =
+        tmfBackedContractNegotiationStore.findByIdAndLease(negotiationId);
+
+    assertTrue(storeResult.failed(), "A backend failure should not be reported as success.");
+    assertEquals(
+        StoreFailure.Reason.GENERAL_ERROR,
+        storeResult.reason(),
+        "Only genuine contention may be reported as ALREADY_LEASED.");
   }
 
   @Test

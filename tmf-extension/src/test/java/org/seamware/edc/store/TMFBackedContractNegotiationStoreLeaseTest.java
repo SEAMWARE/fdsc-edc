@@ -23,6 +23,7 @@ import static org.mockito.Mockito.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
@@ -30,7 +31,8 @@ import org.eclipse.edc.spi.result.StoreFailure;
 import org.eclipse.edc.spi.result.StoreResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.seamware.edc.domain.ContractNegotiationState;
 import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
@@ -44,18 +46,30 @@ public class TMFBackedContractNegotiationStoreLeaseTest
 
   // --- save() lease lifecycle on exception ---
 
-  @ParameterizedTest(name = "acquireLease fails with: {0}")
-  @ValueSource(
-      strings = {
-        "Negotiation negotiation-id is already leased by other-instance until 1",
-        "Lost lease race on negotiation-id: expected a, got b",
-        "No quote found for negotiation negotiation-id"
-      })
-  public void testSave_reports_already_leased_when_acquireLease_fails(String failureMessage) {
+  /** Only genuine contention may surface as ALREADY_LEASED; everything else is a real failure. */
+  private static Stream<Arguments> acquireLeaseFailures() {
+    return Stream.of(
+        Arguments.of(
+            new LeaseContentionException(
+                "Negotiation negotiation-id is already leased by other-instance until 1"),
+            StoreFailure.Reason.ALREADY_LEASED),
+        Arguments.of(
+            new LeaseContentionException("Lost lease race on negotiation-id: expected a, got b"),
+            StoreFailure.Reason.ALREADY_LEASED),
+        Arguments.of(
+            new IllegalStateException("No quote found for negotiation negotiation-id"),
+            StoreFailure.Reason.GENERAL_ERROR),
+        Arguments.of(
+            new RuntimeException("TMForum unreachable"), StoreFailure.Reason.GENERAL_ERROR),
+        Arguments.of(new RuntimeException(), StoreFailure.Reason.GENERAL_ERROR));
+  }
+
+  @ParameterizedTest(name = "acquireLease throws {0} -> {1}")
+  @MethodSource("acquireLeaseFailures")
+  public void testSave_maps_acquireLease_failure_to_reason(
+      RuntimeException failure, StoreFailure.Reason expectedReason) {
     String negotiationId = "negotiation-id";
-    doThrow(new IllegalStateException(failureMessage))
-        .when(leaseHolder)
-        .acquireLease(eq(negotiationId), any());
+    doThrow(failure).when(leaseHolder).acquireLease(eq(negotiationId), any());
 
     ContractNegotiation negotiation =
         getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.INITIAL);
@@ -63,8 +77,9 @@ public class TMFBackedContractNegotiationStoreLeaseTest
     StoreResult<Void> result = tmfBackedContractNegotiationStore.save(negotiation);
 
     assertTrue(result.failed(), "Save should fail when the lease cannot be acquired.");
-    assertEquals(StoreFailure.Reason.ALREADY_LEASED, result.reason());
-    verify(leaseHolder, never()).freeLease(eq(negotiationId), any());
+    assertEquals(expectedReason, result.reason());
+    assertNotNull(result.getFailureDetail(), "A failure without a message is useless to callers.");
+    verify(leaseHolder, never()).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
@@ -81,7 +96,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         EdcPersistenceException.class, () -> tmfBackedContractNegotiationStore.save(negotiation));
 
     verify(leaseHolder, times(1)).acquireLease(eq(negotiationId), any());
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
@@ -97,7 +112,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         EdcPersistenceException.class, () -> tmfBackedContractNegotiationStore.save(negotiation));
 
     verify(leaseHolder, times(1)).acquireLease(eq(negotiationId), any());
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
@@ -113,7 +128,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         EdcPersistenceException.class, () -> tmfBackedContractNegotiationStore.save(negotiation));
 
     verify(leaseHolder, times(1)).acquireLease(eq(negotiationId), any());
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
@@ -129,7 +144,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         EdcPersistenceException.class, () -> tmfBackedContractNegotiationStore.save(negotiation));
 
     verify(leaseHolder, times(1)).acquireLease(eq(negotiationId), any());
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
@@ -145,7 +160,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         EdcPersistenceException.class, () -> tmfBackedContractNegotiationStore.save(negotiation));
 
     verify(leaseHolder, times(1)).acquireLease(eq(negotiationId), any());
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
@@ -161,7 +176,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         EdcPersistenceException.class, () -> tmfBackedContractNegotiationStore.save(negotiation));
 
     verify(leaseHolder, times(1)).acquireLease(eq(negotiationId), any());
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   // --- save() lease re-acquisition ---
@@ -195,7 +210,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
     assertDoesNotThrow(() -> tmfBackedContractNegotiationStore.save(negotiation));
 
     verify(leaseHolder, times(1)).acquireLease(eq(negotiationId), any());
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   // --- breakLease() ---
@@ -203,21 +218,22 @@ public class TMFBackedContractNegotiationStoreLeaseTest
   @Test
   public void testBreakLease_frees_lease_held_by_this_instance() {
     String negotiationId = "negotiation-id";
-    when(leaseHolder.isLeasedBy(eq(negotiationId), any())).thenReturn(true);
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
+        .thenReturn(LeaseHolder.LeaseRelease.RELEASED);
 
     ContractNegotiation negotiation =
         getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
 
     assertTrue(tmfBackedContractNegotiationStore.breakLease(negotiation).succeeded());
 
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
   public void testBreakLease_keeps_lease_held_by_another_instance() {
     String negotiationId = "negotiation-id";
-    when(leaseHolder.isLeasedBy(eq(negotiationId), any())).thenReturn(false);
-    when(leaseHolder.isLeased(eq(negotiationId))).thenReturn(true);
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
+        .thenReturn(LeaseHolder.LeaseRelease.HELD_BY_OTHER);
 
     ContractNegotiation negotiation =
         getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
@@ -226,27 +242,42 @@ public class TMFBackedContractNegotiationStoreLeaseTest
 
     assertTrue(result.failed(), "A foreign lease must not be broken.");
     assertEquals(StoreFailure.Reason.ALREADY_LEASED, result.reason());
-    verify(leaseHolder, never()).freeLease(eq(negotiationId), any());
   }
 
   @Test
   public void testBreakLease_is_a_noop_when_nothing_is_leased() {
     String negotiationId = "negotiation-id";
-    when(leaseHolder.isLeasedBy(eq(negotiationId), any())).thenReturn(false);
-    when(leaseHolder.isLeased(eq(negotiationId))).thenReturn(false);
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
+        .thenReturn(LeaseHolder.LeaseRelease.NOT_LEASED);
 
     ContractNegotiation negotiation =
         getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
 
     assertTrue(tmfBackedContractNegotiationStore.breakLease(negotiation).succeeded());
+  }
 
-    verify(leaseHolder, never()).freeLease(eq(negotiationId), any());
+  @Test
+  public void testBreakLease_checks_and_frees_in_a_single_lease_holder_call() {
+    String negotiationId = "negotiation-id";
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
+        .thenReturn(LeaseHolder.LeaseRelease.RELEASED);
+
+    ContractNegotiation negotiation =
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
+
+    tmfBackedContractNegotiationStore.breakLease(negotiation);
+
+    // breakLease runs on essentially every state machine tick, so it must not fan out into
+    // separate holder lookups - that is both three round trips and a TOCTOU window.
+    verify(leaseHolder, never()).isLeasedBy(any(), any());
+    verify(leaseHolder, never()).isLeased(any());
+    verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
   }
 
   @Test
   public void testBreakLease_reports_general_error_when_the_lease_holder_fails() {
     String negotiationId = "negotiation-id";
-    when(leaseHolder.isLeasedBy(eq(negotiationId), any()))
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
         .thenThrow(new RuntimeException("TMForum unreachable"));
 
     ContractNegotiation negotiation =
@@ -375,7 +406,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
     assertTrue(result.contains(neg0));
     assertTrue(result.contains(neg2));
 
-    // Document: freeLease is NOT called — leases will only expire via TTL
-    verify(leaseHolder, never()).freeLease(any(), any());
+    // Document: releaseLease is NOT called — leases will only expire via TTL
+    verify(leaseHolder, never()).releaseLease(any(), any(), any());
   }
 }

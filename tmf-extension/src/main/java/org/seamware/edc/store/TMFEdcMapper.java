@@ -118,6 +118,7 @@ public class TMFEdcMapper {
   public static final String AGREEMENT_CHARACTERISTIC_CONSUMER_ID = "consumer-id";
   public static final String AGREEMENT_CHARACTERISTIC_ASSET_ID = "asset-id";
   public static final String AGREEMENT_CHARACTERISTIC_POLICY = "policy";
+  public static final String AGREEMENT_CHARACTERISTIC_CLAIMS = "claims";
   public static final String AGREEMENT_TYPE_DSP = "dspContract";
 
   public static final String QUOTE_ITEM_ADD_ACTION = "add";
@@ -184,7 +185,28 @@ public class TMFEdcMapper {
         .addCharacteristicItem(
             toAgreementCharacteristic(
                 AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()));
+
+    // Since 0.17.0 the agent's claims live on the agreement so that transfer-time policy
+    // evaluation can reconstruct the agent without re-resolving a token.
+    Map<String, Object> claims = contractAgreement.getClaims();
+    if (claims != null && !claims.isEmpty()) {
+      agreementVO.addCharacteristicItem(
+          toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, claims));
+    }
     return agreementVO;
+  }
+
+  /** Claims round-trip through TMForum as a plain JSON object, so Jackson hands back a map. */
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> toClaims(CharacteristicVO characteristic) {
+    if (characteristic.getValue() instanceof Map<?, ?> claims) {
+      return (Map<String, Object>) claims;
+    }
+    monitor.warning(
+        String.format(
+            "Ignoring agreement characteristic %s: expected a map, got %s.",
+            AGREEMENT_CHARACTERISTIC_CLAIMS, characteristic.getValue()));
+    return Map.of();
   }
 
   private CharacteristicVO toAgreementCharacteristic(String key, Object value) {
@@ -208,6 +230,7 @@ public class TMFEdcMapper {
                     agreementBuilder.assetId((String) c.getValue());
                 case AGREEMENT_CHARACTERISTIC_POLICY ->
                     agreementBuilder.policy(fromOdrl(c.getValue()));
+                case AGREEMENT_CHARACTERISTIC_CLAIMS -> agreementBuilder.claims(toClaims(c));
               }
             });
     // TMForum knows a single identifier per agreement, so the EDC row id and the DSP-visible

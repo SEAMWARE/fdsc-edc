@@ -102,7 +102,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     verify(quoteApiClient).updateQuote(idCaptor.capture(), quoteCaptor.capture());
 
     verify(leaseHolder, times(1)).acquireLease(eq(contractNegotiation.getId()), any());
-    verify(leaseHolder, times(1)).freeLease(eq(contractNegotiation.getId()), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(contractNegotiation.getId()), any(), any());
 
     ExtendableQuoteUpdateVO extendableQuoteUpdateVO = quoteCaptor.getValue();
     assertEquals(
@@ -182,7 +182,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     verify(quoteApiClient).createQuote(quoteCaptor.capture());
 
     verify(leaseHolder, times(1)).acquireLease(eq(contractNegotiation.getId()), any());
-    verify(leaseHolder, times(1)).freeLease(eq(contractNegotiation.getId()), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(contractNegotiation.getId()), any(), any());
 
     ExtendableQuoteCreateVO extendableQuoteCreateVO = quoteCaptor.getValue();
     assertEquals(
@@ -217,7 +217,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             tmfBackedContractNegotiationStore.save(
                 getValidNegotiationWithIdInState(TEST_NEGOTIATION_ID, negotiationState)),
         "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
   }
 
   @ParameterizedTest
@@ -232,7 +232,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             tmfBackedContractNegotiationStore.save(
                 getValidNegotiationWithIdInState(TEST_NEGOTIATION_ID, negotiationState)),
         "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
   }
 
   @ParameterizedTest(name = "{0}")
@@ -257,7 +257,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                   String.format(
                       "[%s] All unexpected errors have to become EdcPersistenceExceptions.",
                       illegalState));
-          verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+          verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
           assertEquals(
               IllegalArgumentException.class,
               edcPersistenceException.getCause().getClass(),
@@ -288,7 +288,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                     getValidNegotiationWithIdInState(
                         TEST_NEGOTIATION_ID, contractNegotiationState)),
             "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
     assertEquals(
         IllegalArgumentException.class,
         edcPersistenceException.getCause().getClass(),
@@ -318,7 +318,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                     getValidNegotiationWithIdInState(
                         TEST_NEGOTIATION_ID, contractNegotiationState)),
             "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
     assertEquals(
         IllegalArgumentException.class,
         edcPersistenceException.getCause().getClass(),
@@ -348,7 +348,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                     getValidNegotiationWithIdInState(
                         TEST_NEGOTIATION_ID, contractNegotiationState)),
             "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
     assertEquals(
         RuntimeException.class,
         edcPersistenceException.getCause().getClass(),
@@ -2292,7 +2292,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
       verify(quoteApiClient, times(1)).updateQuote(idCaptor.capture(), quoteCaptor.capture());
     }
     verify(leaseHolder, times(1)).acquireLease(eq(contractNegotiation.getId()), any());
-    verify(leaseHolder, times(1)).freeLease(eq(contractNegotiation.getId()), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(contractNegotiation.getId()), any(), any());
 
     ExtendableQuoteUpdateVO extendableQuoteUpdateVO = quoteCaptor.getAllValues().getLast();
 

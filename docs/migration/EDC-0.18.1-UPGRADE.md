@@ -363,6 +363,16 @@ follow their production class and are not listed separately):
 | `RequestVersionPolicyContext` no longer in `org.eclipse.edc.policy.context.request.spi`; `SignatureSuiteRegistry` moved with the DCP rename | `dcp-extension/.../DCPExtension.java:51,82` | 0.14.1 imports |
 | DSP 2024/1 transformer context gone with `dsp-spi-2024` — **delete the registration, do not port it** | `tmf-extension/.../TMFContractNegotiationExtension.java:19,159` | `registerTypePreservingTransformers(DSP_TRANSFORMER_CONTEXT_V_2024_1, ...)`. Removed in Step 2 (§3.3), since it is the direct consequence of dropping the artifact. The `2025_1` registration on the next line stays |
 
+**`ContractAgreement.claims` — mapped, decided in Step 3.** 0.17.0 moved the
+counter-party agent's claims onto the agreement so that transfer-time policy
+evaluation can rebuild the agent without re-resolving a token. The TMForum model
+has no column for them, so they are persisted as the `claims` agreement
+characteristic (`TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS`), written only
+when non-empty and read back as a plain map. Step 5 (`policy-extension`) can
+therefore assume an agreement read out of TMForum carries the claim set it was
+written with; agreements written by a 0.14.1 connector have no such
+characteristic and come back with an empty map.
+
 Two non-breaks worth stating, because both look like breaks:
 
 - **`fdsc-transfer-extension` has no `DataFlowController`.** Its

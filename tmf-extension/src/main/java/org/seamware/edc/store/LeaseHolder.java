@@ -20,11 +20,26 @@ import java.time.Duration;
 
 public interface LeaseHolder {
 
+  /** Outcome of {@link LeaseHolder#releaseLease}. */
+  enum LeaseRelease {
+    RELEASED,
+    NOT_LEASED,
+    HELD_BY_OTHER
+  }
+
+  /**
+   * Acquires the lease for {@code lockId}. Throws {@link LeaseContentionException} when another
+   * holder owns an unexpired lease; any other failure signals a backend or data problem.
+   */
   void acquireLease(String id, String lockId, Duration leaseTime);
 
   boolean isLeasedBy(String id, String lockId);
 
-  void freeLease(String id, String reason);
+  /**
+   * Frees the lease in a single backend pass, but only when {@code lockId} owns it, so a lease
+   * another holder is working under is never stolen. The returned value says which case applied.
+   */
+  LeaseRelease releaseLease(String id, String lockId, String reason);
 
   void acquireLease(String id, String lockId);
 
