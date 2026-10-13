@@ -75,8 +75,13 @@ public class TMFConfig {
   // configuration for the catalog endpoint
   private CatalogConfig catalogConfig;
 
-  public static TMFConfig fromConfig(Config config) {
-    return fromConfig(config, null);
+  /**
+   * Endpoint-only view for the extensions in this package that need the TMForum URLs and the
+   * enabled flag. Leaves {@code participantId}/{@code participantContextId} unset, so a value read
+   * off this instance cannot silently diverge from the participant context the runtime registers.
+   */
+  static TMFConfig fromConfig(Config config) {
+    return endpointConfigBuilder(config).build();
   }
 
   /**
@@ -85,6 +90,27 @@ public class TMFConfig {
    * filters by. A {@code null} context falls back to the {@code edc.participant.*} settings.
    */
   public static TMFConfig fromConfig(Config config, ParticipantContext participantContext) {
+    TMFConfig.Builder tmfConfigBuilder = endpointConfigBuilder(config);
+
+    if (participantContext != null) {
+      tmfConfigBuilder.participantId(participantContext.getIdentity());
+      tmfConfigBuilder.participantContextId(participantContext.getParticipantContextId());
+    } else {
+      // Only reached without a supplier, e.g. in tests. Mirrors the rule
+      // ClassicParticipantContextDefaultServicesExtension applies: an unset context id falls back
+      // to the participant id, so stamped entities match the context EDC seeds and filters by.
+      String participantId =
+          config.getString(
+              EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
+      tmfConfigBuilder.participantId(participantId);
+      tmfConfigBuilder.participantContextId(
+          config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));
+    }
+
+    return tmfConfigBuilder.build();
+  }
+
+  private static TMFConfig.Builder endpointConfigBuilder(Config config) {
     Config tmfExtensionConfig = config.getConfig(TMF_EXTENSION_CONFIG_PATH);
 
     TMFConfig.Builder tmfConfigBuilder = TMFConfig.Builder.newInstance();
@@ -107,28 +133,13 @@ public class TMFConfig {
     getNullSafeFromConfig(() -> tmfExtensionConfig.getString("schemaBaseUri"))
         .ifPresent(tmfConfigBuilder::schemaBaseUri);
 
-    if (participantContext != null) {
-      tmfConfigBuilder.participantId(participantContext.getIdentity());
-      tmfConfigBuilder.participantContextId(participantContext.getParticipantContextId());
-    } else {
-      // Only reached without a supplier, e.g. in tests. Mirrors the rule
-      // ClassicParticipantContextDefaultServicesExtension applies: an unset context id falls back
-      // to the participant id, so stamped entities match the context EDC seeds and filters by.
-      String participantId =
-          config.getString(
-              EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
-      tmfConfigBuilder.participantId(participantId);
-      tmfConfigBuilder.participantContextId(
-          config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));
-    }
-
     CatalogConfig.Builder catalogConfigBuilder = new CatalogConfig.Builder();
     Config catalogConfig = config.getConfig(TMF_EXTENSION_CATALOG_CONFIG_PATH);
     getNullSafeFromConfig(() -> catalogConfig.getBoolean("enabled"))
         .ifPresent(catalogConfigBuilder::enabled);
     tmfConfigBuilder.catalogConfig(catalogConfigBuilder.build());
 
-    return tmfConfigBuilder.build();
+    return tmfConfigBuilder;
   }
 
   public static class Builder {

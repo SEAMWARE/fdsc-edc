@@ -377,6 +377,11 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     }
   }
 
+  /**
+   * Persists a negotiation and reports the outcome of giving up its lease, as the 0.18.1 SQL store
+   * does. Lease and persistence failures both throw {@link EdcPersistenceException}; the returned
+   * result never means "nothing was written".
+   */
   @Override
   public StoreResult<Void> save(ContractNegotiation contractNegotiation) {
 
@@ -384,21 +389,17 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     // JVM. Without this, two DSP message handlers can enter handleAgreeStates simultaneously
     // and both create agreements before either sees the other's, producing duplicates.
     Object lock = negotiationLocks.computeIfAbsent(contractNegotiation.getId(), k -> new Object());
+    LeaseHolder.LeaseRelease release;
     synchronized (lock) {
       try {
         leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
-      } catch (LeaseContentionException e) {
-        // Contention is the one failure the StoreResult return type exists for, so report it
-        // instead of throwing. The lease must not be freed here - it belongs to whoever holds it.
-        monitor.warning(
-            String.format("Failed to lease negotiation %s.", contractNegotiation.getId()), e);
-        activeNegotiations.remove(contractNegotiation.getId());
-        return StoreResult.alreadyLeased(failureMessage(e));
       } catch (RuntimeException e) {
-        // A backend outage or a missing quote is not contention, and it must not be returned as a
-        // generalError either: ContractNegotiationProtocolServiceImpl ignores the StoreResult of
-        // its update(), so the counterparty would see HTTP 200 and never resend. Throwing keeps
-        // lease failures and persistence failures in the same class - 5xx, then a retry.
+        // Contention is not reported through the StoreResult, because the write below is then
+        // skipped and ContractNegotiationProtocolServiceImpl discards the result of its update()
+        // for the agreed/verified/finalized/terminated actions - the counterparty would see
+        // HTTP 200 for a transition that was never persisted and never resend it. A backend
+        // outage or a missing quote is no different. Both must surface as 5xx and be retried,
+        // which is also what this store did before 0.18.1.
         monitor.warning(
             String.format("Failed to lease negotiation %s.", contractNegotiation.getId()), e);
         activeNegotiations.remove(contractNegotiation.getId());
@@ -441,18 +442,24 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
       } finally {
         // always give up the lock, but only the one this instance holds
-        LeaseHolder.LeaseRelease release =
+        release =
             leaseHolder.releaseLease(
                 contractNegotiation.getId(), lockId, LEASE_RELEASED_AFTER_SAVE);
-        if (release == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
-          // The lease changed hands mid-save, so the writes above were not actually protected.
-          monitor.warning(
-              String.format(
-                  "Negotiation %s was leased by another instance while it was being saved.",
-                  contractNegotiation.getId()));
-        }
         activeNegotiations.remove(contractNegotiation.getId());
       }
+    }
+    if (release == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
+      // The lease changed hands mid-save, so the writes above were not actually protected by it.
+      // Reporting it mirrors SqlContractNegotiationStore, whose save() returns the outcome of the
+      // breakLease it ends with - the write has happened either way.
+      monitor.warning(
+          String.format(
+              "Negotiation %s was leased by another instance while it was being saved.",
+              contractNegotiation.getId()));
+      return StoreResult.alreadyLeased(
+          String.format(
+              "%s was leased by another instance while it was being saved.",
+              contractNegotiation.getId()));
     }
     return StoreResult.success();
   }
@@ -533,15 +540,17 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     }
     agreementApi
         .findByContractId(contractAgreement.getId())
-        .filter(agreementVO -> tmfEdcMapper.applyClaims(agreementVO, contractAgreement.getClaims()))
         .ifPresent(
-            agreementVO ->
-                // Deliberately not compensated, unlike the other agreement writes in this class:
-                // the claims come from the negotiation being saved, so a rollback followed by the
-                // state machine's retry writes the exact same value. Reverting would also need the
-                // previous claims, which registerAgreementCompensation cannot carry.
-                agreementApi.updateAgreement(
-                    agreementVO.getId(), tmfEdcMapper.toUpdate(agreementVO)));
+            agreementVO -> {
+              if (!tmfEdcMapper.applyClaims(agreementVO, contractAgreement.getClaims())) {
+                return;
+              }
+              // Deliberately not compensated, unlike the other agreement writes in this class:
+              // the claims come from the negotiation being saved, so a rollback followed by the
+              // state machine's retry writes the exact same value. Reverting would also need the
+              // previous claims, which registerAgreementCompensation cannot carry.
+              agreementApi.updateAgreement(agreementVO.getId(), tmfEdcMapper.toUpdate(agreementVO));
+            });
   }
 
   private void handleVerificationStates(ContractNegotiation contractNegotiation) {

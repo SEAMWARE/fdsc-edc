@@ -355,7 +355,7 @@ follow their production class and are not listed separately):
 | entities gain `participantContextId` (§4) | `tmf-extension/.../store/TMFEdcMapper.java` and all four TMF-backed stores | builders never set it |
 | `ContractAgreement` gains `agreementId` (distinct from `id`) and `claims`; transfer-request lookup is by `(agreementId, participantContextId)` | `tmf-extension/.../store/TMFEdcMapper.java:176`; `tmf-extension/.../store/TMFBackedContractNegotiationStore.java:163,196` | `toContractAgreement` sets only `id(externalId)`; `findContractAgreement(String)` / `queryAgreements(QuerySpec)` resolve on `id` alone |
 | `DataFlowManager` removed; `DataFlowController` is a single injected service (§8.3) | `test-extension/.../edc/TckGuardExtension.java:50,88,151` | `@Inject DataFlowManager` + `register(noopPriority, controller)` |
-| `LeaseContext.acquireLease` / `breakLease` return `StoreResult<Void>` instead of `void` | `tmf-extension/.../store/TMFLeaseContext.java:46,61` | `public void breakLease(String)` / `public void acquireLease(String)` |
+| `LeaseContext.acquireLease` / `breakLease` return `StoreResult<Void>` instead of `void` | `tmf-extension/.../store/TMFLeaseContext.java` — **deleted in Step 3** rather than ported: nothing injected a `LeaseContext`, the class carried a `// TODO: reevaluate usage` and leasing runs through `LeaseHolder` | `public void breakLease(String)` / `public void acquireLease(String)` |
 | `ProtocolTokenValidator.verify` gains a leading `ParticipantContext` | `tmf-extension/.../store/TMForumBackedCatalogProtocolService.java:91` | `verify(TokenRepresentation, ctor::new, CatalogRequestMessage)` |
 | `ServiceExtensionContext.getParticipantId()` removed (participant context, §4) | `tmf-extension/.../CatalogProtocolServiceExtension.java:63`; `tmf-extension/.../TMFContractNegotiationExtension.java:290` | `context.getParticipantId()` |
 | `Asset.Builder.version(String)` removed | `tmf-extension/.../store/TMFEdcMapper.java:643` | `.version(...)` on the asset builder |
@@ -414,6 +414,33 @@ characteristic from `handleVerificationStates` (reached for both `VERIFYING` and
 `VERIFIED`), and `TMFEdcMapper.applyClaims` reports whether anything actually
 changed so an unchanged agreement is not rewritten.
 
+**Where the claims end up, and who can read them.** Upstream keeps claims in the
+private `agr_claims` column of a SQL store that nothing but the connector talks
+to; here they live on a TMForum Agreement, which is a business object in a shared
+backend — so the question is a deployment one, not a code one. Three points fix
+the answer for FDSC:
+
+- The agreement API the controlplane writes to (`tmfExtension.agreementApi`,
+  `config/tck/edc.properties:98`) is a cluster-internal service. In the FIWARE
+  Data Space Connector it sits behind the party's own PEP and is never routed
+  through the data-space ingress, so a counterparty cannot read it — the DSP
+  surface returns agreements through the connector, which does not serialise the
+  characteristic to the wire.
+- The claims are the counter-party agent's own claims, taken from a token that
+  party presented to this connector. Nothing in them is private to *us*, and the
+  same backend already holds the quotes, offers and the agreement itself. So the
+  boundary this crosses is operator-internal: the party's own business systems,
+  which already read agreements, can now also read the claims of the counterparty
+  they agreed with.
+- That is acceptable for a single-tenant controlplane, which is what
+  `participant-context-connector-classic-core` gives us (§4). It is **not**
+  automatically acceptable for a TMForum backend shared by several participants
+  or exposed to external consumers: there the claims would become visible to
+  tenants that were never party to the negotiation. A deployment that does either
+  must restrict the `claims` characteristic at the PEP, or move it out of TMForum
+  (vault-backed, keyed by agreement id) — the mapper writes it in exactly one
+  place (`TMFEdcMapper.applyClaims`), so the swap is local.
+
 Two non-breaks worth stating, because both look like breaks:
 
 - **`fdsc-transfer-extension` has no `DataFlowController`.** Its
@@ -435,7 +462,7 @@ failures below). 37 distinct compiler errors across 13 files:
 
 | Module | File | Errors | Owner |
 |---|---|---|---|
-| `tmf-extension` | `store/TMFLeaseContext.java` | 5 | Step 3 |
+| `tmf-extension` | `store/TMFLeaseContext.java` | 5 | Step 3 (file deleted — dead code) |
 | `tmf-extension` | `store/TMForumBackedCatalogProtocolService.java` | 4 | Step 3 |
 | `tmf-extension` | `store/TMFEdcMapper.java` | 3 | Step 3 |
 | `tmf-extension` | `store/TMFBackedContractNegotiationStore.java` | 3 | Step 3 |

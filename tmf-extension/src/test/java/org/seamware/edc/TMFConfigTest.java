@@ -17,6 +17,7 @@
 package org.seamware.edc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.io.IOException;
@@ -43,9 +44,22 @@ public class TMFConfigTest {
   public void testValidConfig(String testFile, TMFConfig expectedConfig) throws IOException {
     Config testConfig = fromFile(testFile);
     assertEquals(
-        TMFConfig.fromConfig(testConfig),
+        TMFConfig.fromConfig(testConfig, null),
         expectedConfig,
         "The config should have successfully been read.");
+  }
+
+  @ParameterizedTest(name = "Endpoint-only config from {0}")
+  @MethodSource("getValidConfig")
+  public void testEndpointOnlyConfigLeavesTheParticipantIdentityUnset(
+      String testFile, TMFConfig expectedConfig) throws IOException {
+    Config testConfig = fromFile(testFile);
+
+    TMFConfig tmfConfig = TMFConfig.fromConfig(testConfig);
+
+    assertNull(
+        tmfConfig.getParticipantId(), "A settings-derived identity could diverge unnoticed.");
+    assertNull(tmfConfig.getParticipantContextId());
   }
 
   @ParameterizedTest(name = "Config from {0}")

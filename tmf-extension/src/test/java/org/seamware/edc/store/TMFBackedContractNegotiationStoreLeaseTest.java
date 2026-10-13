@@ -46,40 +46,72 @@ public class TMFBackedContractNegotiationStoreLeaseTest
 
   // --- save() lease lifecycle on exception ---
 
-  /** Only genuine contention may surface as ALREADY_LEASED; everything else is a real failure. */
+  /**
+   * A save that cannot take the lease writes nothing, and the protocol service discards the
+   * StoreResult of most transitions - so contention must throw like any other lease failure, giving
+   * the counterparty a 5xx and a resend rather than a silent 200.
+   */
   private static Stream<Arguments> acquireLeaseFailures() {
     return Stream.of(
         Arguments.of(
             new LeaseContentionException(
-                "Negotiation negotiation-id is already leased by other-instance until 1"),
-            StoreFailure.Reason.ALREADY_LEASED),
+                "Negotiation negotiation-id is already leased by other-instance until 1")),
         Arguments.of(
-            new LeaseContentionException("Lost lease race on negotiation-id: expected a, got b"),
-            StoreFailure.Reason.ALREADY_LEASED),
-        Arguments.of(
-            new IllegalStateException("No quote found for negotiation negotiation-id"),
-            StoreFailure.Reason.GENERAL_ERROR),
-        Arguments.of(
-            new RuntimeException("TMForum unreachable"), StoreFailure.Reason.GENERAL_ERROR),
-        Arguments.of(new RuntimeException(), StoreFailure.Reason.GENERAL_ERROR));
+            new LeaseContentionException("Lost lease race on negotiation-id: expected a, got b")),
+        Arguments.of(new IllegalStateException("No quote found for negotiation negotiation-id")),
+        Arguments.of(new RuntimeException("TMForum unreachable")),
+        Arguments.of(new RuntimeException()));
   }
 
-  @ParameterizedTest(name = "acquireLease throws {0} -> {1}")
+  @ParameterizedTest(name = "acquireLease throws {0}")
   @MethodSource("acquireLeaseFailures")
-  public void testSave_maps_acquireLease_failure_to_reason(
-      RuntimeException failure, StoreFailure.Reason expectedReason) {
+  public void testSave_throws_when_the_lease_cannot_be_acquired(RuntimeException failure) {
     String negotiationId = "negotiation-id";
     doThrow(failure).when(leaseHolder).acquireLease(eq(negotiationId), any());
 
     ContractNegotiation negotiation =
         getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.INITIAL);
 
+    EdcPersistenceException exception =
+        assertThrows(
+            EdcPersistenceException.class,
+            () -> tmfBackedContractNegotiationStore.save(negotiation));
+
+    assertSame(failure, exception.getCause(), "The original lease failure must not be swallowed.");
+    // The lease belongs to whoever holds it - a failed acquisition must not release it.
+    verify(leaseHolder, never()).releaseLease(eq(negotiationId), any(), any());
+  }
+
+  @Test
+  public void testSave_reports_a_lease_taken_over_during_the_write_as_already_leased() {
+    String negotiationId = "negotiation-id";
+    when(quoteApiClient.findByNegotiationId(eq(negotiationId))).thenReturn(List.of());
+    when(quoteApiClient.createQuote(any()))
+        .thenReturn(
+            getQuote(
+                "new-quote-id",
+                negotiationId,
+                TEST_CONTROL_PLANE_ID,
+                QuoteStateTypeVO.IN_PROGRESS));
+    when(quoteApiClient.updateQuote(any(), any()))
+        .thenReturn(
+            getQuote(
+                "new-quote-id",
+                negotiationId,
+                TEST_CONTROL_PLANE_ID,
+                QuoteStateTypeVO.IN_PROGRESS));
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
+        .thenReturn(LeaseHolder.LeaseRelease.HELD_BY_OTHER);
+
+    ContractNegotiation negotiation =
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.INITIAL);
+
     StoreResult<Void> result = tmfBackedContractNegotiationStore.save(negotiation);
 
-    assertTrue(result.failed(), "Save should fail when the lease cannot be acquired.");
-    assertEquals(expectedReason, result.reason());
-    assertNotNull(result.getFailureDetail(), "A failure without a message is useless to callers.");
-    verify(leaseHolder, never()).releaseLease(eq(negotiationId), any(), any());
+    assertTrue(result.failed(), "A lease lost mid-save must be reported, not hidden.");
+    assertEquals(StoreFailure.Reason.ALREADY_LEASED, result.reason());
+    // Unlike a failed acquisition, the write itself did happen - the result reports the lease.
+    verify(quoteApiClient, times(1)).createQuote(any());
   }
 
   @Test
