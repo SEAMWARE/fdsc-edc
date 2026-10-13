@@ -114,6 +114,8 @@ public class TMFEdcMapper {
   public static final String AGREEMENT_CHARACTERISTIC_POLICY = "policy";
   public static final String AGREEMENT_CHARACTERISTIC_CLAIMS = "claims";
 
+  private static final TypeReference<Map<String, Object>> CLAIMS_TYPE = new TypeReference<>() {};
+
   /**
    * DSP-visible agreement id, distinct from the EDC row id since 0.18.1. Mirrors the separate
    * {@code agr_agreement_id} column of the upstream SQL store; the external id stays the row id.
@@ -236,20 +238,33 @@ public class TMFEdcMapper {
     if (claims == null || claims.isEmpty()) {
       return false;
     }
+    // The incoming claims are built by EDC, the stored ones came back through Jackson from
+    // TMForum, so equal claim sets differ in boxing (Integer vs Long for exp/iat) and in
+    // collection type. Compare - and store - the normalised form, or the short-circuit below
+    // never fires and every save PATCHes the agreement again.
+    Map<String, Object> normalizedClaims = normalizeClaims(claims);
     Optional<CharacteristicVO> stored =
         agreementVO.getCharacteristic().stream()
             .filter(c -> AGREEMENT_CHARACTERISTIC_CLAIMS.equals(c.getName()))
             .findFirst();
     if (stored.isPresent()) {
-      if (claims.equals(stored.get().getValue())) {
+      if (normalizedClaims.equals(normalizeClaims(stored.get().getValue()))) {
         return false;
       }
-      stored.get().setValue(claims);
+      stored.get().setValue(normalizedClaims);
       return true;
     }
     agreementVO.addCharacteristicItem(
-        toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, claims));
+        toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, normalizedClaims));
     return true;
+  }
+
+  /** Maps any claim representation onto the one Jackson produces for a stored agreement. */
+  private Map<String, Object> normalizeClaims(Object claims) {
+    if (!(claims instanceof Map<?, ?>)) {
+      return Map.of();
+    }
+    return objectMapper.convertValue(claims, CLAIMS_TYPE);
   }
 
   public ContractAgreement toContractAgreement(ExtendableAgreementVO agreementVO) {

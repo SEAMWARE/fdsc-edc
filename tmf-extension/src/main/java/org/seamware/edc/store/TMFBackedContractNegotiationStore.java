@@ -395,12 +395,15 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         activeNegotiations.remove(contractNegotiation.getId());
         return StoreResult.alreadyLeased(failureMessage(e));
       } catch (RuntimeException e) {
-        // A backend outage or a missing quote is not contention: reporting it as alreadyLeased
-        // would make the state machine retry forever instead of surfacing the failure.
+        // A backend outage or a missing quote is not contention, and it must not be returned as a
+        // generalError either: ContractNegotiationProtocolServiceImpl ignores the StoreResult of
+        // its update(), so the counterparty would see HTTP 200 and never resend. Throwing keeps
+        // lease failures and persistence failures in the same class - 5xx, then a retry.
         monitor.warning(
             String.format("Failed to lease negotiation %s.", contractNegotiation.getId()), e);
         activeNegotiations.remove(contractNegotiation.getId());
-        return StoreResult.generalError(failureMessage(e));
+        throw new EdcPersistenceException(
+            String.format("Failed to lease negotiation %s.", contractNegotiation.getId()), e);
       }
       try {
         transactionContext.execute(
@@ -533,6 +536,10 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         .filter(agreementVO -> tmfEdcMapper.applyClaims(agreementVO, contractAgreement.getClaims()))
         .ifPresent(
             agreementVO ->
+                // Deliberately not compensated, unlike the other agreement writes in this class:
+                // the claims come from the negotiation being saved, so a rollback followed by the
+                // state machine's retry writes the exact same value. Reverting would also need the
+                // previous claims, which registerAgreementCompensation cannot carry.
                 agreementApi.updateAgreement(
                     agreementVO.getId(), tmfEdcMapper.toUpdate(agreementVO)));
   }

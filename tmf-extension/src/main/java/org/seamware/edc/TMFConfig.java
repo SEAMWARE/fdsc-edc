@@ -24,6 +24,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.system.configuration.Config;
@@ -36,7 +37,10 @@ public class TMFConfig {
   /** EDC core setting holding the identity this runtime acts on behalf of. */
   public static final String EDC_PARTICIPANT_ID_SETTING = "edc.participant.id";
 
-  /** EDC core setting holding the participant context id; falls back to the participant id. */
+  /**
+   * EDC core setting holding the participant context id; only read when the runtime registers no
+   * participant context supplier.
+   */
   public static final String EDC_PARTICIPANT_CONTEXT_ID_SETTING = "edc.participant.context.id";
 
   private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";
@@ -72,6 +76,15 @@ public class TMFConfig {
   private CatalogConfig catalogConfig;
 
   public static TMFConfig fromConfig(Config config) {
+    return fromConfig(config, null);
+  }
+
+  /**
+   * Builds the config, taking the participant identity from {@code participantContext} when the
+   * runtime supplies one, so the ids stamped on entities cannot drift from the context EDC itself
+   * filters by. A {@code null} context falls back to the {@code edc.participant.*} settings.
+   */
+  public static TMFConfig fromConfig(Config config, ParticipantContext participantContext) {
     Config tmfExtensionConfig = config.getConfig(TMF_EXTENSION_CONFIG_PATH);
 
     TMFConfig.Builder tmfConfigBuilder = TMFConfig.Builder.newInstance();
@@ -94,13 +107,20 @@ public class TMFConfig {
     getNullSafeFromConfig(() -> tmfExtensionConfig.getString("schemaBaseUri"))
         .ifPresent(tmfConfigBuilder::schemaBaseUri);
 
-    // Mirrors ClassicParticipantContextDefaultServicesExtension: an unset context id falls back
-    // to the participant id, so stamped entities match the context EDC seeds and filters by.
-    String participantId =
-        config.getString(EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
-    tmfConfigBuilder.participantId(participantId);
-    tmfConfigBuilder.participantContextId(
-        config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));
+    if (participantContext != null) {
+      tmfConfigBuilder.participantId(participantContext.getIdentity());
+      tmfConfigBuilder.participantContextId(participantContext.getParticipantContextId());
+    } else {
+      // Only reached without a supplier, e.g. in tests. Mirrors the rule
+      // ClassicParticipantContextDefaultServicesExtension applies: an unset context id falls back
+      // to the participant id, so stamped entities match the context EDC seeds and filters by.
+      String participantId =
+          config.getString(
+              EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
+      tmfConfigBuilder.participantId(participantId);
+      tmfConfigBuilder.participantContextId(
+          config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));
+    }
 
     CatalogConfig.Builder catalogConfigBuilder = new CatalogConfig.Builder();
     Config catalogConfig = config.getConfig(TMF_EXTENSION_CATALOG_CONFIG_PATH);

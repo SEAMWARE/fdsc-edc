@@ -160,23 +160,30 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
     List<ExtendableQuoteVO> leasedQuotes =
         ownedQuotes(negotiationId).filter(q -> q.getContractNegotiationState().isLeased()).toList();
 
-    if (leasedQuotes.stream()
-        .anyMatch(q -> isHeldByOther(q.getContractNegotiationState(), lockId))) {
-      return LeaseRelease.HELD_BY_OTHER;
-    }
     if (leasedQuotes.isEmpty()) {
       return LeaseRelease.NOT_LEASED;
     }
 
+    // acquireLease writes the quotes of a negotiation one at a time, so a failure mid-acquire can
+    // leave them split between holders. Free the ones this lockId owns regardless of that split -
+    // otherwise our own lease lingers for the full TTL - and still report the contention.
     // Expired records are cleared along with our own, so an abandoned lease does not linger.
-    leasedQuotes.forEach(
-        q -> {
-          ContractNegotiationState updatedState =
-              copyStateWithLease(q.getContractNegotiationState(), false, null, 0);
-          quoteApi.updateQuote(q.getId(), createLeaseOnlyUpdate(updatedState));
-        });
+    leasedQuotes.stream()
+        .filter(q -> !isHeldByOther(q.getContractNegotiationState(), lockId))
+        .forEach(this::freeQuoteLease);
+
+    if (leasedQuotes.stream()
+        .anyMatch(q -> isHeldByOther(q.getContractNegotiationState(), lockId))) {
+      return LeaseRelease.HELD_BY_OTHER;
+    }
     monitor.info(String.format("Freed lease on %s because: %s", negotiationId, reason));
     return LeaseRelease.RELEASED;
+  }
+
+  private void freeQuoteLease(ExtendableQuoteVO quote) {
+    ContractNegotiationState updatedState =
+        copyStateWithLease(quote.getContractNegotiationState(), false, null, 0);
+    quoteApi.updateQuote(quote.getId(), createLeaseOnlyUpdate(updatedState));
   }
 
   private boolean isHeldByOther(ContractNegotiationState state, String lockId) {
