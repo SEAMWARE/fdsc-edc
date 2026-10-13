@@ -96,12 +96,6 @@ public class TMFEdcMapper {
    */
   public static final String ASSET_PROPERTY_VERSION = EDC_NAMESPACE + "version";
 
-  /**
-   * Asset content-type property; EDC 0.18.1 removed {@code Asset.PROPERTY_CONTENT_TYPE} and its
-   * builder setter.
-   */
-  public static final String ASSET_PROPERTY_CONTENT_TYPE = EDC_NAMESPACE + "contenttype";
-
   public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
   public static final String USAGE_CHARACTERISTIC_CORRELATION_ID = "correlation-id";
   public static final String USAGE_CHARACTERISTIC_PROTOCOL = "protocol";
@@ -119,6 +113,13 @@ public class TMFEdcMapper {
   public static final String AGREEMENT_CHARACTERISTIC_ASSET_ID = "asset-id";
   public static final String AGREEMENT_CHARACTERISTIC_POLICY = "policy";
   public static final String AGREEMENT_CHARACTERISTIC_CLAIMS = "claims";
+
+  /**
+   * DSP-visible agreement id, distinct from the EDC row id since 0.18.1. Mirrors the separate
+   * {@code agr_agreement_id} column of the upstream SQL store; the external id stays the row id.
+   */
+  public static final String AGREEMENT_CHARACTERISTIC_AGREEMENT_ID = "agreement-id";
+
   public static final String AGREEMENT_TYPE_DSP = "dspContract";
 
   public static final String QUOTE_ITEM_ADD_ACTION = "add";
@@ -184,7 +185,10 @@ public class TMFEdcMapper {
                 AGREEMENT_CHARACTERISTIC_CONSUMER_ID, contractAgreement.getConsumerId()))
         .addCharacteristicItem(
             toAgreementCharacteristic(
-                AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()));
+                AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()))
+        .addCharacteristicItem(
+            toAgreementCharacteristic(
+                AGREEMENT_CHARACTERISTIC_AGREEMENT_ID, contractAgreement.getAgreementId()));
 
     // Since 0.17.0 the agent's claims live on the agreement so that transfer-time policy
     // evaluation can reconstruct the agent without re-resolving a token.
@@ -213,6 +217,41 @@ public class TMFEdcMapper {
     return new CharacteristicVO().name(key).value(value);
   }
 
+  private String readAgreementId(ExtendableAgreementVO agreementVO) {
+    return agreementVO.getCharacteristic().stream()
+        .filter(c -> AGREEMENT_CHARACTERISTIC_AGREEMENT_ID.equals(c.getName()))
+        .map(CharacteristicVO::getValue)
+        .filter(String.class::isInstance)
+        .map(String.class::cast)
+        .findFirst()
+        .orElseGet(agreementVO::getExternalId);
+  }
+
+  /**
+   * Writes {@code claims} onto an already stored agreement, reporting whether anything changed. The
+   * provider only learns the counter-party claims when the verification message arrives, which is
+   * after the agreement row was created by {@link #toAgreement}.
+   */
+  public boolean applyClaims(ExtendableAgreementVO agreementVO, Map<String, Object> claims) {
+    if (claims == null || claims.isEmpty()) {
+      return false;
+    }
+    Optional<CharacteristicVO> stored =
+        agreementVO.getCharacteristic().stream()
+            .filter(c -> AGREEMENT_CHARACTERISTIC_CLAIMS.equals(c.getName()))
+            .findFirst();
+    if (stored.isPresent()) {
+      if (claims.equals(stored.get().getValue())) {
+        return false;
+      }
+      stored.get().setValue(claims);
+      return true;
+    }
+    agreementVO.addCharacteristicItem(
+        toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, claims));
+    return true;
+  }
+
   public ContractAgreement toContractAgreement(ExtendableAgreementVO agreementVO) {
     ContractAgreement.Builder agreementBuilder = ContractAgreement.Builder.newInstance();
     agreementVO
@@ -233,12 +272,12 @@ public class TMFEdcMapper {
                 case AGREEMENT_CHARACTERISTIC_CLAIMS -> agreementBuilder.claims(toClaims(c));
               }
             });
-    // TMForum knows a single identifier per agreement, so the EDC row id and the DSP-visible
-    // agreement id are both the external id. Leaving agreementId unset would make the builder
-    // generate a random UUID that no counterparty can resolve.
+    // The external id is the EDC row id, as findContractAgreement resolves by it. The DSP-visible
+    // agreement id is a different value since 0.18.1 and travels in its own characteristic;
+    // agreements written before that - including the TCK seed data - only know the one id.
     agreementBuilder
         .id(agreementVO.getExternalId())
-        .agreementId(agreementVO.getExternalId())
+        .agreementId(readAgreementId(agreementVO))
         .participantContextId(participantContextId);
     return agreementBuilder.build();
   }

@@ -23,12 +23,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.EqualsAndHashCode;
+import lombok.Getter;
 import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.system.configuration.Config;
 
 /** Configuration of the TMForum Extension. */
 @EqualsAndHashCode
+@Getter
 public class TMFConfig {
 
   /** EDC core setting holding the identity this runtime acts on behalf of. */
@@ -68,54 +70,6 @@ public class TMFConfig {
 
   // configuration for the catalog endpoint
   private CatalogConfig catalogConfig;
-
-  public boolean isEnabled() {
-    return enabled;
-  }
-
-  public URL getQuoteApi() {
-    return quoteApi;
-  }
-
-  public URL getAgreementApi() {
-    return agreementApi;
-  }
-
-  public URL getProductOrderApi() {
-    return productOrderApi;
-  }
-
-  public URL getProductCatalogApi() {
-    return productCatalogApi;
-  }
-
-  public URL getProductInventoryApi() {
-    return productInventoryApi;
-  }
-
-  public URL getUsageManagementApi() {
-    return usageManagementApi;
-  }
-
-  public URL getPartyCatalogApi() {
-    return partyCatalogApi;
-  }
-
-  public URI getSchemaBaseUri() {
-    return schemaBaseUri;
-  }
-
-  public String getParticipantId() {
-    return participantId;
-  }
-
-  public String getParticipantContextId() {
-    return participantContextId;
-  }
-
-  public CatalogConfig getCatalogConfig() {
-    return catalogConfig;
-  }
 
   public static TMFConfig fromConfig(Config config) {
     Config tmfExtensionConfig = config.getConfig(TMF_EXTENSION_CONFIG_PATH);

@@ -428,15 +428,26 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                   }
                 });
       } catch (Exception e) {
-        // Persistence failures keep throwing as they did before 0.18.1: they are unrecoverable
-        // for this store and the compensation logic around save relies on the exception.
+        // Deliberately still thrown rather than returned as generalError, matching
+        // SqlContractNegotiationStore at 0.18.1: StoreResult carries the lease outcome, not
+        // persistence errors. The state machine discards the result either way, while the
+        // synchronous DSP paths map a generalError to 400 - the wrong answer for a backend outage.
         monitor.warning(
             String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
         throw new EdcPersistenceException(
             String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
       } finally {
         // always give up the lock, but only the one this instance holds
-        leaseHolder.releaseLease(contractNegotiation.getId(), lockId, LEASE_RELEASED_AFTER_SAVE);
+        LeaseHolder.LeaseRelease release =
+            leaseHolder.releaseLease(
+                contractNegotiation.getId(), lockId, LEASE_RELEASED_AFTER_SAVE);
+        if (release == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
+          // The lease changed hands mid-save, so the writes above were not actually protected.
+          monitor.warning(
+              String.format(
+                  "Negotiation %s was leased by another instance while it was being saved.",
+                  contractNegotiation.getId()));
+        }
         activeNegotiations.remove(contractNegotiation.getId());
       }
     }
@@ -507,6 +518,25 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     finalizeOrder(contractNegotiation, extendableQuoteVO.get());
   }
 
+  /**
+   * Writes back claims EDC attached to an agreement that already exists in TMForum. On the provider
+   * the counter-party claims only arrive with the verification message, so the create path cannot
+   * have seen them; without this they would never be persisted.
+   */
+  private void persistAgreementClaims(ContractNegotiation contractNegotiation) {
+    ContractAgreement contractAgreement = contractNegotiation.getContractAgreement();
+    if (contractAgreement == null) {
+      return;
+    }
+    agreementApi
+        .findByContractId(contractAgreement.getId())
+        .filter(agreementVO -> tmfEdcMapper.applyClaims(agreementVO, contractAgreement.getClaims()))
+        .ifPresent(
+            agreementVO ->
+                agreementApi.updateAgreement(
+                    agreementVO.getId(), tmfEdcMapper.toUpdate(agreementVO)));
+  }
+
   private void handleVerificationStates(ContractNegotiation contractNegotiation) {
     Optional<ExtendableQuoteVO> extendableQuoteVO =
         getActiveQuote(
@@ -520,6 +550,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     if (extendableQuoteVO.isEmpty()) {
       throw new IllegalArgumentException("In state verified, an accepted Quote needs to exist.");
     }
+
+    persistAgreementClaims(contractNegotiation);
 
     ExtendableQuoteVO quoteVO = extendableQuoteVO.get();
     if (getProductOrder(quoteVO.getId()).isPresent()) {

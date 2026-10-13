@@ -363,6 +363,27 @@ follow their production class and are not listed separately):
 | `RequestVersionPolicyContext` no longer in `org.eclipse.edc.policy.context.request.spi`; `SignatureSuiteRegistry` moved with the DCP rename | `dcp-extension/.../DCPExtension.java:51,82` | 0.14.1 imports |
 | DSP 2024/1 transformer context gone with `dsp-spi-2024` — **delete the registration, do not port it** | `tmf-extension/.../TMFContractNegotiationExtension.java:19,159` | `registerTypePreservingTransformers(DSP_TRANSFORMER_CONTEXT_V_2024_1, ...)`. Removed in Step 2 (§3.3), since it is the direct consequence of dropping the artifact. The `2025_1` registration on the next line stays |
 
+**`ContractAgreement.agreementId` — own characteristic, decided in Step 3.** At
+0.18.1 `ContractAgreement.Builder.build()` generates a *separate* random UUID for
+`id` and for `agreementId` when either is unset, and
+`NegotiationProcessorsImpl.processAgreeing` sets neither. DSP serialises the
+wire `@id` from `getAgreementId()`
+(`JsonObjectFromContractAgreementMessageV2025Transformer`), while
+`TransferProcessProtocolServiceImpl.findAgreement` resolves an incoming
+`TransferRequestMessage` through `queryAgreements` with
+`Criterion("agreementId", "=", <wire id>)`. Collapsing both onto the single
+TMForum external id would therefore make every transfer request against a
+freshly negotiated agreement fail to resolve.
+
+The TMForum external id stays the EDC row id — `findContractAgreement`,
+`handleAgreeStates` and `handleFinalStates` all resolve by it — and the
+DSP-visible id is carried next to `claims` as the `agreement-id` characteristic
+(`TMFEdcMapper.AGREEMENT_CHARACTERISTIC_AGREEMENT_ID`), mirroring the separate
+`agr_agreement_id` column of the upstream SQL store. `toContractAgreement` falls
+back to the external id when the characteristic is absent, so agreements written
+by a 0.14.1 connector — and the `init-tmforum.sh` TCK seed data, whose two ids
+are equal — keep resolving.
+
 **`ContractAgreement.claims` — mapped, decided in Step 3.** 0.17.0 moved the
 counter-party agent's claims onto the agreement so that transfer-time policy
 evaluation can rebuild the agent without re-resolving a token. The TMForum model
@@ -372,6 +393,26 @@ when non-empty and read back as a plain map. Step 5 (`policy-extension`) can
 therefore assume an agreement read out of TMForum carries the claim set it was
 written with; agreements written by a 0.14.1 connector have no such
 characteristic and come back with an empty map.
+
+**Claims need an update path, not just a create path.** At 0.18.1 the only two
+production call sites that set claims on an agreement are both in
+`ContractNegotiationProtocolServiceImpl`:
+
+| Side | Method | Negotiation state at `save` | Agreement row |
+|---|---|---|---|
+| consumer | `agreedAction` (`notifyAgreed`) | `AGREED` | does not exist yet — insert |
+| provider | `verifiedAction` (`notifyVerified`) | `VERIFIED` | already exists — update |
+
+The provider agreement is first written claims-less by
+`NegotiationProcessorsImpl.processAgreeing` / `transitionToAgreed` at `AGREED`;
+the agent's claims only arrive with the verification message. Since
+`createAgreement` is skipped once `agreementApi.findByContractId(...)` finds a
+row, a create-only mapping would silently drop every provider-side claim set —
+and the provider is the side that evaluates transfer-time policy. So
+`TMFBackedContractNegotiationStore.persistAgreementClaims` re-writes the `claims`
+characteristic from `handleVerificationStates` (reached for both `VERIFYING` and
+`VERIFIED`), and `TMFEdcMapper.applyClaims` reports whether anything actually
+changed so an unchanged agreement is not rewritten.
 
 Two non-breaks worth stating, because both look like breaks:
 

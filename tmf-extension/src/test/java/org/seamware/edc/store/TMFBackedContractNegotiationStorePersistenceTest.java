@@ -1477,6 +1477,70 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     }
   }
 
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getAgreementClaimCases")
+  public void testVerificationSave_persists_claims_attached_after_agreement_creation(
+      String name, boolean claimsChanged, int expectedAgreementUpdates) {
+    tmfBackedContractNegotiationStore =
+        new TMFBackedContractNegotiationStore(
+            mock(Monitor.class),
+            objectMapper,
+            quoteApiClient,
+            agreementApiClient,
+            productOrderApiClient,
+            productCatalogApiClient,
+            productInventoryApiClient,
+            participantResolver,
+            tmfEdcMapper,
+            TEST_PROVIDER_ID,
+            TEST_CONTROL_PLANE_ID,
+            criterionOperatorRegistry,
+            leaseHolder,
+            new TMFTransactionContext(mock(Monitor.class)),
+            lockManager);
+
+    when(participantResolver.getTmfId(eq(TEST_PROVIDER_ID))).thenReturn(TMF_TEST_PROVIDER_ID);
+    when(participantResolver.getTmfId(eq(TEST_CONSUMER_ID))).thenReturn(TMF_TEST_CONSUMER_ID);
+
+    ContractNegotiation contractNegotiation =
+        addAgreement(
+            getValidNegotiationWithIdOfferAndType(
+                TEST_NEGOTIATION_ID,
+                List.of(getOffer(TEST_OFFER_ID + ":asset:123")),
+                ContractNegotiation.Type.PROVIDER,
+                ContractNegotiationStates.VERIFYING,
+                TEST_CONSUMER_ID));
+
+    ExtendableAgreementVO storedAgreement = getTestAgreement();
+    when(agreementApiClient.findByContractId(
+            eq(contractNegotiation.getContractAgreement().getId())))
+        .thenReturn(Optional.of(storedAgreement));
+    when(tmfEdcMapper.applyClaims(eq(storedAgreement), any())).thenReturn(claimsChanged);
+
+    testSave_success(
+        contractNegotiation,
+        setActiveQuote(
+            ContractNegotiationStates.AGREED,
+            "active-id",
+            getQuotes(TEST_NEGOTIATION_ID, TEST_CONTROL_PLANE_ID, 5),
+            QuoteStateTypeVO.ACCEPTED),
+        List.of(getQuoteItem("123")),
+        "active-id",
+        false,
+        expectedQuoteUpdate("VERIFYING", QuoteStateTypeVO.ACCEPTED, List.of(getQuoteItem("123"))));
+
+    verify(agreementApiClient, times(expectedAgreementUpdates)).updateAgreement(any(), any());
+  }
+
+  private static Stream<Arguments> getAgreementClaimCases() {
+    return Stream.of(
+        Arguments.of(
+            "Claims EDC attaches at verification time reach the already created agreement.",
+            true,
+            1),
+        Arguments.of("An agreement whose claims did not change is not rewritten.", false, 0));
+  }
+
   private static Stream<Arguments> getVerificationStates() {
     return Stream.of(
         Arguments.of(

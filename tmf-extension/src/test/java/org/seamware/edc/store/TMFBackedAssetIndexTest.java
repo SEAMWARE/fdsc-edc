@@ -43,6 +43,8 @@ public class TMFBackedAssetIndexTest {
 
   private static final String TEST_ID = "test-id";
   private static final String TEST_CONTENT = "test-content";
+  private static final String ASSET_PROPERTY_CONTENT_TYPE =
+      "https://w3id.org/edc/v0.0.1/ns/contenttype";
   private static final DataAddress TEST_DATA_ADDRESS =
       DataAddress.Builder.newInstance().type("http").build();
   private static final Asset TEST_ASSET =
@@ -288,7 +290,7 @@ public class TMFBackedAssetIndexTest {
                         .operator("eq")
                         .operandRight(TEST_CONTENT)
                         .build(),
-                    getEqPredicate("https://w3id.org/edc/v0.0.1/ns/contenttype", TEST_CONTENT))),
+                    getEqPredicate(ASSET_PROPERTY_CONTENT_TYPE, TEST_CONTENT))),
             150),
         Arguments.of(
             "All assets should be counted if no criteria is presented, using pagination.",
@@ -335,7 +337,7 @@ public class TMFBackedAssetIndexTest {
           Asset.Builder.newInstance()
               .id(String.format("asset-%s-%s", idPrefix, i))
               .property(TMFEdcMapper.ASSET_PROPERTY_VERSION, version)
-              .property(TMFEdcMapper.ASSET_PROPERTY_CONTENT_TYPE, TEST_CONTENT)
+              .property(ASSET_PROPERTY_CONTENT_TYPE, TEST_CONTENT)
               .build();
       assetHolders.add(new AssetHolder(extendableProductSpecification, asset));
     }
