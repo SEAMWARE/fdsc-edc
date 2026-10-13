@@ -202,6 +202,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     ContractAgreement expectedAgreement =
         ContractAgreement.Builder.newInstance()
             .id(TEST_AGREEMENT_ID)
+            .agreementId(TEST_AGREEMENT_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
             .policy(getTestPolicy())
             .providerId(TEST_PROVIDER_DID)
             .consumerId(TEST_CONSUMER_DID)
@@ -792,6 +794,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
       String id, String accessPolicyId, String contractPolicyId) {
     return ContractDefinition.Builder.newInstance()
         .clock(clock)
+        .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
         .accessPolicyId(accessPolicyId)
         .contractPolicyId(contractPolicyId)
         .id(id)

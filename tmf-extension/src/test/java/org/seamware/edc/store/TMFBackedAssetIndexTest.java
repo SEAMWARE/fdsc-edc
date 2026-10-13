@@ -335,7 +335,7 @@ public class TMFBackedAssetIndexTest {
           Asset.Builder.newInstance()
               .id(String.format("asset-%s-%s", idPrefix, i))
               .property(TMFEdcMapper.ASSET_PROPERTY_VERSION, version)
-              .contentType(TEST_CONTENT)
+              .property(TMFEdcMapper.ASSET_PROPERTY_CONTENT_TYPE, TEST_CONTENT)
               .build();
       assetHolders.add(new AssetHolder(extendableProductSpecification, asset));
     }

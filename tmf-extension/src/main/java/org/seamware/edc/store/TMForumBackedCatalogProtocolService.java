@@ -132,6 +132,18 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
       DatasetRequestMessage datasetRequestMessage,
       TokenRepresentation tokenRepresentation) {
 
+    // The DSP layer only null-checks the bearer token before dispatching here, so verifying it is
+    // the service's job - upstream's CatalogProtocolServiceImpl.getDataset does the same.
+    ServiceResult<ParticipantAgent> validatedToken =
+        protocolTokenValidator.verify(
+            participantContext,
+            tokenRepresentation,
+            RequestCatalogPolicyContext::new,
+            datasetRequestMessage);
+    if (validatedToken.failed()) {
+      return ServiceResult.unauthorized("Request not authorized.");
+    }
+
     String datasetId = datasetRequestMessage.getDatasetId();
     Optional<ExtendableProductSpecification> spec =
         productCatalogApi.getProductSpecByExternalId(datasetId);
@@ -139,11 +151,14 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
       return ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId));
     }
 
-    List<ExtendableProductOffering> offerings =
-        productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+    List<ExtendableProductOffering> accessibleOfferings =
+        tmfEdcMapper.filterByAccessPolicy(
+            productCatalogApi.getProductOfferings(0, MAX_OFFERINGS),
+            policyEngine,
+            validatedToken.getContent());
 
     return tmfEdcMapper
-        .datasetFromProductSpecification(spec.get(), offerings)
+        .datasetFromProductSpecification(spec.get(), accessibleOfferings)
         .map(ServiceResult::success)
         .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
   }

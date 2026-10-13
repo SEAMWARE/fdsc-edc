@@ -143,8 +143,7 @@ public class TMFConfig {
     // Mirrors ClassicParticipantContextDefaultServicesExtension: an unset context id falls back
     // to the participant id, so stamped entities match the context EDC seeds and filters by.
     String participantId =
-        config.getString(
-            EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
+        config.getString(EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
     tmfConfigBuilder.participantId(participantId);
     tmfConfigBuilder.participantContextId(
         config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));

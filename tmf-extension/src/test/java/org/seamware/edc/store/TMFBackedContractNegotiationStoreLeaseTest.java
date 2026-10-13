@@ -26,7 +26,11 @@ import java.util.function.Supplier;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
+import org.eclipse.edc.spi.result.StoreFailure;
+import org.eclipse.edc.spi.result.StoreResult;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.edc.domain.ContractNegotiationState;
 import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.tmforum.quote.model.QuoteStateTypeVO;
@@ -40,22 +44,27 @@ public class TMFBackedContractNegotiationStoreLeaseTest
 
   // --- save() lease lifecycle on exception ---
 
-  @Test
-  public void testSave_frees_lease_when_acquireLease_throws() {
+  @ParameterizedTest(name = "acquireLease fails with: {0}")
+  @ValueSource(
+      strings = {
+        "Negotiation negotiation-id is already leased by other-instance until 1",
+        "Lost lease race on negotiation-id: expected a, got b",
+        "No quote found for negotiation negotiation-id"
+      })
+  public void testSave_reports_already_leased_when_acquireLease_fails(String failureMessage) {
     String negotiationId = "negotiation-id";
-    doThrow(new IllegalStateException("Already leased by someone else"))
+    doThrow(new IllegalStateException(failureMessage))
         .when(leaseHolder)
         .acquireLease(eq(negotiationId), any());
 
     ContractNegotiation negotiation =
         getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.INITIAL);
 
-    assertThrows(
-        EdcPersistenceException.class,
-        () -> tmfBackedContractNegotiationStore.save(negotiation),
-        "If acquireLease throws, save should throw EdcPersistenceException.");
+    StoreResult<Void> result = tmfBackedContractNegotiationStore.save(negotiation);
 
-    verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+    assertTrue(result.failed(), "Save should fail when the lease cannot be acquired.");
+    assertEquals(StoreFailure.Reason.ALREADY_LEASED, result.reason());
+    verify(leaseHolder, never()).freeLease(eq(negotiationId), any());
   }
 
   @Test
@@ -189,27 +198,64 @@ public class TMFBackedContractNegotiationStoreLeaseTest
     verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
   }
 
+  // --- breakLease() ---
+
   @Test
-  public void testSave_fails_when_lease_held_by_different_instance() {
+  public void testBreakLease_frees_lease_held_by_this_instance() {
     String negotiationId = "negotiation-id";
-    doThrow(new IllegalStateException("Cannot acquire lease, is already leased by someone else!"))
-        .when(leaseHolder)
-        .acquireLease(eq(negotiationId), any());
+    when(leaseHolder.isLeasedBy(eq(negotiationId), any())).thenReturn(true);
 
     ContractNegotiation negotiation =
-        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.INITIAL);
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
 
-    EdcPersistenceException exception =
-        assertThrows(
-            EdcPersistenceException.class,
-            () -> tmfBackedContractNegotiationStore.save(negotiation),
-            "Save should fail when the lease is held by a different instance.");
-
-    assertTrue(
-        exception.getCause() instanceof IllegalStateException,
-        "The cause should be an IllegalStateException from the lease holder.");
+    assertTrue(tmfBackedContractNegotiationStore.breakLease(negotiation).succeeded());
 
     verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+  }
+
+  @Test
+  public void testBreakLease_keeps_lease_held_by_another_instance() {
+    String negotiationId = "negotiation-id";
+    when(leaseHolder.isLeasedBy(eq(negotiationId), any())).thenReturn(false);
+    when(leaseHolder.isLeased(eq(negotiationId))).thenReturn(true);
+
+    ContractNegotiation negotiation =
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
+
+    StoreResult<Void> result = tmfBackedContractNegotiationStore.breakLease(negotiation);
+
+    assertTrue(result.failed(), "A foreign lease must not be broken.");
+    assertEquals(StoreFailure.Reason.ALREADY_LEASED, result.reason());
+    verify(leaseHolder, never()).freeLease(eq(negotiationId), any());
+  }
+
+  @Test
+  public void testBreakLease_is_a_noop_when_nothing_is_leased() {
+    String negotiationId = "negotiation-id";
+    when(leaseHolder.isLeasedBy(eq(negotiationId), any())).thenReturn(false);
+    when(leaseHolder.isLeased(eq(negotiationId))).thenReturn(false);
+
+    ContractNegotiation negotiation =
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
+
+    assertTrue(tmfBackedContractNegotiationStore.breakLease(negotiation).succeeded());
+
+    verify(leaseHolder, never()).freeLease(eq(negotiationId), any());
+  }
+
+  @Test
+  public void testBreakLease_reports_general_error_when_the_lease_holder_fails() {
+    String negotiationId = "negotiation-id";
+    when(leaseHolder.isLeasedBy(eq(negotiationId), any()))
+        .thenThrow(new RuntimeException("TMForum unreachable"));
+
+    ContractNegotiation negotiation =
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.REQUESTED);
+
+    StoreResult<Void> result = tmfBackedContractNegotiationStore.breakLease(negotiation);
+
+    assertTrue(result.failed());
+    assertEquals(StoreFailure.Reason.GENERAL_ERROR, result.reason());
   }
 
   // --- nextNotLeased delegates lease check to acquireLease ---

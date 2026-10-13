@@ -82,6 +82,7 @@ public interface TMFObjectMapper {
       case "SUSPENDING_REQUESTED" -> TransferProcessStates.SUSPENDING_REQUESTED;
       case "SUSPENDED" -> TransferProcessStates.SUSPENDED;
       case "RESUMING" -> TransferProcessStates.RESUMING;
+      case "RESUMING_REQUESTED" -> TransferProcessStates.RESUMING_REQUESTED;
       case "RESUMED" -> TransferProcessStates.RESUMED;
       case "COMPLETING" -> TransferProcessStates.COMPLETING;
       case "COMPLETING_REQUESTED" -> TransferProcessStates.COMPLETING_REQUESTED;

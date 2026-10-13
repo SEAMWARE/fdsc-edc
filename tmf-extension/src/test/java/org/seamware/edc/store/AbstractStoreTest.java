@@ -43,6 +43,7 @@ public abstract class AbstractStoreTest {
   protected static final String TEST_PROVIDER_DID = "did:web:test-provider.io";
   protected static final String TEST_CONSUMER_TMF_ID = "tmf-consumer";
   protected static final String TEST_PROVIDER_TMF_ID = "tmf-provider";
+  protected static final String TEST_PARTICIPANT_CONTEXT_ID = "test-participant-context";
 
   protected static final String TEST_ASSET_ID = "asset-id";
   protected static final String TEST_AGREEMENT_ID = "agreement-id";
@@ -203,6 +204,8 @@ public abstract class AbstractStoreTest {
   protected static ContractAgreement getValidContractAgreement() {
     return ContractAgreement.Builder.newInstance()
         .id(TEST_AGREEMENT_ID)
+        .agreementId(TEST_AGREEMENT_ID)
+        .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
         .assetId(TEST_ASSET_ID)
         .consumerId(TEST_CONSUMER_DID)
         .providerId(TEST_PROVIDER_DID)
@@ -367,6 +370,7 @@ public abstract class AbstractStoreTest {
     ContractNegotiation.Builder builder =
         ContractNegotiation.Builder.newInstance()
             .id(TEST_NEGOTIATION_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
             .type(type)
             .counterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
             .correlationId(TEST_CORRELATION_ID)

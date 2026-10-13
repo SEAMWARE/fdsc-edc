@@ -776,6 +776,8 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
   protected static ContractAgreement getTestContractAgreement() {
     return ContractAgreement.Builder.newInstance()
         .id(TEST_AGREEMENT_ID)
+        .agreementId(TEST_AGREEMENT_ID)
+        .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
         .providerId(TEST_PROVIDER_ID)
         .consumerId(TEST_CONSUMER_ID)
         .assetId(TEST_ASSET_ID)

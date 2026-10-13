@@ -44,7 +44,9 @@ public class TMFLeaseContext implements LeaseContext {
     this.transactionContext = transactionContext;
   }
 
-  /** Releasing a lease that was never held is not an error - the entity ends up unleased either way. */
+  /**
+   * Releasing a lease that was never held is not an error - the entity ends up unleased either way.
+   */
   @Override
   public StoreResult<Void> breakLease(String s) {
     return transactionContext.execute(

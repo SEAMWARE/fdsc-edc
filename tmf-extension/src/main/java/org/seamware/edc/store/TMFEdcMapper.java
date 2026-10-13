@@ -90,8 +90,18 @@ public class TMFEdcMapper {
   /** Asset name property; EDC 0.18.1 removed {@code Asset.PROPERTY_NAME} and its builder setter. */
   public static final String ASSET_PROPERTY_NAME = EDC_NAMESPACE + "name";
 
-  /** Asset version property; EDC 0.18.1 removed {@code Asset.PROPERTY_VERSION} and its builder setter. */
+  /**
+   * Asset version property; EDC 0.18.1 removed {@code Asset.PROPERTY_VERSION} and its builder
+   * setter.
+   */
   public static final String ASSET_PROPERTY_VERSION = EDC_NAMESPACE + "version";
+
+  /**
+   * Asset content-type property; EDC 0.18.1 removed {@code Asset.PROPERTY_CONTENT_TYPE} and its
+   * builder setter.
+   */
+  public static final String ASSET_PROPERTY_CONTENT_TYPE = EDC_NAMESPACE + "contenttype";
+
   public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
   public static final String USAGE_CHARACTERISTIC_CORRELATION_ID = "correlation-id";
   public static final String USAGE_CHARACTERISTIC_PROTOCOL = "protocol";

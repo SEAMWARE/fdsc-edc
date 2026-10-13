@@ -68,6 +68,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   /** Reason recorded when the state machine abandons an entity via {@link #breakLease}. */
   private static final String LEASE_BROKEN_BY_STATE_MACHINE = "Lease broken.";
+
   private final Monitor monitor;
   private final ObjectMapper objectMapper;
   private final QuoteApiClient quoteApi;
@@ -386,6 +387,15 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     synchronized (lock) {
       try {
         leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
+      } catch (RuntimeException e) {
+        // Contention is the one failure the StoreResult return type exists for, so report it
+        // instead of throwing. The lease must not be freed here - it belongs to whoever holds it.
+        monitor.warning(
+            String.format("Failed to lease negotiation %s.", contractNegotiation.getId()), e);
+        activeNegotiations.remove(contractNegotiation.getId());
+        return StoreResult.alreadyLeased(e.getMessage());
+      }
+      try {
         transactionContext.execute(
             (TransactionContext.TransactionBlock)
                 () -> {
@@ -411,6 +421,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                   }
                 });
       } catch (Exception e) {
+        // Persistence failures keep throwing as they did before 0.18.1: they are unrecoverable
+        // for this store and the compensation logic around save relies on the exception.
         monitor.warning(
             String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
         throw new EdcPersistenceException(
@@ -425,14 +437,20 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   /**
-   * Releases the lease held on a negotiation without writing it back, mirroring the release half of
-   * {@link #save}. The state machine calls this when it abandons an entity it has leased.
+   * Releases the lease <em>this</em> instance holds on a negotiation without writing it back. A
+   * lease held by another controlplane replica is reported as {@code alreadyLeased} rather than
+   * stolen; an unleased negotiation is a no-op success.
    */
   @Override
   public StoreResult<Void> breakLease(ContractNegotiation contractNegotiation) {
     String negotiationId = contractNegotiation.getId();
     try {
-      leaseHolder.freeLease(negotiationId, LEASE_BROKEN_BY_STATE_MACHINE);
+      if (leaseHolder.isLeasedBy(negotiationId, lockId)) {
+        leaseHolder.freeLease(negotiationId, LEASE_BROKEN_BY_STATE_MACHINE);
+      } else if (leaseHolder.isLeased(negotiationId)) {
+        return StoreResult.alreadyLeased(
+            String.format("%s is leased by another instance.", negotiationId));
+      }
     } catch (RuntimeException e) {
       monitor.warning(String.format("Failed to break lease for %s.", negotiationId), e);
       return StoreResult.generalError(e.getMessage());

@@ -32,6 +32,12 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 public class TMFConfigTest {
 
+  // Fallback applied by TMFConfig when edc.participant.id is unset, mirroring
+  // ServiceExtensionContext.ANONYMOUS_PARTICIPANT.
+  private static final String ANONYMOUS_PARTICIPANT = "anonymous";
+  private static final String TEST_PARTICIPANT_ID = "test-participant";
+  private static final String TEST_PARTICIPANT_CONTEXT_ID = "test-participant-context";
+
   @ParameterizedTest(name = "Config from {0}")
   @MethodSource("getValidConfig")
   public void testValidConfig(String testFile, TMFConfig expectedConfig) throws IOException {
@@ -80,6 +86,8 @@ public class TMFConfigTest {
     TMFConfig tmfConfig1 =
         TMFConfig.Builder.newInstance()
             .enabled(true)
+            .participantId(ANONYMOUS_PARTICIPANT)
+            .participantContextId(ANONYMOUS_PARTICIPANT)
             .quoteApi("http://quote-api.de")
             .agreementApi("http://agreement-api.de")
             .productOrderApi("http://product-order-api.de")
@@ -95,6 +103,8 @@ public class TMFConfigTest {
     TMFConfig tmfConfig2 =
         TMFConfig.Builder.newInstance()
             .enabled(true)
+            .participantId(ANONYMOUS_PARTICIPANT)
+            .participantContextId(ANONYMOUS_PARTICIPANT)
             .quoteApi("http://quote-api.de")
             .agreementApi("http://agreement-api.de")
             .productOrderApi("http://product-order-api.de")
@@ -110,6 +120,8 @@ public class TMFConfigTest {
     TMFConfig tmfConfig3 =
         TMFConfig.Builder.newInstance()
             .enabled(false)
+            .participantId(ANONYMOUS_PARTICIPANT)
+            .participantContextId(ANONYMOUS_PARTICIPANT)
             .catalogConfig(new TMFConfig.CatalogConfig.Builder().enabled(false).build())
             .build();
     arguments.add(Arguments.of("valid/3.properties", tmfConfig3));
@@ -117,6 +129,8 @@ public class TMFConfigTest {
     TMFConfig tmfConfig4 =
         TMFConfig.Builder.newInstance()
             .enabled(true)
+            .participantId(ANONYMOUS_PARTICIPANT)
+            .participantContextId(ANONYMOUS_PARTICIPANT)
             .quoteApi("http://quote-api.de")
             .agreementApi("http://agreement-api.de")
             .productOrderApi("http://product-order-api.de")
@@ -129,6 +143,26 @@ public class TMFConfigTest {
             .catalogConfig(new TMFConfig.CatalogConfig.Builder().enabled(true).build())
             .build();
     arguments.add(Arguments.of("valid/4.properties", tmfConfig4));
+
+    // edc.participant.id set, edc.participant.context.id unset: the context id falls back.
+    TMFConfig tmfConfig5 =
+        TMFConfig.Builder.newInstance()
+            .enabled(false)
+            .participantId(TEST_PARTICIPANT_ID)
+            .participantContextId(TEST_PARTICIPANT_ID)
+            .catalogConfig(new TMFConfig.CatalogConfig.Builder().enabled(false).build())
+            .build();
+    arguments.add(Arguments.of("valid/5.properties", tmfConfig5));
+
+    // both set: the explicit context id wins over the participant id.
+    TMFConfig tmfConfig6 =
+        TMFConfig.Builder.newInstance()
+            .enabled(false)
+            .participantId(TEST_PARTICIPANT_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
+            .catalogConfig(new TMFConfig.CatalogConfig.Builder().enabled(false).build())
+            .build();
+    arguments.add(Arguments.of("valid/6.properties", tmfConfig6));
 
     return arguments.stream();
   }
