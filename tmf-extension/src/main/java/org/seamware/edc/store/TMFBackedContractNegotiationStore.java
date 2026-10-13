@@ -388,7 +388,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     // Per-negotiation lock prevents concurrent saves for the same negotiation within this
     // JVM. Without this, two DSP message handlers can enter handleAgreeStates simultaneously
     // and both create agreements before either sees the other's, producing duplicates.
-    LeaseHolder.LeaseRelease release;
+    StoreResult<Void> release;
     synchronized (lockFor(contractNegotiation.getId())) {
       try {
         leaseHolder.acquireLease(contractNegotiation.getId(), lockId);
@@ -440,27 +440,42 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         throw new EdcPersistenceException(
             String.format("Failed to save negotiation %s.", contractNegotiation.getId()), e);
       } finally {
-        // always give up the lock, but only the one this instance holds
-        release =
-            leaseHolder.releaseLease(
-                contractNegotiation.getId(), lockId, LEASE_RELEASED_AFTER_SAVE);
+        // Deregister before releasing: releaseLease talks to the backend and can fail, and an id
+        // left in activeNegotiations is treated as leased for the life of the JVM.
         activeNegotiations.remove(contractNegotiation.getId());
+        // always give up the lock, but only the one this instance holds
+        release = releaseLeaseAfterSave(contractNegotiation.getId());
       }
     }
-    if (release == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
-      // The lease changed hands mid-save, so the writes above were not actually protected by it.
-      // Reporting it mirrors SqlContractNegotiationStore, whose save() returns the outcome of the
-      // breakLease it ends with - the write has happened either way.
-      monitor.warning(
-          String.format(
-              "Negotiation %s was leased by another instance while it was being saved.",
-              contractNegotiation.getId()));
-      return StoreResult.alreadyLeased(
-          String.format(
-              "%s was leased by another instance while it was being saved.",
-              contractNegotiation.getId()));
+    return release;
+  }
+
+  /**
+   * Gives up the lease {@link #save} took and turns the outcome into that method's result. Never
+   * throws: it runs in a {@code finally} block, where an exception would replace the {@link
+   * EdcPersistenceException} describing the persistence failure that got it there.
+   */
+  private StoreResult<Void> releaseLeaseAfterSave(String negotiationId) {
+    try {
+      if (leaseHolder.releaseLease(negotiationId, lockId, LEASE_RELEASED_AFTER_SAVE)
+          == LeaseHolder.LeaseRelease.HELD_BY_OTHER) {
+        // The lease changed hands mid-save, so the writes were not actually protected by it.
+        // Reporting it mirrors SqlContractNegotiationStore, whose save() returns the outcome of the
+        // breakLease it ends with - the write has happened either way.
+        monitor.warning(
+            String.format(
+                "Negotiation %s was leased by another instance while it was being saved.",
+                negotiationId));
+        return StoreResult.alreadyLeased(
+            String.format(
+                "%s was leased by another instance while it was being saved.", negotiationId));
+      }
+      return StoreResult.success();
+    } catch (RuntimeException e) {
+      // The lease may still stand; it now expires by TTL rather than being handed back.
+      monitor.warning(String.format("Failed to release the lease for %s.", negotiationId), e);
+      return StoreResult.generalError(failureMessage(e));
     }
-    return StoreResult.success();
   }
 
   /**

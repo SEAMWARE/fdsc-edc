@@ -114,6 +114,74 @@ public class TMFBackedContractNegotiationStoreLeaseTest
     verify(quoteApiClient, times(1)).createQuote(any());
   }
 
+  /** Stubs the quote calls a save of an INITIAL negotiation makes, so only the lease is in play. */
+  private void stubSuccessfulInitialSave(String negotiationId) {
+    when(quoteApiClient.findByNegotiationId(eq(negotiationId))).thenReturn(List.of());
+    when(quoteApiClient.createQuote(any()))
+        .thenReturn(
+            getQuote(
+                "new-quote-id",
+                negotiationId,
+                TEST_CONTROL_PLANE_ID,
+                QuoteStateTypeVO.IN_PROGRESS));
+    when(quoteApiClient.updateQuote(any(), any()))
+        .thenReturn(
+            getQuote(
+                "new-quote-id",
+                negotiationId,
+                TEST_CONTROL_PLANE_ID,
+                QuoteStateTypeVO.IN_PROGRESS));
+  }
+
+  @Test
+  public void testSave_reports_a_failed_lease_release_as_a_general_error() {
+    String negotiationId = "negotiation-id";
+    stubSuccessfulInitialSave(negotiationId);
+    // The release is two HTTP calls against TMForum and can fail on its own.
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
+        .thenThrow(new RuntimeException("TMForum unreachable"));
+
+    ContractNegotiation negotiation =
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.INITIAL);
+
+    StoreResult<Void> result = tmfBackedContractNegotiationStore.save(negotiation);
+
+    assertTrue(result.failed(), "A lease that could not be given back must be reported.");
+    assertEquals(StoreFailure.Reason.GENERAL_ERROR, result.reason());
+    assertNotNull(result.getFailureDetail(), "A StoreResult without a message is useless.");
+    // The exception must not escape the finally block and replace the save outcome.
+    verify(quoteApiClient, times(1)).createQuote(any());
+  }
+
+  @Test
+  public void testSave_deregisters_the_negotiation_when_the_lease_release_fails() {
+    String negotiationId = "negotiation-id";
+    stubSuccessfulInitialSave(negotiationId);
+    when(leaseHolder.releaseLease(eq(negotiationId), any(), any()))
+        .thenThrow(new RuntimeException("TMForum unreachable"));
+
+    tmfBackedContractNegotiationStore.save(
+        getValidNegotiationWithIdInState(negotiationId, ContractNegotiationStates.INITIAL));
+
+    // An id left behind in the active set is reported as leased for the life of the JVM, which
+    // strands the negotiation until restart.
+    when(lockManager.writeLock(any()))
+        .thenAnswer(
+            invocationOnMock -> {
+              Supplier<StoreResult<ContractNegotiation>> work = invocationOnMock.getArgument(0);
+              return work.get();
+            });
+    List<ExtendableQuoteVO> quotes = getQuotes(negotiationId, TEST_CONTROL_PLANE_ID, 1);
+    when(quoteApiClient.findByNegotiationId(eq(negotiationId))).thenReturn(quotes);
+    when(tmfEdcMapper.toContractNegotiation(eq(quotes), any(), any(), any()))
+        .thenReturn(getValidNegotiation());
+
+    StoreResult<ContractNegotiation> afterwards =
+        tmfBackedContractNegotiationStore.findByIdAndLease(negotiationId);
+
+    assertTrue(afterwards.succeeded(), "The negotiation must be leasable again after the save.");
+  }
+
   @Test
   public void testSave_frees_lease_when_handleInitialStates_throws() {
     String negotiationId = "negotiation-id";
