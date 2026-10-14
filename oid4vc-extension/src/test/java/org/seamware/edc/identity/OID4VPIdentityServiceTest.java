@@ -65,6 +65,7 @@ public class OID4VPIdentityServiceTest {
   private static final Set<String> TEST_SCOPE = Set.of("openid", "dsp");
 
   private static final String TEST_TOKEN = "my-access-token";
+  private static final String TEST_PARTICIPANT_CONTEXT_ID = "test-participant-context";
 
   private TokenProvider tokenProvider;
   private OID4VPIdentityService oid4VPIdentityService;
@@ -85,7 +86,8 @@ public class OID4VPIdentityServiceTest {
     TokenRepresentation expectedTokenRep = getTokenRepresentation(TEST_TOKEN);
 
     Result<TokenRepresentation> tokenResult =
-        oid4VPIdentityService.obtainClientCredentials(getTokenParameters());
+        oid4VPIdentityService.obtainClientCredentials(
+            TEST_PARTICIPANT_CONTEXT_ID, getTokenParameters());
     assertTrue(tokenResult.succeeded(), "A token should have been obtained successfully.");
 
     assertEquals(
@@ -107,7 +109,8 @@ public class OID4VPIdentityServiceTest {
     when(tokenProvider.getAccessToken(any())).thenReturn(CompletableFuture.completedFuture(null));
 
     Result<TokenRepresentation> tokenResult =
-        oid4VPIdentityService.obtainClientCredentials(getTokenParameters());
+        oid4VPIdentityService.obtainClientCredentials(
+            TEST_PARTICIPANT_CONTEXT_ID, getTokenParameters());
 
     assertTrue(tokenResult.failed(), "No token should have been returned");
   }
@@ -117,7 +120,8 @@ public class OID4VPIdentityServiceTest {
     when(tokenProvider.getAccessToken(any())).thenThrow(new RuntimeException("Surprising error!"));
 
     Result<TokenRepresentation> tokenResult =
-        oid4VPIdentityService.obtainClientCredentials(getTokenParameters());
+        oid4VPIdentityService.obtainClientCredentials(
+            TEST_PARTICIPANT_CONTEXT_ID, getTokenParameters());
 
     assertTrue(tokenResult.failed(), "No token should have been returned");
   }
@@ -130,7 +134,8 @@ public class OID4VPIdentityServiceTest {
         .thenReturn(CompletableFuture.completedFuture(invalidResponse));
 
     Result<TokenRepresentation> tokenResult =
-        oid4VPIdentityService.obtainClientCredentials(getTokenParameters());
+        oid4VPIdentityService.obtainClientCredentials(
+            TEST_PARTICIPANT_CONTEXT_ID, getTokenParameters());
 
     assertTrue(tokenResult.failed(), name);
   }
@@ -157,7 +162,8 @@ public class OID4VPIdentityServiceTest {
     ClaimToken expectedClaimToken = ClaimToken.Builder.newInstance().claim("sub", "test").build();
 
     Result<ClaimToken> claimTokenResult =
-        oid4VPIdentityService.verifyJwtToken(tokenRepresentation, null);
+        oid4VPIdentityService.verifyJwtToken(
+            TEST_PARTICIPANT_CONTEXT_ID, tokenRepresentation, null);
     assertTrue(claimTokenResult.succeeded(), "The claim token should have been extracted.");
     assertEquals(
         expectedClaimToken.getClaims(),
@@ -170,7 +176,8 @@ public class OID4VPIdentityServiceTest {
   public void testVerifyJwtToken_invalid_token(
       String name, TokenRepresentation invalidRepresentation) {
     Result<ClaimToken> claimTokenResult =
-        oid4VPIdentityService.verifyJwtToken(invalidRepresentation, null);
+        oid4VPIdentityService.verifyJwtToken(
+            TEST_PARTICIPANT_CONTEXT_ID, invalidRepresentation, null);
     assertTrue(claimTokenResult.failed(), name);
   }
 

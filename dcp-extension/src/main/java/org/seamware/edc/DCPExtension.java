@@ -41,14 +41,13 @@ import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import org.eclipse.edc.connector.controlplane.contract.spi.policy.TransferProcessPolicyContext;
-import org.eclipse.edc.iam.identitytrust.spi.scope.ScopeExtractorRegistry;
-import org.eclipse.edc.iam.identitytrust.spi.verification.SignatureSuiteRegistry;
+import org.eclipse.edc.iam.decentralizedclaims.spi.scope.ScopeExtractorRegistry;
+import org.eclipse.edc.iam.decentralizedclaims.spi.verification.SignatureSuiteRegistry;
 import org.eclipse.edc.iam.verifiablecredentials.spi.VcConstants;
 import org.eclipse.edc.iam.verifiablecredentials.spi.validation.TrustedIssuerRegistry;
 import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
 import org.eclipse.edc.policy.context.request.spi.RequestContractNegotiationPolicyContext;
 import org.eclipse.edc.policy.context.request.spi.RequestTransferProcessPolicyContext;
-import org.eclipse.edc.policy.context.request.spi.RequestVersionPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.policy.engine.spi.RuleBindingRegistry;
 import org.eclipse.edc.policy.model.Permission;
@@ -117,10 +116,11 @@ public class DCPExtension implements ServiceExtension {
             new DefaultScopeMappingFunction(monitor, scopes.transfer())::apply);
       }
       if (!scopes.version().isEmpty()) {
-        monitor.debug("[DCPExtension] Configure post validator for version: " + scopes.version());
-        policyEngine.registerPostValidator(
-            RequestVersionPolicyContext.class,
-            new DefaultScopeMappingFunction(monitor, scopes.version())::apply);
+        monitor.warning(
+            "[DCPExtension] Ignoring dcp.scopes.version="
+                + scopes.version()
+                + ": EDC removed RequestVersionPolicyContext, protocol version requests no"
+                + " longer carry a policy scope.");
       }
 
       typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));

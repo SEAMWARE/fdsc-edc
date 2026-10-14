@@ -75,8 +75,12 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
   }
 
   @Override
-  public Result<TokenRepresentation> obtainClientCredentials(TokenParameters tokenParameters) {
-    monitor.debug("Try to obtain credential via OID4VP.");
+  public Result<TokenRepresentation> obtainClientCredentials(
+      String participantContextId, TokenParameters tokenParameters) {
+    monitor.debug(
+        "Try to obtain credential via OID4VP for participant context "
+            + participantContextId
+            + ".");
 
     String aud = tokenParameters.getStringClaim(AUD_PARAMETER);
     try {
@@ -123,7 +127,9 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
    */
   @Override
   public Result<ClaimToken> verifyJwtToken(
-      TokenRepresentation tokenRepresentation, VerificationContext verificationContext) {
+      String participantContextId,
+      TokenRepresentation tokenRepresentation,
+      VerificationContext verificationContext) {
     try {
       String plainToken = tokenRepresentation.getToken().replaceFirst(BEARER_PREFIX, "");
       JWT jwt = JWTParser.parse(plainToken);
