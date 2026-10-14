@@ -699,6 +699,44 @@ alias `org.eclipse.edc.vc.type` -> `org.eclipse.dspace.dcp.vc.type` (PR #5593).
 Policy constraints using the old alias stop matching. This repo does not set the
 alias anywhere, but any policy authored externally against it does.
 
+### 5.1 The DSP version endpoint is unauthenticated at 0.18.1
+
+Verified against the published 0.18.1 jars and `eclipse-edc/Connector` tag
+`v0.18.1`, because the absence of `RequestVersionPolicyContext` from the SPI does
+not by itself prove the wire behaviour changed. It did:
+
+- **Outbound.** The only caller is
+  `connector.controlplane.discovery.DiscoveryServiceImpl` (`control-plane-core`),
+  constructed as `DiscoveryServiceImpl(EdcHttpClient, ParticipantProfileService,
+  ObjectMapper)` — no `IdentityService`, no `AudienceResolver`, no `PolicyEngine`.
+  `fetchProtocolVersions` issues a bare `GET` and sets no `Authorization` header.
+- **Not a `RemoteMessage`.** `protocol.spi.ProtocolVersions` / `ProtocolVersion`
+  are plain records, so a version request never reaches
+  `DspHttpRemoteMessageDispatcherImpl.dispatch(...)` — the method that evaluates
+  the policy engine, builds the `scope` claim and calls `obtainClientCredentials`.
+  `DspHttpCoreExtension` registers policy scopes for only the catalog,
+  negotiation and transfer contexts.
+- **Inbound.** `DspVersionApiController` (`@Path("/.well-known/dspace-version")`)
+  declares `getProtocolVersions()` with **zero** parameters — no
+  `@HeaderParam(AUTHORIZATION)`, unlike every other DSP controller — and is
+  registered with no auth filter. Upstream labels it the "unauthenticated DSP
+  version endpoint".
+
+So the `RequestVersionPolicyContext` post-validator was dropped rather than ported
+because the feature it scoped no longer exists, not merely because the SPI type
+went away. Two consequences:
+
+1. **Interop.** A counterparty still running a pre-0.17 EDC whose version endpoint
+   *requires* an authenticated, scoped request will now reject ours, which goes out
+   unscoped. This is a wire-visible behaviour change that no compile or unit gate
+   covers — **confirm it against a real counterparty in the Step 7 runtime gate**
+   and carry it into the Step 9 release notes alongside the loss of DSP 2024/1.
+2. **Exposure.** This connector's own version endpoint is now reachable without a
+   token. It returns only the supported protocol versions, so the disclosure is
+   negligible, but a deployment that fronts the connector with a PEP (Apisix in the
+   FDSC stack) must stop requiring a token on that path or version discovery
+   breaks. Operator-facing — Step 9.
+
 ---
 
 ## 6. Configuration migration
@@ -730,15 +768,32 @@ file is this repo's own namespaces (`tmfExtension.*`, `testExtension.*`,
 | `web.http.signaling.port` | **new listener**, default `8182`, registered unconditionally by `DataPlaneSignalingApiExtension` once `data-plane-signaling` is on the classpath | **no** | **add**, pinned explicitly; publish the port in `docker-compose.tck.yml` and in the out-of-repo Helm service. See §8.2.1 |
 | `web.http.signaling.path` | **new**, default `/api/signaling` | **no** | add alongside the port |
 | `web.http.signaling.public.uri` | **new**, optional; defaults to `http://localhost:<port><path>` | **no** | set only if the data plane reaches the control plane across a container/pod boundary, where `localhost` is wrong |
+| `dcp.scopes.version` | **retired, no replacement** — this repo's own key; the `RequestVersionPolicyContext` it bound to was removed upstream (see §3.1) | **yes** — test fixtures only, `dcp-extension/src/test/resources/valid/dcp/{1,3,4,5}.properties` | key dropped from `DcpConfig.Scopes` in Step 4; it is now ignored, not rejected, so existing deployments keep loading. Operators should delete it — **belongs in the Step 9 release notes** |
 | `edc.hostname`, `edc.log.level`, `edc.dsp.callback.address`, `edc.fs.config`, `web.http.{default,management,protocol,tck}.*` | unchanged | yes | leave as is |
 
 **Note on DCP scopes.** `dcp-extension` has its own `dcp.scopes.*` namespace
 (`dcp-extension/.../DcpConfig.java:51`, four fixed leaves read at `:72-79`), set
 only in test fixtures under `dcp-extension/src/test/resources/valid/dcp/`. It is
 *this repo's* configuration and is unrelated to upstream's `edc.iam.dcp.scopes.*`
-(introduced 0.16.0, PR #5485). Do not conflate the two. Whether the hand-rolled
-scope wiring should be replaced by upstream's now-dynamic DCP scope configuration
-is a design question for the DCP step, not a config rename.
+(introduced 0.16.0, PR #5485). Do not conflate the two.
+
+**Decided in Step 4: keep the hand-rolled scope wiring.** The open design question
+— whether to replace the `DefaultScopeMappingFunction` post-validators with
+upstream's dynamic `DcpScopeRegistry` / `edc.iam.dcp.scopes.*` — is answered *no*
+for this upgrade, on two grounds. First, scope *and* the policy context it binds to
+are part of this connector's contract with its counterparties; swapping the
+configuration surface would force every FDSC deployment to rewrite its scope
+config in the same release that already renames connector keys, for no functional
+gain. Second, upstream's registry keys scopes by credential type, whereas this
+repo maps a single fixed scope string per protocol phase — the two are not
+config-compatible, so the swap is a behaviour change, not a migration. It is a
+reasonable follow-up ticket once 0.18.1 is green, and is explicitly **not** part
+of the 0.18.1 upgrade.
+
+The `dcp.scopes.version` leaf was removed in Step 4: the only context it could
+bind to, `RequestVersionPolicyContext`, no longer exists upstream. The remaining
+three leaves (`catalog`, `negotiation`, `transfer`) are unchanged. See the
+`dcp.scopes.version` row in §6.2.
 
 ---
 
@@ -1072,10 +1127,11 @@ correct.
   Step 6 then has to make **every** shipped runtime — production images included, since
   they share one shaded jar with the TCK image — resolve to exactly one
   `DataFlowController` (§8.3.1, §8.3.2).
-- **The `dcp.scopes.*` wiring** in `dcp-extension` predates upstream's dynamic DCP
-  scope configuration (0.16.0, PR #5485) and its 0.18.0 `prefix.mapping` form.
-  Keeping the hand-rolled version is valid; adopting upstream's is a separate
-  change (§6.2).
+- ~~**The `dcp.scopes.*` wiring**~~ — **closed in Step 4: keep the hand-rolled
+  wiring.** It predates upstream's dynamic DCP scope configuration (0.16.0, PR
+  #5485) and its 0.18.0 `prefix.mapping` form; adopting upstream's is a behaviour
+  change, not a migration, and is deferred to a follow-up ticket. Rationale in
+  §6.2. The dead `dcp.scopes.version` leaf was removed in the same step.
 - **DDL migrations do not apply to this connector, but do apply to its neighbours.**
   Upstream flagged several `BREAKING CHANGE` schema deltas in this range (new lease
   model and `resource_id`/`resource_kind` columns, `agr_agreement_id`,

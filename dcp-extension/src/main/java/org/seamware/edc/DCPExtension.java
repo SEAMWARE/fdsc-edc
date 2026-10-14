@@ -115,14 +115,6 @@ public class DCPExtension implements ServiceExtension {
             RequestTransferProcessPolicyContext.class,
             new DefaultScopeMappingFunction(monitor, scopes.transfer())::apply);
       }
-      if (!scopes.version().isEmpty()) {
-        monitor.warning(
-            "[DCPExtension] Ignoring dcp.scopes.version="
-                + scopes.version()
-                + ": EDC removed RequestVersionPolicyContext, protocol version requests no"
-                + " longer carry a policy scope.");
-      }
-
       typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
       typeTransformerRegistry.register(
           new FixedJwtToVerifiableCredentialTransformer(context.getMonitor()));

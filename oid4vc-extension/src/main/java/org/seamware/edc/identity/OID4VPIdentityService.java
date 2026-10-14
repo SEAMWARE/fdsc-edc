@@ -55,6 +55,10 @@ import org.eclipse.edc.spi.result.Result;
 /**
  * Handle identity in an OID4VC based security ecosystem. 1. Authenticate via OID4VP 2. Accept and
  * decode JWTs already verified by an apigateways
+ *
+ * <p>{@code participantContextId} is accepted and logged only: this runtime is single-participant
+ * (classic participant-context mode) and the OID4VP client exposes no multi-participant API, so the
+ * configured {@code oid4vp.clientId} identifies the participant instead.
  */
 public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentityService {
 
