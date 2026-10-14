@@ -355,13 +355,91 @@ follow their production class and are not listed separately):
 | entities gain `participantContextId` (§4) | `tmf-extension/.../store/TMFEdcMapper.java` and all four TMF-backed stores | builders never set it |
 | `ContractAgreement` gains `agreementId` (distinct from `id`) and `claims`; transfer-request lookup is by `(agreementId, participantContextId)` | `tmf-extension/.../store/TMFEdcMapper.java:176`; `tmf-extension/.../store/TMFBackedContractNegotiationStore.java:163,196` | `toContractAgreement` sets only `id(externalId)`; `findContractAgreement(String)` / `queryAgreements(QuerySpec)` resolve on `id` alone |
 | `DataFlowManager` removed; `DataFlowController` is a single injected service (§8.3) | `test-extension/.../edc/TckGuardExtension.java:50,88,151` | `@Inject DataFlowManager` + `register(noopPriority, controller)` |
-| `LeaseContext.acquireLease` / `breakLease` return `StoreResult<Void>` instead of `void` | `tmf-extension/.../store/TMFLeaseContext.java:46,61` | `public void breakLease(String)` / `public void acquireLease(String)` |
+| `LeaseContext.acquireLease` / `breakLease` return `StoreResult<Void>` instead of `void` | `tmf-extension/.../store/TMFLeaseContext.java` — **deleted in Step 3** rather than ported: nothing injected a `LeaseContext`, the class carried a `// TODO: reevaluate usage` and leasing runs through `LeaseHolder` | `public void breakLease(String)` / `public void acquireLease(String)` |
 | `ProtocolTokenValidator.verify` gains a leading `ParticipantContext` | `tmf-extension/.../store/TMForumBackedCatalogProtocolService.java:91` | `verify(TokenRepresentation, ctor::new, CatalogRequestMessage)` |
 | `ServiceExtensionContext.getParticipantId()` removed (participant context, §4) | `tmf-extension/.../CatalogProtocolServiceExtension.java:63`; `tmf-extension/.../TMFContractNegotiationExtension.java:290` | `context.getParticipantId()` |
 | `Asset.Builder.version(String)` removed | `tmf-extension/.../store/TMFEdcMapper.java:643` | `.version(...)` on the asset builder |
 | Control-plane provisioning SPI removed: `TransferProcess.getResourceManifest()` and `TransferProcessStates.PROVISIONING_REQUESTED` are gone | `tmf-extension/.../store/TMFEdcMapper.java:967,970`; `tmf-extension/.../store/TMFObjectMapper.java:68` | reads the resource manifest and the provisioning state onto the TMForum model |
 | `RequestVersionPolicyContext` no longer in `org.eclipse.edc.policy.context.request.spi`; `SignatureSuiteRegistry` moved with the DCP rename | `dcp-extension/.../DCPExtension.java:51,82` | 0.14.1 imports |
 | DSP 2024/1 transformer context gone with `dsp-spi-2024` — **delete the registration, do not port it** | `tmf-extension/.../TMFContractNegotiationExtension.java:19,159` | `registerTypePreservingTransformers(DSP_TRANSFORMER_CONTEXT_V_2024_1, ...)`. Removed in Step 2 (§3.3), since it is the direct consequence of dropping the artifact. The `2025_1` registration on the next line stays |
+
+**`ContractAgreement.agreementId` — own characteristic, decided in Step 3.** At
+0.18.1 `ContractAgreement.Builder.build()` generates a *separate* random UUID for
+`id` and for `agreementId` when either is unset, and
+`NegotiationProcessorsImpl.processAgreeing` sets neither. DSP serialises the
+wire `@id` from `getAgreementId()`
+(`JsonObjectFromContractAgreementMessageV2025Transformer`), while
+`TransferProcessProtocolServiceImpl.findAgreement` resolves an incoming
+`TransferRequestMessage` through `queryAgreements` with
+`Criterion("agreementId", "=", <wire id>)`. Collapsing both onto the single
+TMForum external id would therefore make every transfer request against a
+freshly negotiated agreement fail to resolve.
+
+The TMForum external id stays the EDC row id — `findContractAgreement`,
+`handleAgreeStates` and `handleFinalStates` all resolve by it — and the
+DSP-visible id is carried next to `claims` as the `agreement-id` characteristic
+(`TMFEdcMapper.AGREEMENT_CHARACTERISTIC_AGREEMENT_ID`), mirroring the separate
+`agr_agreement_id` column of the upstream SQL store. `toContractAgreement` falls
+back to the external id when the characteristic is absent, so agreements written
+by a 0.14.1 connector — and the `init-tmforum.sh` TCK seed data, whose two ids
+are equal — keep resolving.
+
+**`ContractAgreement.claims` — mapped, decided in Step 3.** 0.17.0 moved the
+counter-party agent's claims onto the agreement so that transfer-time policy
+evaluation can rebuild the agent without re-resolving a token. The TMForum model
+has no column for them, so they are persisted as the `claims` agreement
+characteristic (`TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS`), written only
+when non-empty and read back as a plain map. Step 5 (`policy-extension`) can
+therefore assume an agreement read out of TMForum carries the claim set it was
+written with; agreements written by a 0.14.1 connector have no such
+characteristic and come back with an empty map.
+
+**Claims need an update path, not just a create path.** At 0.18.1 the only two
+production call sites that set claims on an agreement are both in
+`ContractNegotiationProtocolServiceImpl`:
+
+| Side | Method | Negotiation state at `save` | Agreement row |
+|---|---|---|---|
+| consumer | `agreedAction` (`notifyAgreed`) | `AGREED` | does not exist yet — insert |
+| provider | `verifiedAction` (`notifyVerified`) | `VERIFIED` | already exists — update |
+
+The provider agreement is first written claims-less by
+`NegotiationProcessorsImpl.processAgreeing` / `transitionToAgreed` at `AGREED`;
+the agent's claims only arrive with the verification message. Since
+`createAgreement` is skipped once `agreementApi.findByContractId(...)` finds a
+row, a create-only mapping would silently drop every provider-side claim set —
+and the provider is the side that evaluates transfer-time policy. So
+`TMFBackedContractNegotiationStore.persistAgreementClaims` re-writes the `claims`
+characteristic from `handleVerificationStates` (reached for both `VERIFYING` and
+`VERIFIED`), and `TMFEdcMapper.applyClaims` reports whether anything actually
+changed so an unchanged agreement is not rewritten.
+
+**Where the claims end up, and who can read them.** Upstream keeps claims in the
+private `agr_claims` column of a SQL store that nothing but the connector talks
+to; here they live on a TMForum Agreement, which is a business object in a shared
+backend — so the question is a deployment one, not a code one. Three points fix
+the answer for FDSC:
+
+- The agreement API the controlplane writes to (`tmfExtension.agreementApi`,
+  `config/tck/edc.properties:98`) is a cluster-internal service. In the FIWARE
+  Data Space Connector it sits behind the party's own PEP and is never routed
+  through the data-space ingress, so a counterparty cannot read it — the DSP
+  surface returns agreements through the connector, which does not serialise the
+  characteristic to the wire.
+- The claims are the counter-party agent's own claims, taken from a token that
+  party presented to this connector. Nothing in them is private to *us*, and the
+  same backend already holds the quotes, offers and the agreement itself. So the
+  boundary this crosses is operator-internal: the party's own business systems,
+  which already read agreements, can now also read the claims of the counterparty
+  they agreed with.
+- That is acceptable for a single-tenant controlplane, which is what
+  `participant-context-connector-classic-core` gives us (§4). It is **not**
+  automatically acceptable for a TMForum backend shared by several participants
+  or exposed to external consumers: there the claims would become visible to
+  tenants that were never party to the negotiation. A deployment that does either
+  must restrict the `claims` characteristic at the PEP, or move it out of TMForum
+  (vault-backed, keyed by agreement id) — the mapper writes it in exactly one
+  place (`TMFEdcMapper.applyClaims`), so the swap is local.
 
 Two non-breaks worth stating, because both look like breaks:
 
@@ -384,7 +462,7 @@ failures below). 37 distinct compiler errors across 13 files:
 
 | Module | File | Errors | Owner |
 |---|---|---|---|
-| `tmf-extension` | `store/TMFLeaseContext.java` | 5 | Step 3 |
+| `tmf-extension` | `store/TMFLeaseContext.java` | 5 | Step 3 (file deleted — dead code) |
 | `tmf-extension` | `store/TMForumBackedCatalogProtocolService.java` | 4 | Step 3 |
 | `tmf-extension` | `store/TMFEdcMapper.java` | 3 | Step 3 |
 | `tmf-extension` | `store/TMFBackedContractNegotiationStore.java` | 3 | Step 3 |
@@ -550,6 +628,28 @@ absent → it requires an `AuthorizationService` and otherwise throws
 participant mode.")`. Dropping the classic core would therefore not fall back
 gracefully — it would fail startup (§8.2).
 
+### 4.5 `SingleParticipantContextSupplier` is config-derived, so resolving it at `initialize()` is safe
+
+`TMFContractNegotiationExtension` resolves the participant context eagerly, inside
+the `@Provider` that builds `TMFConfig`. That is only correct if the supplier is
+usable before any store is populated. Confirmed against the 0.18.1 bytecode:
+
+- `SingleParticipantContextSupplier` comes from a **`@Provider` method** on
+  `ClassicParticipantContextDefaultServicesExtension`, built from its two
+  `@Setting` fields (`edc.participant.id`, `edc.participant.context.id`). It reads
+  no store, and default-services extensions are loaded before regular ones, so the
+  supplier exists by the time any `@Inject`ing extension is initialized.
+- The store write lives elsewhere — `ClassicParticipantContextServicesExtension#prepare()`
+  seeds the `ParticipantContextStore`. `prepare()` runs *after* `initialize()`, but
+  nothing on this path reads that store, so the ordering does not matter here.
+- The supplier's result is a constant success in classic mode, so the
+  `orElseThrow(... EdcException ...)` is unreachable there; it guards the
+  multi-participant case. A runtime with no supplier at all falls back to the
+  `edc.participant.*` settings with a warning.
+
+Still worth observing rather than assuming: the Step 7 container-start gate should
+confirm the boot log carries no participant-context warning and that persisted
+entities carry the configured `edc.participant.context.id`.
 ---
 
 ## 5. DSP protocol impact

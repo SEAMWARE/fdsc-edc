@@ -23,12 +23,25 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.spi.EdcException;
+import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.system.configuration.Config;
 
 /** Configuration of the TMForum Extension. */
 @EqualsAndHashCode
+@Getter
 public class TMFConfig {
+
+  /** EDC core setting holding the identity this runtime acts on behalf of. */
+  public static final String EDC_PARTICIPANT_ID_SETTING = "edc.participant.id";
+
+  /**
+   * EDC core setting holding the participant context id; only read when the runtime registers no
+   * participant context supplier.
+   */
+  public static final String EDC_PARTICIPANT_CONTEXT_ID_SETTING = "edc.participant.context.id";
 
   private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";
   private static final String TMF_EXTENSION_CATALOG_CONFIG_PATH = "tmfExtension.catalog";
@@ -54,50 +67,50 @@ public class TMFConfig {
   // base uri for the json-schemas to be used when extending the TMForum objects.
   private URI schemaBaseUri;
 
+  // identity this runtime acts on behalf of, mirrors edc.participant.id
+  private String participantId;
+  // participant context stamped onto every entity, mirrors edc.participant.context.id
+  private String participantContextId;
+
   // configuration for the catalog endpoint
   private CatalogConfig catalogConfig;
 
-  public boolean isEnabled() {
-    return enabled;
+  /**
+   * Endpoint-only view for the extensions in this package that need the TMForum URLs and the
+   * enabled flag. Leaves {@code participantId}/{@code participantContextId} unset, so a value read
+   * off this instance cannot silently diverge from the participant context the runtime registers.
+   */
+  static TMFConfig fromConfig(Config config) {
+    return endpointConfigBuilder(config).build();
   }
 
-  public URL getQuoteApi() {
-    return quoteApi;
+  /**
+   * Builds the config, taking the participant identity from {@code participantContext} when the
+   * runtime supplies one, so the ids stamped on entities cannot drift from the context EDC itself
+   * filters by. A {@code null} context falls back to the {@code edc.participant.*} settings.
+   */
+  public static TMFConfig fromConfig(Config config, ParticipantContext participantContext) {
+    TMFConfig.Builder tmfConfigBuilder = endpointConfigBuilder(config);
+
+    if (participantContext != null) {
+      tmfConfigBuilder.participantId(participantContext.getIdentity());
+      tmfConfigBuilder.participantContextId(participantContext.getParticipantContextId());
+    } else {
+      // Only reached without a supplier, e.g. in tests. Mirrors the rule
+      // ClassicParticipantContextDefaultServicesExtension applies: an unset context id falls back
+      // to the participant id, so stamped entities match the context EDC seeds and filters by.
+      String participantId =
+          config.getString(
+              EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
+      tmfConfigBuilder.participantId(participantId);
+      tmfConfigBuilder.participantContextId(
+          config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));
+    }
+
+    return tmfConfigBuilder.build();
   }
 
-  public URL getAgreementApi() {
-    return agreementApi;
-  }
-
-  public URL getProductOrderApi() {
-    return productOrderApi;
-  }
-
-  public URL getProductCatalogApi() {
-    return productCatalogApi;
-  }
-
-  public URL getProductInventoryApi() {
-    return productInventoryApi;
-  }
-
-  public URL getUsageManagementApi() {
-    return usageManagementApi;
-  }
-
-  public URL getPartyCatalogApi() {
-    return partyCatalogApi;
-  }
-
-  public URI getSchemaBaseUri() {
-    return schemaBaseUri;
-  }
-
-  public CatalogConfig getCatalogConfig() {
-    return catalogConfig;
-  }
-
-  public static TMFConfig fromConfig(Config config) {
+  private static TMFConfig.Builder endpointConfigBuilder(Config config) {
     Config tmfExtensionConfig = config.getConfig(TMF_EXTENSION_CONFIG_PATH);
 
     TMFConfig.Builder tmfConfigBuilder = TMFConfig.Builder.newInstance();
@@ -126,7 +139,7 @@ public class TMFConfig {
         .ifPresent(catalogConfigBuilder::enabled);
     tmfConfigBuilder.catalogConfig(catalogConfigBuilder.build());
 
-    return tmfConfigBuilder.build();
+    return tmfConfigBuilder;
   }
 
   public static class Builder {
@@ -142,6 +155,16 @@ public class TMFConfig {
 
     public Builder schemaBaseUri(String schemaBaseUri) {
       tmfConfig.schemaBaseUri = URI.create(schemaBaseUri);
+      return this;
+    }
+
+    public Builder participantId(String participantId) {
+      tmfConfig.participantId = participantId;
+      return this;
+    }
+
+    public Builder participantContextId(String participantContextId) {
+      tmfConfig.participantContextId = participantContextId;
       return this;
     }
 
