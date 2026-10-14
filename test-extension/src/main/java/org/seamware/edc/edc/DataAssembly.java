@@ -45,39 +45,22 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
-import org.eclipse.edc.connector.controlplane.asset.spi.domain.Asset;
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.*;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
-import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
-import org.eclipse.edc.connector.controlplane.policy.spi.PolicyDefinition;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.*;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
-import org.eclipse.edc.policy.model.Action;
-import org.eclipse.edc.policy.model.Permission;
 import org.eclipse.edc.policy.model.Policy;
-import org.eclipse.edc.spi.types.domain.DataAddress;
 
 /** Assembles data for the TCK scenarios. */
 public class DataAssembly {
-  /** Prefix for consumer-side agreement IDs. */
-  private static final String CONSUMER_AGREEMENT_PREFIX = "ATPC";
+  // The id constants below are the canonical TCK id registry: scripts/init-tmforum.sh seeds the
+  // TMForum backend from them and scripts/verify-tck-config.sh greps these literals to check that
+  // config/tck/tck.properties stays in sync. Keep them even when no Java code reads them directly.
 
-  /** Default counter-party address for pre-created agreements. */
-  private static final String TCK_CALLBACK_ADDRESS = "http://tck:8083";
-
-  /** Participant ID used for the TCK test runner. */
-  private static final String TCK_PARTICIPANT_ID = "TCK_PARTICIPANT";
-
-  /** DSP protocol identifier used for pre-created negotiations. */
-  private static final String DSP_PROTOCOL = "dataspace-protocol-http:2025-1";
-
-  /**
-   * Asset ID referenced by transfer process agreements. Must be an asset that exists in both TMF
-   * and in-memory stores. CAT0101 is always created as part of the catalog test data.
-   */
-  private static final String TRANSFER_ASSET_ID = "CAT0101";
+  /** Asset ID referenced by transfer process agreements; must exist in the TMForum catalog data. */
+  static final String TRANSFER_ASSET_ID = "CAT0101";
 
   static final Set<String> ASSET_IDS =
       Set.of(
@@ -147,80 +130,6 @@ public class DataAssembly {
     } catch (IllegalAccessException e) {
       throw new IllegalStateException("Failed to reset transfer state to INITIAL", e);
     }
-  }
-
-  /** Creates all test assets for TCK catalog and negotiation scenarios. */
-  public static List<Asset> createAllAssets(String participantId) {
-    return ASSET_IDS.stream().map(id -> createAsset(id, participantId)).toList();
-  }
-
-  /** Creates a permissive policy definition used for all TCK test scenarios. */
-  public static PolicyDefinition createPolicyDefinition(String participantId) {
-    return PolicyDefinition.Builder.newInstance()
-        .id(POLICY_ID)
-        .participantContextId(participantId)
-        .policy(
-            Policy.Builder.newInstance()
-                .permission(
-                    Permission.Builder.newInstance()
-                        .action(
-                            Action.Builder.newInstance()
-                                .type("http://www.w3.org/ns/odrl/2/use")
-                                .build())
-                        .build())
-                .build())
-        .build();
-  }
-
-  /** Creates a contract definition that matches all test assets via an empty asset selector. */
-  public static ContractDefinition createContractDefinition(String participantId) {
-    return ContractDefinition.Builder.newInstance()
-        .id(CONTRACT_DEFINITION_ID)
-        .participantContextId(participantId)
-        .accessPolicyId(POLICY_ID)
-        .contractPolicyId(POLICY_ID)
-        .build();
-  }
-
-  /**
-   * Creates finalized contract negotiations with agreements for all transfer process test
-   * scenarios.
-   *
-   * @param participantId the connector's participant ID (used as provider/consumer in agreements)
-   * @return list of finalized contract negotiations, each containing a contract agreement
-   */
-  public static List<ContractNegotiation> createAllAgreements(String participantId) {
-    return AGREEMENT_IDS.stream().map(id -> createAgreementNegotiation(id, participantId)).toList();
-  }
-
-  /**
-   * Creates a finalized contract negotiation with an embedded contract agreement.
-   *
-   * @param agreementId the agreement ID (also used to derive the negotiation ID)
-   * @param participantId the connector's participant ID
-   */
-  private static ContractNegotiation createAgreementNegotiation(
-      String agreementId, String participantId) {
-    boolean isConsumer = agreementId.startsWith(CONSUMER_AGREEMENT_PREFIX);
-
-    return ContractNegotiation.Builder.newInstance()
-        .participantContextId(participantId)
-        .contractAgreement(
-            ContractAgreement.Builder.newInstance()
-                .id(agreementId)
-                .participantContextId(participantId)
-                .providerId(isConsumer ? TCK_PARTICIPANT_ID : participantId)
-                .consumerId(isConsumer ? participantId : TCK_PARTICIPANT_ID)
-                .assetId(TRANSFER_ASSET_ID)
-                .contractSigningDate(System.currentTimeMillis())
-                .policy(Policy.Builder.newInstance().build())
-                .build())
-        .type(isConsumer ? ContractNegotiation.Type.CONSUMER : ContractNegotiation.Type.PROVIDER)
-        .state(ContractNegotiationStates.FINALIZED.code())
-        .counterPartyId(TCK_PARTICIPANT_ID)
-        .counterPartyAddress(TCK_CALLBACK_ADDRESS)
-        .protocol(DSP_PROTOCOL)
-        .build();
   }
 
   public static StepRecorder<ContractNegotiation> createNegotiationRecorder() {
@@ -573,14 +482,6 @@ public class DataAssembly {
           return false;
         },
         action);
-  }
-
-  private static Asset createAsset(String id, String participantId) {
-    return Asset.Builder.newInstance()
-        .id(id)
-        .participantContextId(participantId)
-        .dataAddress(DataAddress.Builder.newInstance().type("HttpData").build())
-        .build();
   }
 
   private static ContractNegotiation createContractNegotiation(String id) {
