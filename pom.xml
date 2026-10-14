@@ -172,6 +172,14 @@
                                     <JAR>${project.artifactId}.jar</JAR>
                                 </args>
                                 <buildx>
+                                    <!--
+                                      Give each module its own buildx builder. The plugin otherwise
+                                      names the builder "maven" for every image, so a reactor that
+                                      builds both controlplane images in one run fails on the second
+                                      with "existing instance for maven ... no append mode". A name
+                                      derived from the artifactId keeps the two from colliding.
+                                    -->
+                                    <builderName>fdsc-edc-${project.artifactId}</builderName>
                                     <platforms>
                                         <platform>linux/amd64</platform>
                                         <platform>linux/arm64</platform>
