@@ -487,6 +487,17 @@ those classes are analysed. Any step that reads a compile log from this repo as 
 breakage list must first clear the import-level errors and recompile — otherwise the list is
 silently truncated, and the truncation looks exactly like "that module is nearly done".
 
+**Step 5 addendum — `policy-extension` had no compile break at all.** Once
+`fdsc-transfer-extension` was migrated, `policy-extension` compiled unchanged against 0.18.1:
+`CatalogPolicyContext`, `ContractNegotiationPolicyContext`, `TransferProcessPolicyContext`,
+`ParticipantAgentPolicyContext` and `PolicyEngine.registerPreValidator` all kept their 0.14.1
+signatures. The single break was runtime and test-only: `ParticipantAgent`'s constructor now
+rejects a null identity (`NullPointerException: identity cannot be null`), so a test that built
+`new ParticipantAgent(null, …)` to exercise the mapper's null-identity branch had to stub the
+agent instead. The defensive branch in `PolicyContextInputMapper` was left in place rather than
+deleted: it is a single `putIfNotNull`, and the upstream guarantee is a constructor check that
+costs nothing to tolerate being wrong about.
+
 ---
 
 ---

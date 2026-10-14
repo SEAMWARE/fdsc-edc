@@ -135,8 +135,11 @@ class PolicyContextInputMapperTest {
     @DisplayName("Null identity is omitted from subject")
     void toJsonInput_nullIdentity_omittedFromSubject() {
       CatalogPolicyContext context = mock(CatalogPolicyContext.class);
-      ParticipantAgent agent =
-          new ParticipantAgent(null, Map.of("claim1", (Object) "value1"), Map.of());
+      // ParticipantAgent rejects a null identity since EDC 0.18.1, so the mapper's defensive
+      // branch can only be exercised through a stubbed agent.
+      ParticipantAgent agent = mock(ParticipantAgent.class);
+      when(agent.getIdentity()).thenReturn(null);
+      when(agent.getClaims()).thenReturn(Map.of("claim1", "value1"));
       when(context.scope()).thenReturn(TEST_SCOPE_CATALOG);
       when(context.participantAgent()).thenReturn(agent);
 
