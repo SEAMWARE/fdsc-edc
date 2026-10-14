@@ -90,7 +90,7 @@ Examples:
   ./scripts/run-tck.sh --keep-containers
 
   # Override TCK version
-  DSP_TCK_VERSION=1.0.0-RC6 ./scripts/run-tck.sh
+  DSP_TCK_VERSION=1.0.1 ./scripts/run-tck.sh
 EOF
 }
 

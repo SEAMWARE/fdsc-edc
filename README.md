@@ -138,7 +138,7 @@ The simplest way to run TCK conformance tests is with the provided script:
 You can also override the TCK image version or pass extra Maven arguments:
 
 ```bash
-DSP_TCK_VERSION=1.0.0-RC6 ./scripts/run-tck.sh
+DSP_TCK_VERSION=1.0.1 ./scripts/run-tck.sh
 MVN_ARGS="-T 2C" ./scripts/run-tck.sh
 ```
 

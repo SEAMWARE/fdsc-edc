@@ -16,7 +16,7 @@
 #   ./scripts/run-tck.sh
 #
 # To override the TCK image version:
-#   DSP_TCK_VERSION=1.0.0-RC6 ./scripts/run-tck.sh
+#   DSP_TCK_VERSION=1.0.1 ./scripts/run-tck.sh
 #
 # Prerequisites:
 #   - Build the controlplane shaded JAR first:
@@ -235,7 +235,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile.tck-runner
       args:
-        DSP_TCK_VERSION: ${DSP_TCK_VERSION:-1.0.0-RC6}
+        DSP_TCK_VERSION: ${DSP_TCK_VERSION:-1.0.1}
     # Optional: filter tests by display name substring.
     # Examples:
     #   TCK_FILTER=TP:03 ./scripts/run-tck.sh       # only TP:03 tests
