@@ -55,6 +55,10 @@ import org.eclipse.edc.spi.result.Result;
 /**
  * Handle identity in an OID4VC based security ecosystem. 1. Authenticate via OID4VP 2. Accept and
  * decode JWTs already verified by an apigateways
+ *
+ * <p>{@code participantContextId} is accepted and logged only: this runtime is single-participant
+ * (classic participant-context mode) and the OID4VP client exposes no multi-participant API, so the
+ * configured {@code oid4vp.clientId} identifies the participant instead.
  */
 public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentityService {
 
@@ -75,8 +79,12 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
   }
 
   @Override
-  public Result<TokenRepresentation> obtainClientCredentials(TokenParameters tokenParameters) {
-    monitor.debug("Try to obtain credential via OID4VP.");
+  public Result<TokenRepresentation> obtainClientCredentials(
+      String participantContextId, TokenParameters tokenParameters) {
+    monitor.debug(
+        "Try to obtain credential via OID4VP for participant context "
+            + participantContextId
+            + ".");
 
     String aud = tokenParameters.getStringClaim(AUD_PARAMETER);
     try {
@@ -123,7 +131,9 @@ public class OID4VPIdentityService implements org.eclipse.edc.spi.iam.IdentitySe
    */
   @Override
   public Result<ClaimToken> verifyJwtToken(
-      TokenRepresentation tokenRepresentation, VerificationContext verificationContext) {
+      String participantContextId,
+      TokenRepresentation tokenRepresentation,
+      VerificationContext verificationContext) {
     try {
       String plainToken = tokenRepresentation.getToken().replaceFirst(BEARER_PREFIX, "");
       JWT jwt = JWTParser.parse(plainToken);
