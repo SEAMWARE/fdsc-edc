@@ -43,8 +43,6 @@ import org.eclipse.edc.connector.dataplane.spi.DataFlow;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.junit.jupiter.api.Test;
 import org.seamware.edc.apisix.Route;
-import org.seamware.edc.transfer.FDSCDcpProviderResourceDefinition;
-import org.seamware.edc.transfer.FDSCOID4VPProviderResourceDefinition;
 import org.seamware.edc.transfer.TransferMapper;
 
 /**
@@ -142,24 +140,11 @@ public class EdrEndpointMatchesGatewayRouteTest {
   }
 
   private Route dcpRoute() {
-    return transferMapper.toDcpServiceRoute(
-        FDSCDcpProviderResourceDefinition.Builder.newInstance()
-            .id("resource")
-            .transferProcessId(ID)
-            .assetId("asset")
-            .build(),
-        UPSTREAM);
+    return transferMapper.toDcpServiceRoute(ID, UPSTREAM);
   }
 
   private Route oid4vpRoute() {
-    return transferMapper.toOid4VpServiceRoute(
-        FDSCOID4VPProviderResourceDefinition.Builder.newInstance()
-            .id("resource")
-            .transferProcessId(ID)
-            .assetId("asset")
-            .build(),
-        UPSTREAM,
-        "http://odrl-pap:8080/policy");
+    return transferMapper.toOid4VpServiceRoute(ID, UPSTREAM, "http://odrl-pap:8080/policy");
   }
 
   private static DataFlow dataFlow(String transferPath) {
