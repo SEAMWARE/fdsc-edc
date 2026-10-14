@@ -129,10 +129,16 @@ public class TmfCatalogEventAuditorTest {
   void newVersionOfTheSameEntityIsAuditedAgain() {
     auditor.audit(
         notification(
-            "ProductSpecificationAttributeValueChangeEvent", "productSpecification", spec("t1")));
+            "evt-1",
+            "ProductSpecificationAttributeValueChangeEvent",
+            "productSpecification",
+            spec("t1")));
     auditor.audit(
         notification(
-            "ProductSpecificationAttributeValueChangeEvent", "productSpecification", spec("t2")));
+            "evt-2",
+            "ProductSpecificationAttributeValueChangeEvent",
+            "productSpecification",
+            spec("t2")));
 
     assertEquals(2, exporter.getFinishedLogRecordItems().size());
   }
@@ -186,9 +192,14 @@ public class TmfCatalogEventAuditorTest {
 
   private static Map<String, Object> notification(
       String eventType, String payloadName, Map<String, Object> entity) {
+    return notification("evt-1", eventType, payloadName, entity);
+  }
+
+  private static Map<String, Object> notification(
+      String eventiId, String eventType, String payloadName, Map<String, Object> entity) {
     return Map.<String, Object>of(
         "eventId",
-        "evt-1",
+        eventiId,
         "eventType",
         eventType,
         "eventTime",

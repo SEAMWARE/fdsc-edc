@@ -31,7 +31,9 @@ import org.eclipse.edc.spi.monitor.Monitor;
 /**
  * Registers this connector as listener of the TMForum product catalog events (TMF620 hub). TMForum
  * answers 409 when the same callback and query are already registered, so registering on every
- * start is idempotent and several replicas can share the callback.
+ * start is idempotent and several replicas can share the callback without erroring. Note this only
+ * covers the subscription itself: event deduplication in {@link TmfCatalogEventAuditor} is a
+ * per-process cache and does not dedupe deliveries across replicas.
  */
 public class TmfHubSubscriber {
 

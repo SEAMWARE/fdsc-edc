@@ -115,17 +115,18 @@ public class OtelAuditExtension implements ServiceExtension {
   @Override
   public void initialize(ServiceExtensionContext context) {
     var monitor = context.getMonitor();
-    if (!enabled) {
-      monitor.info("Otel Audit: disabled via edc.otel.audit.enabled");
-      return;
+    if (enabled) {
+      var subscriber = new AuditEventSubscriber(otelLogger, monitor, clock, stateCacheSize);
+      eventRouter.register(ContractNegotiationEvent.class, subscriber);
+      eventRouter.register(TransferProcessEvent.class, subscriber);
+    } else {
+      monitor.info("Otel Audit: negotiation/transfer audit disabled via edc.otel.audit.enabled");
     }
-
-    var subscriber = new AuditEventSubscriber(otelLogger, monitor, clock, stateCacheSize);
-    eventRouter.register(ContractNegotiationEvent.class, subscriber);
-    eventRouter.register(TransferProcessEvent.class, subscriber);
 
     if (catalogEnabled) {
       initializeCatalogAudit(context, monitor);
+    } else {
+      monitor.info("Otel Audit: catalog audit disabled via edc.otel.audit.catalog.enabled");
     }
 
     monitor.info("Otel Audit Extension initialized successfully");
@@ -172,10 +173,12 @@ public class OtelAuditExtension implements ServiceExtension {
             tmfEventsApiConfiguration.port(),
             tmfEventsApiConfiguration.path()));
     webService.registerResource(
-        TMF_EVENTS_CONTEXT, new TmfCatalogEventController(auditor, monitor));
+        TMF_EVENTS_CONTEXT,
+        new TmfCatalogEventController(auditor, typeManager.getMapper(), monitor));
 
     var executor =
-        Executors.newSingleThreadScheduledExecutor(
+        Executors.newScheduledThreadPool(
+            TmfHubSubscriber.EVENT_TYPES.size(),
             runnable -> {
               var thread = new Thread(runnable, "otel-audit-tmf-hub");
               thread.setDaemon(true);

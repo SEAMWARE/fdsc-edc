@@ -40,6 +40,9 @@ import org.eclipse.edc.spi.monitor.Monitor;
  * records. With TMForum-backed stores all catalog writes happen directly in TMForum, so EDC never
  * raises asset or contract definition events and the notifications are the only source.
  *
+ * <p>Deduplication ({@code seenEvents}) is an in-process, best-effort cache: it does not protect
+ * against duplicate audit records if this connector ever runs with more than one replica.
+ *
  * <p>Product specifications are audited as assets and product offerings as contract definitions,
  * using the TMForum externalId as entity id. Event types and attribute names follows the catalog
  * audit logs of participant-edc-connector ({@code AssetCreated}, {@code catalog.asset.id}...); the
@@ -136,10 +139,17 @@ public class TmfCatalogEventAuditor {
       return;
     }
 
-    // TMForum may deliver the same event more than once (retries, duplicated subscription)
+    // TMForum may deliver the same event more than once (retries, duplicated subscription).
+    // Prefer the notification-level eventId (TMF620 Common notification schema); fall back to
+    // entity lastUpdate, which TMF620 does not mandate, so a notification missing both is never
+    // deduped (better a rare double-audit than silently dropping a real change).
+    var eventId = asString(notification.get("eventId"));
     var lastUpdate = asString(entity.get("lastUpdate"));
-    if (lastUpdate != null
-        && seenEvents.put(eventType + "|" + tmfId + "|" + lastUpdate, Boolean.TRUE) != null) {
+    var dedupKey =
+        eventId != null
+            ? "id:" + eventId
+            : lastUpdate != null ? eventType + "|" + tmfId + "|" + lastUpdate : null;
+    if (dedupKey != null && seenEvents.put(dedupKey, Boolean.TRUE) != null) {
       return;
     }
 
