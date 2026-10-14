@@ -211,6 +211,7 @@ services:
       - "8080:8080"   # Default API
       - "8181:8181"   # Management API
       - "8282:8282"   # DSP Protocol
+      - "8182:8182"   # Data Plane Signaling API (new at EDC 0.18.0)
       - "8687:8687"   # TCK Webhook
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/check/health"]

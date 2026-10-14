@@ -171,6 +171,20 @@ else
   fail "Participant ID mismatch: edc.properties=${PARTICIPANT_EDC}, tck.properties=${PARTICIPANT_TCK}"
 fi
 
+# The participant context id (new at EDC 0.15.0) is stamped onto every persisted
+# entity, so a classic single-participant runtime must pin it equal to the
+# participant id — otherwise the TMForum-mapped entities drift from the context EDC
+# seeds and filters by, and catalog/agreement queries silently return nothing.
+PARTICIPANT_CTX_EDC=$(grep -P '^edc\.participant\.context\.id=' "${EDC_PROPS}" | cut -d= -f2)
+
+if [[ -z "${PARTICIPANT_CTX_EDC}" ]]; then
+  fail "edc.participant.context.id is not set in edc.properties"
+elif [[ "${PARTICIPANT_CTX_EDC}" == "${PARTICIPANT_EDC}" ]]; then
+  pass "Participant context id consistent with participant id: ${PARTICIPANT_CTX_EDC}"
+else
+  fail "Participant context id mismatch: edc.participant.context.id=${PARTICIPANT_CTX_EDC}, edc.participant.id=${PARTICIPANT_EDC}"
+fi
+
 # ---------------------------------------------------------------------------
 # 7. Verify webhook path consistency
 # ---------------------------------------------------------------------------
@@ -218,10 +232,36 @@ echo "=== Checking DSP callback address ==="
 CALLBACK_EDC=$(grep -P '^edc\.dsp\.callback\.address=' "${EDC_PROPS}" | cut -d= -f2)
 DSP_URL_TCK=$(grep -P '^dataspacetck\.dsp\.connector\.http\.url=' "${TCK_PROPS}" | cut -d= -f2)
 
-if [[ "${CALLBACK_EDC}" == "${DSP_URL_TCK}" ]]; then
-  pass "DSP callback address matches TCK connector URL: ${CALLBACK_EDC}"
+# edc.dsp.callback.address is the unversioned DSP base the connector advertises;
+# DSP appends the protocol version, so the TCK endpoint is that base plus /2025-1.
+# The two are consistent when the TCK URL is the callback base followed by a
+# version segment — not when they are byte-equal.
+if [[ "${DSP_URL_TCK}" == "${CALLBACK_EDC}/"* ]]; then
+  pass "DSP callback base is a prefix of the TCK connector URL: ${CALLBACK_EDC} -> ${DSP_URL_TCK}"
 else
-  fail "DSP callback address mismatch: edc=${CALLBACK_EDC}, tck=${DSP_URL_TCK}"
+  fail "DSP callback address mismatch: edc=${CALLBACK_EDC} is not a prefix of tck=${DSP_URL_TCK}"
+fi
+
+# ---------------------------------------------------------------------------
+# 10. Verify the data plane signaling listener is declared and published
+# ---------------------------------------------------------------------------
+echo ""
+echo "=== Checking data plane signaling API port ==="
+
+# data-plane-signaling opens an unconditional web context at EDC 0.18.0; the port
+# must be pinned in edc.properties and published by docker-compose, otherwise the
+# data plane cannot reach the control plane's registration API.
+SIGNALING_PORT_EDC=$(grep -P '^web\.http\.signaling\.port=' "${EDC_PROPS}" | grep -oP '\d+' || true)
+
+if [[ -z "${SIGNALING_PORT_EDC}" ]]; then
+  fail "web.http.signaling.port is not set in edc.properties"
+else
+  pass "Signaling API port declared in edc.properties: ${SIGNALING_PORT_EDC}"
+  if grep -qP "\"${SIGNALING_PORT_EDC}:${SIGNALING_PORT_EDC}\"" "${COMPOSE_FILE}"; then
+    pass "Signaling API port published in docker-compose: ${SIGNALING_PORT_EDC}"
+  else
+    fail "Signaling API port ${SIGNALING_PORT_EDC} not published in ${COMPOSE_FILE}"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
