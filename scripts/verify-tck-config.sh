@@ -251,7 +251,10 @@ echo "=== Checking data plane signaling API port ==="
 # data-plane-signaling opens an unconditional web context at EDC 0.18.0; the port
 # must be pinned in edc.properties and published by docker-compose, otherwise the
 # data plane cannot reach the control plane's registration API.
-SIGNALING_PORT_EDC=$(grep -P '^web\.http\.signaling\.port=' "${EDC_PROPS}" | grep -oP '\d+' || true)
+# Extract a single deterministic numeric token with cut/tr (as the participant-id
+# checks above do), so a trailing comment or a second numeric token on the line
+# cannot capture multiple values and silently break the equality/publish checks.
+SIGNALING_PORT_EDC=$(grep -P '^web\.http\.signaling\.port=' "${EDC_PROPS}" | cut -d= -f2 | tr -dc '0-9' || true)
 
 if [[ -z "${SIGNALING_PORT_EDC}" ]]; then
   fail "web.http.signaling.port is not set in edc.properties"

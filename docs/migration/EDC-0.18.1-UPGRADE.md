@@ -1086,6 +1086,19 @@ So the decision is about the classpath, not the annotation:
 Step 6 picks A or B and records which. Step 7's end-to-end transfer check (§8.2) is the gate
 either way, and a bare `@Provider` (no `isDefault`) is not an admissible outcome.
 
+**Runtime-gate status (Step 7 → Step 8).** Step 6 took Option B, so in TCK mode the real
+`data-plane-signaling` controller wins and the noop is dead code (`TckGuardExtension#noopDataFlowController`
+documents this). The two runtime gates Step 7's acceptance names — one consumer-supplied HTTP
+`CallbackAddress` actually receiving a POST, and one transfer reaching `STARTED` under this
+assembly — are **not** observed by Step 7's `mvn clean package`; that build gate cannot start the
+compose stack. They are **carried into Step 8**, whose `./scripts/run-tck.sh` run drives the
+signaling flow controller for every transfer scenario in the suite and diffs the result against the
+fully-green `docs/migration/tck-baseline-0.14.1.md` baseline — a strictly stronger gate than a
+single hand-run transfer. If any transfer scenario cannot complete without a data plane behind the
+signaling controller, Step 8 falls back to Option A (a TCK-only runtime that excludes
+`data-plane-signaling` so the noop is selected) per the table above, rather than filtering the
+failure out. This deferral is explicit, not an assumption that the gates pass.
+
 This also sharpens §8.2's open item: at 0.18.1 `transfer-data-plane-signaling` is explicitly
 the *legacy* flow controller and `data-plane-signaling(-core)` is the current one — which is
 why the BOM swapped them. The artifact still resolving is not evidence that keeping it is
