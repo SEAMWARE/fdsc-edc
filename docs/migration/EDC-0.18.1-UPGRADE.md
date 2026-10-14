@@ -836,6 +836,11 @@ up to **1.0.2**, and EDC 0.18.1 itself pins `dsp-tck:1.0.1` in its
 *after* the baseline in §10 is captured, so that a TCK-version change and a
 connector-version change never move at the same time.
 
+**Decided in Step 8: `1.0.1`.** The plan says prefer the version EDC itself pins unless
+`1.0.2` passes cleanly; `1.0.1` is what 0.18.1 pins and the suite is fully green against it, so
+there was no reason to move to `1.0.2`. `DSP_TCK_VERSION` is `1.0.1` in `docker-compose.tck.yml`,
+`docker/Dockerfile.tck-runner`, `.github/workflows/test.yml` and `README.md`.
+
 ---
 
 ## 8. Controlplane assembly
@@ -1098,6 +1103,26 @@ single hand-run transfer. If any transfer scenario cannot complete without a dat
 signaling controller, Step 8 falls back to Option A (a TCK-only runtime that excludes
 `data-plane-signaling` so the noop is selected) per the table above, rather than filtering the
 failure out. This deferral is explicit, not an assumption that the gates pass.
+
+**Resolved in Step 8 — Option A was required.** Run under Option B, every provider-side transfer
+scenario (`TP:03-01`…`TP:03-06`) failed: the real `DataPlaneSignalingFlowController` wins as the
+single injected `DataFlowController`, and with no data plane registered its
+`transferTypesFor(...)` is empty, so the provider rejects the requested transfer type with
+`DSP: Service call failed: TransferType HttpData-PULL is not supported`. That is a regression
+against the fully-green baseline, so Step 8 took Option A as foreseen. The implementation is
+**additive and minimal**: a new `controlplane-tck` module — `controlplane-oid4vc`'s dependency
+list minus `data-plane-signaling` — produces its own shaded jar, and `docker/Dockerfile.tck` /
+`docker-compose.tck.yml` / `scripts/run-tck.sh` build and run that jar instead. With
+`data-plane-signaling` off the TCK classpath, `NoopDataFlowController` is the only
+`DataFlowController` and wins; `TP:03-*` then pass. The TCK image no longer opens the `signaling`
+web context, so port `8182` is dropped from the TCK compose edc service. Scope kept deliberately
+narrow: the production `controlplane-oid4vc` / `controlplane-dcp` assemblies are **unchanged** —
+they keep `data-plane-signaling` (the real flow controller, which they need) and they keep
+`test-extension` exactly as before (its noop stays dead code under the winning signaling
+controller, as it already was). Option A's fuller form — also dropping `test-extension` (and with
+it `InMemoryVault` / `TestIdentityService`) from the production images — is a pre-existing,
+separable concern and is left to a follow-up ticket so the conformance step changes only the TCK
+runtime.
 
 This also sharpens §8.2's open item: at 0.18.1 `transfer-data-plane-signaling` is explicitly
 the *legacy* flow controller and `data-plane-signaling(-core)` is the current one — which is

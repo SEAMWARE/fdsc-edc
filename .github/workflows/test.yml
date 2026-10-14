@@ -59,7 +59,9 @@ jobs:
             ${{ runner.os }}-maven-
 
       - name: Build controlplane shaded JAR
-        run: mvn package -pl controlplane-oid4vc -am -DskipTests -q
+        # controlplane-tck is the TCK assembly (controlplane-oid4vc minus
+        # data-plane-signaling); docker-compose.tck.yml consumes its shaded jar.
+        run: mvn package -pl controlplane-tck -am -DskipTests -q
 
       - name: Start EDC and run TCK tests
         timeout-minutes: 30

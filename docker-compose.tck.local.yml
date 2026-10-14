@@ -199,12 +199,16 @@ services:
   # EDC Controlplane (OID4VC variant) configured for TCK mode
   # -------------------------------------------------------------------------
   edc:
-    image: fdsc-edc-controlplane-oid4vc:${EDC_IMAGE_TAG:-latest}
+    # TCK runtime uses the controlplane-tck assembly (controlplane-oid4vc minus
+    # data-plane-signaling) so the NoopDataFlowController is the only
+    # DataFlowController and the TCK transfer scenarios complete with no data
+    # plane behind the connector. See docs/migration/EDC-0.18.1-UPGRADE.md 8.3.2.
+    image: fdsc-edc-controlplane-tck:${EDC_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.tck
       args:
-        JAR: controlplane-oid4vc/target/context/controlplane-oid4vc.jar
+        JAR: controlplane-tck/target/context/controlplane-tck.jar
     environment:
       EDC_FS_CONFIG: /app/config/edc.properties
       EDC_LOG_LEVEL: DEBUG
@@ -212,7 +216,6 @@ services:
       - "8080:8080"   # Default API
       - "8181:8181"   # Management API
       - "8282:8282"   # DSP Protocol
-      - "8182:8182"   # Data Plane Signaling API (new at EDC 0.18.0)
       - "8687:8687"   # TCK Webhook
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/api/check/health"]
