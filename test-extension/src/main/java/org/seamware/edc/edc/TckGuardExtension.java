@@ -145,16 +145,23 @@ public class TckGuardExtension implements ServiceExtension {
   }
 
   /**
-   * Contributes the no-op {@link NoopDataFlowController} as a default so transfer processes can
-   * proceed through every state transition without a real data plane, which is what the DSP TCK
-   * exercises.
+   * Contributes the no-op {@link NoopDataFlowController} as a default {@link DataFlowController}.
    *
    * <p>0.16.0 removed {@code DataFlowManager}: a runtime now wires exactly one {@link
-   * DataFlowController}, resolved by injection. Marking this provider {@code isDefault = true}
-   * keeps it out of the way of a real controller — the {@code data-plane-signaling} flow controller
-   * present in the shipped controlplane images wins, and the noop is only used when nothing else
-   * provides one. A non-default provider would instead silently overwrite the real one by load
-   * order (see docs/migration/EDC-0.18.1-UPGRADE.md §8.3).
+   * DataFlowController}, resolved by injection, and a default provider is consulted only when no
+   * non-default one supplied the service. This is Option B of docs/migration/EDC-0.18.1-UPGRADE.md
+   * §8.3.2: {@code test-extension} ships in the same shaded jar as the production images, and both
+   * controlplane modules declare {@code data-plane-signaling} (controlplane-oid4vc/pom.xml:199,
+   * controlplane-dcp/pom.xml:189), whose flow controller is a non-default provider. So in the
+   * shipped assembly — including TCK mode — the signaling controller always wins and this noop is
+   * never selected; it only takes effect in a hypothetical runtime that excludes every signaling
+   * module. {@code isDefault = true} is what keeps it from silently overwriting the real controller
+   * by load order.
+   *
+   * <p>Consequence for Step 8: TCK transfers run through the real signaling flow controller with no
+   * data plane behind it, so the transfer scenarios must be diffed against
+   * docs/migration/tck-baseline-0.14.1.md; if they regress, revisit Option A (a TCK-only runtime
+   * that excludes {@code data-plane-signaling} and uses this noop).
    */
   @Provider(isDefault = true)
   public DataFlowController noopDataFlowController() {
@@ -164,8 +171,8 @@ public class TckGuardExtension implements ServiceExtension {
   /**
    * Registers a listener that transitions provider transfers from INITIAL to REQUESTED state. The
    * DSP 2025-1 protocol requires provider transfers to be in REQUESTED state after acknowledging a
-   * TransferRequestMessage, but EDC 0.14.1 creates them in INITIAL. This listener fixes the state
-   * before the transfer is persisted and returned in the DSP response.
+   * TransferRequestMessage, but EDC 0.18.1 still creates them in INITIAL. This listener fixes the
+   * state while the transfer is being created and returned in the DSP response.
    */
   private void registerProviderRequestedStateFix() {
     transferProcessObservable.registerListener(new ProviderRequestedStateFixListener(monitor));

@@ -35,9 +35,19 @@ import org.eclipse.edc.spi.monitor.Monitor;
  * types. This listener uses reflection to set the state directly, ensuring DSP protocol compliance
  * in TCK mode.
  *
- * <p>0.15.0 removed the {@code preCreated} callback; {@code initiated} is the earliest callback and
- * fires on the same {@link TransferProcess} instance the DSP response is built from, so mutating it
- * here is reflected in both the persisted entity and the acknowledgement.
+ * <p>0.15.0 removed the {@code preCreated} callback; {@code initiated} is the earliest remaining
+ * callback. In {@code TransferProcessProtocolServiceImpl.requestedAction} (0.18.1) it fires
+ * <em>after</em> {@code transferProcessStore.save(process)}, on the same {@link TransferProcess}
+ * instance that is then returned and used to build the DSP acknowledgement — so the REQUESTED state
+ * set here reaches the acknowledgement, which is what DSP 2025-1 requires.
+ *
+ * <p><strong>Open risk (validated by the Step 8 TCK run, not asserted here):</strong> because the
+ * save already happened, this in-memory mutation does <em>not</em> re-persist — the stored row
+ * keeps INITIAL while the acknowledgement reports REQUESTED. This differs from the removed {@code
+ * preCreated}, which fired before the save and left both consistent. Whether the persisted INITIAL
+ * state causes any problem for the subsequent provider state-machine transitions can only be
+ * confirmed by the live TCK run in Step 8; if it does, this listener must re-save the process
+ * rather than only mutating it.
  */
 public class ProviderRequestedStateFixListener implements TransferProcessListener {
 
