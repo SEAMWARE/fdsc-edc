@@ -45,8 +45,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.DeprovisionedResource;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionResponse;
+import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.response.StatusResult;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
@@ -93,10 +94,9 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
     when(transferMapper.toDcpServiceRoute(any(), eq(TEST_UPSTREAM))).thenReturn(testRoute);
 
-    FDSCDcpProviderResourceDefinition resourceDefinition = getResourceDefinition();
+    ProvisionResource provisionResource = provisionResource();
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(resourceDefinition, getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource).get();
     assertTrue(result.succeeded(), "The resource should have been provisioned.");
     ArgumentCaptor<Route> routeCaptor = ArgumentCaptor.forClass(Route.class);
     verify(apisixAdminClient, times(1)).addRoute(routeCaptor.capture());
@@ -107,8 +107,7 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
   public void testProvision_error_no_spec() throws Exception {
     when(productCatalogApiClient.getProductOfferingByExternalId(any()))
         .thenReturn(Optional.empty());
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(), "Without a corresponding spec, provisioning should fail permanently.");
@@ -118,8 +117,7 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
   public void testProvision_error_no_upstream_key() throws Exception {
     when(productCatalogApiClient.getProductSpecByExternalId(any()))
         .thenReturn(Optional.of(getProductSpec(TEST_ASSET_ID, List.of())));
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(),
@@ -133,8 +131,7 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
     when(transferMapper.toDcpServiceRoute(any(), any()))
         .thenThrow(new RuntimeException("Failed to map"));
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(), "If no route can be built, provisioning should fail permanently.");
@@ -147,8 +144,7 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
     when(transferMapper.toDcpServiceRoute(any(), any())).thenReturn(getRoute());
     when(apisixAdminClient.addRoute(any())).thenThrow(new BadGatewayException("Failed to add."));
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(result.failed(), "If no route can be added, provisioning should fail but retried.");
     assertFalse(
@@ -159,12 +155,9 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
   public void testDeprovision_success() throws Exception {
     when(transferMapper.toServiceRouteId(any())).thenReturn(TEST_TRANSFER_PROCESS_ID);
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(result.succeeded(), "The route should have been deprovisioned.");
-    assertFalse(result.getContent().isInProcess(), "Deprovisioning should have finished");
+    assertFalse(result.getContent().isPending(), "Deprovisioning should have finished");
     verify(apisixAdminClient, (times(1))).deleteRoute(eq(TEST_TRANSFER_PROCESS_ID));
   }
 
@@ -172,12 +165,9 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
   public void testDeprovision_success_if_already_deleted() throws Exception {
     when(transferMapper.toServiceRouteId(any())).thenReturn(TEST_TRANSFER_PROCESS_ID);
     doThrow(new HttpClientException("Not found.", 404)).when(apisixAdminClient).deleteRoute(any());
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(result.succeeded(), "The route should have been deprovisioned.");
-    assertFalse(result.getContent().isInProcess(), "Deprovisioning should have finished");
+    assertFalse(result.getContent().isPending(), "Deprovisioning should have finished");
     verify(apisixAdminClient, (times(1))).deleteRoute(eq(TEST_TRANSFER_PROCESS_ID));
   }
 
@@ -186,10 +176,7 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
     when(transferMapper.toServiceRouteId(any()))
         .thenThrow(new RuntimeException("Unable to resolve route id."));
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(
         result.fatalError(),
         "If the route id cannot be resolved, deprovisioning should fail permanently.");
@@ -201,21 +188,14 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
     doThrow(new HttpClientException("Failed to delete"))
         .when(apisixAdminClient)
         .deleteRoute(eq(TEST_TRANSFER_PROCESS_ID));
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(
         result.failed(), "If apisix cannot delete, deprovisioning should fail but be retried.");
     assertFalse(
         result.fatalError(), "If apisix cannot delete, deprovisioning should fail but be retried.");
   }
 
-  private static FDSCDcpProviderResourceDefinition getResourceDefinition() {
-    return FDSCDcpProviderResourceDefinition.Builder.newInstance()
-        .assetId(TEST_ASSET_ID)
-        .id(TEST_RESOURCE_DEFINITION_ID)
-        .transferProcessId(TEST_TRANSFER_PROCESS_ID)
-        .build();
+  private static ProvisionResource provisionResource() {
+    return getProvisionResource(FDSCDcpProvisioner.PROVISION_TYPE);
   }
 }

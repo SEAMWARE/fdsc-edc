@@ -40,6 +40,7 @@ import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
 import org.eclipse.edc.policy.model.*;
 import org.seamware.edc.apisix.Route;
 import org.seamware.edc.domain.ExtendableProductSpecification;
@@ -50,15 +51,19 @@ public class AbstractProvisionerTest {
 
   protected static final String TEST_ASSET_ID = "test-asset";
   protected static final String TEST_RESOURCE_DEFINITION_ID = "test-rdi";
+  protected static final String TEST_AGREEMENT_ID = "test-agreement";
   protected static final String TEST_TRANSFER_PROCESS_ID = "test-transfer";
   protected static final String TEST_ROUTE_ID = "test-route";
   protected static final String TEST_UPSTREAM = "http://my.upstream.svc.local";
 
-  protected FDSCProvisionedResource getProvisionedResource(String transferProcessId) {
-    return FDSCProvisionedResource.Builder.newInstance()
-        .id("random-id")
-        .resourceDefinitionId(TEST_ASSET_ID)
-        .transferProcessId(transferProcessId)
+  /** The data-plane resource a generator would hand to the provisioner under test. */
+  protected static ProvisionResource getProvisionResource(String type) {
+    return ProvisionResource.Builder.newInstance()
+        .id(TEST_RESOURCE_DEFINITION_ID)
+        .flowId(TEST_TRANSFER_PROCESS_ID)
+        .type(type)
+        .property(FDSCProvisioner.ASSET_ID_PROPERTY, TEST_ASSET_ID)
+        .property(FDSCProvisioner.AGREEMENT_ID_PROPERTY, TEST_AGREEMENT_ID)
         .build();
   }
 
