@@ -22,6 +22,7 @@ import static org.eclipse.edc.connector.controlplane.transfer.spi.types.Transfer
 
 import java.lang.reflect.Field;
 import org.eclipse.edc.connector.controlplane.transfer.spi.observe.TransferProcessListener;
+import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.spi.entity.StatefulEntity;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -41,13 +42,12 @@ import org.eclipse.edc.spi.monitor.Monitor;
  * instance that is then returned and used to build the DSP acknowledgement — so the REQUESTED state
  * set here reaches the acknowledgement, which is what DSP 2025-1 requires.
  *
- * <p><strong>Open risk (validated by the Step 8 TCK run, not asserted here):</strong> because the
- * save already happened, this in-memory mutation does <em>not</em> re-persist — the stored row
- * keeps INITIAL while the acknowledgement reports REQUESTED. This differs from the removed {@code
- * preCreated}, which fired before the save and left both consistent. Whether the persisted INITIAL
- * state causes any problem for the subsequent provider state-machine transitions can only be
- * confirmed by the live TCK run in Step 8; if it does, this listener must re-save the process
- * rather than only mutating it.
+ * <p>Because the initial save already happened by the time {@code initiated} fires, the reflective
+ * mutation alone would leave the acknowledgement reporting REQUESTED while the stored row kept
+ * INITIAL — a divergence from the removed {@code preCreated}, which fired before the save. To keep
+ * store and protocol consistent (as the 0.14.1 baseline did), this listener re-persists the mutated
+ * entity via {@link TransferProcessStore#save(StatefulEntity)}, which runs in the same transaction
+ * the protocol service opened and releases no lease the service still needs.
  */
 public class ProviderRequestedStateFixListener implements TransferProcessListener {
 
@@ -63,9 +63,12 @@ public class ProviderRequestedStateFixListener implements TransferProcessListene
   }
 
   private final Monitor monitor;
+  private final TransferProcessStore transferProcessStore;
 
-  public ProviderRequestedStateFixListener(Monitor monitor) {
+  public ProviderRequestedStateFixListener(
+      Monitor monitor, TransferProcessStore transferProcessStore) {
     this.monitor = monitor;
+    this.transferProcessStore = transferProcessStore;
   }
 
   @Override
@@ -73,13 +76,24 @@ public class ProviderRequestedStateFixListener implements TransferProcessListene
     if (process.getType() == PROVIDER && process.getState() == INITIAL.code()) {
       try {
         STATE_FIELD.setInt(process, REQUESTED.code());
+      } catch (IllegalAccessException e) {
+        monitor.warning(
+            "ProviderRequestedStateFixListener: Failed to set REQUESTED state via reflection", e);
+        return;
+      }
+      // Re-persist so the stored row matches the REQUESTED state carried in the DSP ack; the
+      // reflective mutation above only touched the in-memory instance, which the protocol service
+      // had already saved as INITIAL.
+      var result = transferProcessStore.save(process);
+      if (result.failed()) {
+        monitor.warning(
+            "ProviderRequestedStateFixListener: Failed to persist REQUESTED state for provider"
+                + " transfer %s: %s".formatted(process.getId(), result.getFailureDetail()));
+      } else {
         monitor.debug(
             () ->
                 "ProviderRequestedStateFixListener: Set provider transfer %s to REQUESTED"
                     .formatted(process.getId()));
-      } catch (IllegalAccessException e) {
-        monitor.warning(
-            "ProviderRequestedStateFixListener: Failed to set REQUESTED state via reflection", e);
       }
     }
   }

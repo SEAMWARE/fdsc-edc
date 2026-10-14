@@ -107,9 +107,11 @@ public class TckGuardExtension implements ServiceExtension {
    * by load order.
    *
    * <p>Consequence for Step 8: TCK transfers run through the real signaling flow controller with no
-   * data plane behind it, so the transfer scenarios must be diffed against
-   * docs/migration/tck-baseline-0.14.1.md; if they regress, revisit Option A (a TCK-only runtime
-   * that excludes {@code data-plane-signaling} and uses this noop).
+   * data plane behind it, so Step 8 must confirm a transfer actually reaches {@code STARTED} under
+   * this assembly and diff the transfer scenarios against docs/migration/tck-baseline-0.14.1.md. If
+   * the signaling flow cannot complete without a data plane — or any scenario regresses — take
+   * Option A (a TCK-only runtime that excludes {@code data-plane-signaling} so this noop is actually
+   * selected) rather than assuming it unnecessary.
    */
   @Provider(isDefault = true)
   public DataFlowController noopDataFlowController() {
@@ -120,10 +122,12 @@ public class TckGuardExtension implements ServiceExtension {
    * Registers a listener that transitions provider transfers from INITIAL to REQUESTED state. The
    * DSP 2025-1 protocol requires provider transfers to be in REQUESTED state after acknowledging a
    * TransferRequestMessage, but EDC 0.18.1 still creates them in INITIAL. This listener fixes the
-   * state while the transfer is being created and returned in the DSP response.
+   * state while the transfer is being created and returned in the DSP response, re-persisting it
+   * through {@code transferProcessStore} so the stored row and the acknowledgement agree.
    */
   private void registerProviderRequestedStateFix() {
-    transferProcessObservable.registerListener(new ProviderRequestedStateFixListener(monitor));
+    transferProcessObservable.registerListener(
+        new ProviderRequestedStateFixListener(monitor, transferProcessStore));
     LOG.info("Registered ProviderRequestedStateFixListener for DSP 2025-1 compliance");
   }
 
