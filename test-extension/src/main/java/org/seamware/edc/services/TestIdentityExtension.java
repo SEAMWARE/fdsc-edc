@@ -67,6 +67,12 @@ public class TestIdentityExtension implements ServiceExtension {
   /** Web context name for the DSP protocol endpoint. */
   private static final String PROTOCOL_CONTEXT = "protocol";
 
+  /**
+   * EDC setting holding the participant id. 0.15.0 removed {@code
+   * ServiceExtensionContext.getParticipantId()}; the id is read from configuration instead.
+   */
+  private static final String PARTICIPANT_ID_SETTING = "edc.participant.id";
+
   @Inject private Monitor monitor;
 
   @Inject private ObjectMapper objectMapper;
@@ -95,7 +101,11 @@ public class TestIdentityExtension implements ServiceExtension {
   }
 
   private IdentityService identityService(ServiceExtensionContext context) {
-    return new TestIdentityService(monitor, objectMapper, context.getParticipantId());
+    var participantId =
+        context
+            .getConfig()
+            .getString(PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
+    return new TestIdentityService(monitor, objectMapper, participantId);
   }
 
   private AudienceResolver audienceResolver() {

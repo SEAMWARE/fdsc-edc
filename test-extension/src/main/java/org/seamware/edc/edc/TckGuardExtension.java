@@ -47,7 +47,7 @@ import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractD
 import org.eclipse.edc.connector.controlplane.policy.spi.store.PolicyDefinitionStore;
 import org.eclipse.edc.connector.controlplane.transfer.spi.TransferProcessPendingGuard;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessEvent;
-import org.eclipse.edc.connector.controlplane.transfer.spi.flow.DataFlowManager;
+import org.eclipse.edc.connector.controlplane.transfer.spi.flow.DataFlowController;
 import org.eclipse.edc.connector.controlplane.transfer.spi.observe.TransferProcessObservable;
 import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
@@ -67,6 +67,9 @@ public class TckGuardExtension implements ServiceExtension {
   /** Configuration property that controls whether the TMForum storage backend is enabled. */
   private static final String TMF_ENABLED_PROPERTY = "tmfExtension.enabled";
 
+  /** EDC setting holding the participant id; drives the participant context id in classic mode. */
+  private static final String PARTICIPANT_ID_SETTING = "edc.participant.id";
+
   private volatile ContractNegotiationGuard negotiationGuard;
 
   private volatile TransferProcessGuard transferProcessGuard;
@@ -85,7 +88,6 @@ public class TckGuardExtension implements ServiceExtension {
 
   @Inject private PolicyDefinitionStore policyDefinitionStore;
 
-  @Inject private DataFlowManager dataFlowManager;
   @Inject private Monitor monitor;
   @Inject private TransferProcessObservable transferProcessObservable;
 
@@ -105,9 +107,10 @@ public class TckGuardExtension implements ServiceExtension {
             "TMForum extension is enabled — skipping in-memory test data initialization. "
                 + "Assets, policies, contract definitions, and agreements are provided by TMForum.");
       } else {
-        //      initializeTestData(context.getParticipantId());
+        // initializeTestData(
+        //     context.getConfig().getString(PARTICIPANT_ID_SETTING,
+        //         ServiceExtensionContext.ANONYMOUS_PARTICIPANT));
       }
-      registerNoopDataFlowController();
       registerProviderRequestedStateFix();
     }
   }
@@ -123,15 +126,15 @@ public class TckGuardExtension implements ServiceExtension {
     LOG.info("Initializing TCK test data for participant: " + participantId);
 
     // Create the permissive policy used by all test contract definitions
-    policyDefinitionStore.create(DataAssembly.createPolicyDefinition());
+    policyDefinitionStore.create(DataAssembly.createPolicyDefinition(participantId));
     LOG.info("Created TCK policy definition: " + DataAssembly.POLICY_ID);
 
     // Create the contract definition that matches all test assets
-    contractDefinitionStore.save(DataAssembly.createContractDefinition());
+    contractDefinitionStore.save(DataAssembly.createContractDefinition(participantId));
     LOG.info("Created TCK contract definition: " + DataAssembly.CONTRACT_DEFINITION_ID);
 
     // Create all test assets for catalog and negotiation scenarios
-    var assets = DataAssembly.createAllAssets();
+    var assets = DataAssembly.createAllAssets(participantId);
     assets.forEach(assetIndex::create);
     LOG.info("Created " + assets.size() + " TCK test assets");
 
@@ -142,14 +145,20 @@ public class TckGuardExtension implements ServiceExtension {
   }
 
   /**
-   * Registers a no-op {@link NoopDataFlowController} with high priority so that transfer processes
-   * can proceed through all state transitions without a real data plane. This is required for DSP
-   * TCK conformance testing where protocol message flow matters but actual data transfer does not.
+   * Contributes the no-op {@link NoopDataFlowController} as a default so transfer processes can
+   * proceed through every state transition without a real data plane, which is what the DSP TCK
+   * exercises.
+   *
+   * <p>0.16.0 removed {@code DataFlowManager}: a runtime now wires exactly one {@link
+   * DataFlowController}, resolved by injection. Marking this provider {@code isDefault = true}
+   * keeps it out of the way of a real controller — the {@code data-plane-signaling} flow controller
+   * present in the shipped controlplane images wins, and the noop is only used when nothing else
+   * provides one. A non-default provider would instead silently overwrite the real one by load
+   * order (see docs/migration/EDC-0.18.1-UPGRADE.md §8.3).
    */
-  private void registerNoopDataFlowController() {
-    var noopPriority = 100;
-    dataFlowManager.register(noopPriority, new NoopDataFlowController(monitor));
-    LOG.info("Registered NoopDataFlowController for TCK mode (priority=" + noopPriority + ")");
+  @Provider(isDefault = true)
+  public DataFlowController noopDataFlowController() {
+    return new NoopDataFlowController(monitor);
   }
 
   /**

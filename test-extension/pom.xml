@@ -70,6 +70,16 @@
             <version>${edc.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>connector-participant-context-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>participant-context-single-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp-jvm</artifactId>
             <version>${version.com.squareup.okhttp3-jvm}</version>

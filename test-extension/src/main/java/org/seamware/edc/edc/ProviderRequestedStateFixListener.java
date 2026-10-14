@@ -30,13 +30,14 @@ import org.eclipse.edc.spi.monitor.Monitor;
  * Listener that transitions newly created provider transfers from INITIAL to REQUESTED state.
  *
  * <p>The DSP 2025-1 protocol specifies that a provider's transfer process should be in state
- * REQUESTED after acknowledging a TransferRequestMessage. However, EDC 0.14.1 creates provider
+ * REQUESTED after acknowledging a TransferRequestMessage. However, EDC still creates provider
  * transfers in INITIAL state and {@link TransferProcess#transitionRequested()} throws for provider
  * types. This listener uses reflection to set the state directly, ensuring DSP protocol compliance
  * in TCK mode.
  *
- * <p>The {@code preCreated} callback fires before the transfer is persisted, so both the stored
- * entity and the DSP response reflect the correct REQUESTED state.
+ * <p>0.15.0 removed the {@code preCreated} callback; {@code initiated} is the earliest callback and
+ * fires on the same {@link TransferProcess} instance the DSP response is built from, so mutating it
+ * here is reflected in both the persisted entity and the acknowledgement.
  */
 public class ProviderRequestedStateFixListener implements TransferProcessListener {
 
@@ -58,7 +59,7 @@ public class ProviderRequestedStateFixListener implements TransferProcessListene
   }
 
   @Override
-  public void preCreated(TransferProcess process) {
+  public void initiated(TransferProcess process) {
     if (process.getType() == PROVIDER && process.getState() == INITIAL.code()) {
       try {
         STATE_FIELD.setInt(process, REQUESTED.code());

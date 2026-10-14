@@ -39,7 +39,7 @@ package org.seamware.edc.services;
 import org.eclipse.edc.spi.iam.AudienceResolver;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
-import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
+import org.eclipse.edc.spi.types.domain.message.ProtocolRemoteMessage;
 
 public class NoopAudienceResolver implements AudienceResolver {
 
@@ -50,7 +50,7 @@ public class NoopAudienceResolver implements AudienceResolver {
   }
 
   @Override
-  public Result<String> resolve(RemoteMessage remoteMessage) {
+  public Result<String> resolve(ProtocolRemoteMessage remoteMessage) {
     monitor.debug("Tried to resolve audience.");
     return Result.success("Resolved");
   }

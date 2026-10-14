@@ -150,14 +150,15 @@ public class DataAssembly {
   }
 
   /** Creates all test assets for TCK catalog and negotiation scenarios. */
-  public static List<Asset> createAllAssets() {
-    return ASSET_IDS.stream().map(DataAssembly::createAsset).toList();
+  public static List<Asset> createAllAssets(String participantId) {
+    return ASSET_IDS.stream().map(id -> createAsset(id, participantId)).toList();
   }
 
   /** Creates a permissive policy definition used for all TCK test scenarios. */
-  public static PolicyDefinition createPolicyDefinition() {
+  public static PolicyDefinition createPolicyDefinition(String participantId) {
     return PolicyDefinition.Builder.newInstance()
         .id(POLICY_ID)
+        .participantContextId(participantId)
         .policy(
             Policy.Builder.newInstance()
                 .permission(
@@ -172,9 +173,10 @@ public class DataAssembly {
   }
 
   /** Creates a contract definition that matches all test assets via an empty asset selector. */
-  public static ContractDefinition createContractDefinition() {
+  public static ContractDefinition createContractDefinition(String participantId) {
     return ContractDefinition.Builder.newInstance()
         .id(CONTRACT_DEFINITION_ID)
+        .participantContextId(participantId)
         .accessPolicyId(POLICY_ID)
         .contractPolicyId(POLICY_ID)
         .build();
@@ -202,9 +204,11 @@ public class DataAssembly {
     boolean isConsumer = agreementId.startsWith(CONSUMER_AGREEMENT_PREFIX);
 
     return ContractNegotiation.Builder.newInstance()
+        .participantContextId(participantId)
         .contractAgreement(
             ContractAgreement.Builder.newInstance()
                 .id(agreementId)
+                .participantContextId(participantId)
                 .providerId(isConsumer ? TCK_PARTICIPANT_ID : participantId)
                 .consumerId(isConsumer ? participantId : TCK_PARTICIPANT_ID)
                 .assetId(TRANSFER_ASSET_ID)
@@ -571,9 +575,10 @@ public class DataAssembly {
         action);
   }
 
-  private static Asset createAsset(String id) {
+  private static Asset createAsset(String id, String participantId) {
     return Asset.Builder.newInstance()
         .id(id)
+        .participantContextId(participantId)
         .dataAddress(DataAddress.Builder.newInstance().type("HttpData").build())
         .build();
   }
