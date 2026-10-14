@@ -152,10 +152,15 @@ services:
   # OPA — Open Policy Agent for ODRL-PAP policy evaluation
   # -------------------------------------------------------------------------
   opa:
-    image: openpolicyagent/opa:1.11.0
+    # opa.yaml is baked into the image rather than bind-mounted so the stack runs
+    # unchanged where the Docker daemon cannot see the build host's filesystem
+    # (sidecar/rootless daemons, overlayfs CI). The image is rebuilt on every
+    # `--build`, which run-tck.sh and the compose invocations always pass.
+    image: fdsc-opa-local:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.opa-local
     command: ["run", "--server", "--addr", "0.0.0.0:8181", "-c", "/config/opa.yaml"]
-    volumes:
-      - ./config/tck/opa.yaml:/config/opa.yaml:ro
     healthcheck:
       test: ["CMD", "/opa", "eval", "true"]
       interval: 5s
