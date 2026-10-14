@@ -243,28 +243,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 10. Verify the data plane signaling listener is declared and published
+# 10. Verify the data plane signaling listener is intentionally absent
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== Checking data plane signaling API port ==="
+echo "=== Checking data plane signaling API is absent (Option A) ==="
 
-# data-plane-signaling opens an unconditional web context at EDC 0.18.0; the port
-# must be pinned in edc.properties and published by docker-compose, otherwise the
-# data plane cannot reach the control plane's registration API.
-# Extract a single deterministic numeric token with cut/tr (as the participant-id
-# checks above do), so a trailing comment or a second numeric token on the line
-# cannot capture multiple values and silently break the equality/publish checks.
-SIGNALING_PORT_EDC=$(grep -P '^web\.http\.signaling\.port=' "${EDC_PROPS}" | cut -d= -f2 | tr -dc '0-9' || true)
-
-if [[ -z "${SIGNALING_PORT_EDC}" ]]; then
-  fail "web.http.signaling.port is not set in edc.properties"
+# The TCK runtime uses the controlplane-tck assembly (controlplane-oid4vc minus
+# data-plane-signaling), so DataPlaneSignalingApiExtension is not on the classpath
+# and no signaling web context is registered. See
+# docs/migration/EDC-0.18.1-UPGRADE.md section 8.3.2 (Option A). The invariant is
+# therefore the inverse of the production image: there must be NO signaling
+# listener pinned in edc.properties and NO 8182 port published by docker-compose.
+if grep -qP '^web\.http\.signaling\.' "${EDC_PROPS}"; then
+  fail "web.http.signaling.* is set in edc.properties but the TCK runtime (controlplane-tck) has no signaling context"
 else
-  pass "Signaling API port declared in edc.properties: ${SIGNALING_PORT_EDC}"
-  if grep -qP "\"${SIGNALING_PORT_EDC}:${SIGNALING_PORT_EDC}\"" "${COMPOSE_FILE}"; then
-    pass "Signaling API port published in docker-compose: ${SIGNALING_PORT_EDC}"
-  else
-    fail "Signaling API port ${SIGNALING_PORT_EDC} not published in ${COMPOSE_FILE}"
-  fi
+  pass "No signaling listener declared in edc.properties (expected under Option A)"
+fi
+
+if grep -qP '"8182:8182"' "${COMPOSE_FILE}"; then
+  fail "Signaling API port 8182 is published in ${COMPOSE_FILE} but the TCK runtime has no signaling context"
+else
+  pass "No signaling API port published in docker-compose (expected under Option A)"
 fi
 
 # ---------------------------------------------------------------------------
