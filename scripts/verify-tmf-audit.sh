@@ -22,6 +22,7 @@
 # audit logs.
 #
 # Requires the TCK stack up to the connector, with a TMForum version that sends
+# TMF620 hub notifications (>= 1.10.1, production runs 1.14.1), e.g.:
 #   TMF_VERSION=1.14.1 docker compose -f docker-compose.tck.yml up --build -d edc
 #   ./scripts/verify-tmf-audit.sh
 ###############################################################################
@@ -76,8 +77,8 @@ subscribed() {
 }
 
 audited() {
-  [ "$(records_for audit.entity.id "${ASSET_ID}")" -ge "${EXPECTED_RECORDS}" ] \
-    && [ "$(records_for audit.entity.id "${OFFER_ID}")" -ge "${EXPECTED_RECORDS}" ]
+  [ "$(records_for catalog.asset.id "${ASSET_ID}")" -ge "${EXPECTED_RECORDS}" ] \
+    && [ "$(records_for catalog.definition.id "${OFFER_ID}")" -ge "${EXPECTED_RECORDS}" ]
 }
 
 log "Waiting for the connector to subscribe to the TMForum product catalog hub..."
@@ -123,7 +124,7 @@ EOF
 
 log "Waiting for the audit logs to reach the collector..."
 if ! wait_for "the audit logs" audited; then
-  log "asset records: $(records_for audit.entity.id "${ASSET_ID}"), offering records: $(records_for audit.entity.id "${OFFER_ID}")"
+  log "asset records: $(records_for catalog.asset.id "${ASSET_ID}"), offering records: $(records_for catalog.definition.id "${OFFER_ID}")"
   exit 1
 fi
 # let late duplicates arrive before checking that none was audited twice
@@ -140,12 +141,12 @@ check() {
   fi
 }
 
-check "asset audit records" "$(records_for audit.entity.id "${ASSET_ID}")" "${EXPECTED_RECORDS}"
-check "contract definition audit records" "$(records_for audit.entity.id "${OFFER_ID}")" "${EXPECTED_RECORDS}"
+check "asset audit records" "$(records_for catalog.asset.id "${ASSET_ID}")" "${EXPECTED_RECORDS}"
+check "contract definition audit records" "$(records_for catalog.definition.id "${OFFER_ID}")" "${EXPECTED_RECORDS}"
 check "records with the updated contract policy" \
-  "$(records_for edc.contract_policy.id "${POLICY_ID}-2")" 2
+  "$(records_for catalog.policy.id "${POLICY_ID}-2")" 3
 check "records with the initial contract policy" \
-  "$(records_for edc.contract_policy.id "${POLICY_ID}-1")" 1
+  "$(records_for catalog.policy.id "${POLICY_ID}-1")" 1
 
 if [ "${failures}" -gt 0 ]; then
   log "${failures} check(s) failed. Inspect: docker compose -f docker-compose.tck.yml logs otel-collector"

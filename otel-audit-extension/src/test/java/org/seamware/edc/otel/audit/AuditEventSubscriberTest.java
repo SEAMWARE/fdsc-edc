@@ -36,15 +36,19 @@ import java.util.List;
 import java.util.UUID;
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationAgreed;
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationEvent;
+import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationFinalized;
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationRequested;
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationTerminated;
+import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractOffer;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessProvisioningRequested;
+import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessStarted;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessTerminated;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.event.Event;
 import org.eclipse.edc.spi.event.EventEnvelope;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -87,15 +91,46 @@ public class AuditEventSubscriberTest {
     var agreed = records.get(1);
     assertEquals(Severity.INFO, agreed.getSeverity());
     assertEquals(EVENT_AT * 1_000_000, agreed.getTimestampEpochNanos());
-    assertEquals(
-        "contract.negotiation.agreed id=cn-1 REQUESTED->AGREED", agreed.getBody().asString());
+    assertEquals("Audit: ContractNegotiationAgreed", agreed.getBodyValue().asString());
+    assertEquals("ContractNegotiationAgreed", attr(agreed, AuditEventSubscriber.ATTR_EVENT_TYPE));
     assertEquals("contract_negotiation", attr(agreed, AuditEventSubscriber.ATTR_DOMAIN));
-    assertEquals("cn-1", attr(agreed, AuditEventSubscriber.ATTR_ENTITY_ID));
+    assertEquals("cn-1", attr(agreed, AuditEventSubscriber.ATTR_NEGOTIATION_ID));
     assertEquals("REQUESTED", attr(agreed, AuditEventSubscriber.ATTR_STATE_PREVIOUS));
     assertEquals("AGREED", attr(agreed, AuditEventSubscriber.ATTR_STATE_NEW));
     assertEquals("provider", attr(agreed, AuditEventSubscriber.ATTR_COUNTERPARTY_ID));
+    assertEquals(
+        "http://provider/protocol", attr(agreed, AuditEventSubscriber.ATTR_COUNTERPARTY_ADDRESS));
+    assertEquals("dataspace-protocol-http", attr(agreed, AuditEventSubscriber.ATTR_PROTOCOL));
     assertEquals("offer-1", attr(agreed, AuditEventSubscriber.ATTR_OFFER_ID));
     assertEquals("asset-1", attr(agreed, AuditEventSubscriber.ATTR_ASSET_ID));
+  }
+
+  @Test
+  void finalizedNegotiationCarriesTheAgreement() {
+    var agreement =
+        ContractAgreement.Builder.newInstance()
+            .id("agreement-1")
+            .providerId("provider")
+            .consumerId("consumer")
+            .assetId("asset-1")
+            .contractSigningDate(1_700_000_000L)
+            .policy(Policy.Builder.newInstance().build())
+            .build();
+    var builder = ContractNegotiationFinalized.Builder.newInstance().contractAgreement(agreement);
+
+    subscriber.on(envelope(negotiation(builder, null)));
+
+    var finalized = exporter.getFinishedLogRecordItems().get(0);
+    assertEquals("agreement-1", attr(finalized, AuditEventSubscriber.ATTR_CONTRACT_ID));
+    assertEquals("agreement-1", attr(finalized, AuditEventSubscriber.ATTR_AGREEMENT_ID));
+    assertEquals("provider", attr(finalized, AuditEventSubscriber.ATTR_PROVIDER));
+    assertEquals("consumer", attr(finalized, AuditEventSubscriber.ATTR_CONSUMER));
+    assertEquals("asset-1", attr(finalized, AuditEventSubscriber.ATTR_ASSET_ID));
+    assertEquals(
+        1_700_000_000L,
+        finalized
+            .getAttributes()
+            .get(AttributeKey.longKey(AuditEventSubscriber.ATTR_SIGNING_DATE)));
   }
 
   @Test
@@ -133,13 +168,37 @@ public class AuditEventSubscriberTest {
 
     var terminated = records.get(1);
     assertEquals(Severity.WARN, terminated.getSeverity());
+    assertEquals("Audit: TransferProcessTerminated", terminated.getBodyValue().asString());
     assertEquals("transfer_process", attr(terminated, AuditEventSubscriber.ATTR_DOMAIN));
+    assertEquals("tp-1", attr(terminated, AuditEventSubscriber.ATTR_TRANSFER_ID));
     assertEquals(
         "PROVISIONING_REQUESTED", attr(terminated, AuditEventSubscriber.ATTR_STATE_PREVIOUS));
     assertEquals("TERMINATED", attr(terminated, AuditEventSubscriber.ATTR_STATE_NEW));
+    assertEquals("asset-1", attr(terminated, AuditEventSubscriber.ATTR_ASSET_ID));
     assertEquals("agreement-1", attr(terminated, AuditEventSubscriber.ATTR_CONTRACT_ID));
     assertEquals("PROVIDER", attr(terminated, AuditEventSubscriber.ATTR_TRANSFER_TYPE));
-    assertEquals("boom", attr(terminated, AuditEventSubscriber.ATTR_REASON));
+    assertEquals("boom", attr(terminated, AuditEventSubscriber.ATTR_TRANSFER_REASON));
+  }
+
+  @Test
+  void startedTransferCarriesTheDestinationType() {
+    subscriber.on(
+        envelope(
+            TransferProcessStarted.Builder.newInstance()
+                .transferProcessId("rp-1")
+                .dataAddress(DataAddress.Builder.newInstance().type("HttpData").build())
+                .build()));
+    subscriber.on(
+        envelope(TransferProcessStarted.Builder.newInstance().transferProcessId("tp-2").build()));
+
+    var records = exporter.getFinishedLogRecordItems();
+    assertEquals("HttpData", attr(records.get(0), AuditEventSubscriber.ATTR_DESTINATION_TYPE));
+    assertEquals(
+        AuditEventSubscriber.UNKNOWN_TRANSFER_TYPE,
+        attr(records.get(0), AuditEventSubscriber.ATTR_TRANSFER_TYPE));
+    assertEquals(
+        AuditEventSubscriber.UNSPECIFIED_DESTINATION,
+        attr(records.get(1), AuditEventSubscriber.ATTR_DESTINATION_TYPE));
   }
 
   @Test

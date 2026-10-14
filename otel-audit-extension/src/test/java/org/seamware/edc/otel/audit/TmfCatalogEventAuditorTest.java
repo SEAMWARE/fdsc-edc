@@ -63,7 +63,12 @@ public class TmfCatalogEventAuditorTest {
         TmfCatalogEventAuditor.DOMAIN_ASSET, attr(record, AuditEventSubscriber.ATTR_DOMAIN));
     assertEquals(
         TmfCatalogEventAuditor.ACTION_CREATED, attr(record, TmfCatalogEventAuditor.ATTR_ACTION));
-    assertEquals("ASSET-1", attr(record, AuditEventSubscriber.ATTR_ENTITY_ID));
+    assertEquals("ASSET-1", attr(record, TmfCatalogEventAuditor.ATTR_ASSET_ID));
+    assertEquals("AssetCreated", attr(record, AuditEventSubscriber.ATTR_EVENT_TYPE));
+    assertEquals(
+        "ProductSpecificationCreateEvent",
+        attr(record, TmfCatalogEventAuditor.ATTR_TMF_EVENT_TYPE));
+    assertEquals("Audit: AssetCreated", record.getBodyValue().asString());
     assertEquals(SPEC_ID, attr(record, TmfCatalogEventAuditor.ATTR_TMF_ID));
     assertEquals(
         TmfCatalogEventAuditor.SOURCE_TMFORUM, attr(record, TmfCatalogEventAuditor.ATTR_SOURCE));
@@ -87,7 +92,8 @@ public class TmfCatalogEventAuditorTest {
         attr(record, AuditEventSubscriber.ATTR_DOMAIN));
     assertEquals(
         TmfCatalogEventAuditor.ACTION_UPDATED, attr(record, TmfCatalogEventAuditor.ATTR_ACTION));
-    assertEquals("CD-1", attr(record, AuditEventSubscriber.ATTR_ENTITY_ID));
+    assertEquals("CD-1", attr(record, TmfCatalogEventAuditor.ATTR_DEFINITION_ID));
+    assertEquals("ContractDefinitionUpdated", attr(record, AuditEventSubscriber.ATTR_EVENT_TYPE));
     assertEquals(SPEC_ID, attr(record, TmfCatalogEventAuditor.ATTR_TMF_SPECIFICATION_ID));
     assertEquals("P-CONTRACT", attr(record, TmfCatalogEventAuditor.ATTR_CONTRACT_POLICY_ID));
     assertEquals("P-ACCESS", attr(record, TmfCatalogEventAuditor.ATTR_ACCESS_POLICY_ID));
@@ -104,6 +110,8 @@ public class TmfCatalogEventAuditorTest {
         TmfCatalogEventAuditor.ACTION_STATE_CHANGED,
         attr(record, TmfCatalogEventAuditor.ATTR_ACTION));
     assertEquals("retired", attr(record, TmfCatalogEventAuditor.ATTR_LIFECYCLE_STATUS));
+    assertEquals(
+        "ContractDefinitionStateChanged", attr(record, AuditEventSubscriber.ATTR_EVENT_TYPE));
   }
 
   @Test

@@ -17,9 +17,9 @@
 package org.seamware.edc.otel.audit;
 
 import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_DOMAIN;
-import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_ENTITY_ID;
 import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_EVENT_ID;
-import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_EVENT_NAME;
+import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_EVENT_TYPE;
+import static org.seamware.edc.otel.audit.AuditEventSubscriber.BODY_PREFIX;
 
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.common.AttributesBuilder;
@@ -41,8 +41,10 @@ import org.eclipse.edc.spi.monitor.Monitor;
  * raises asset or contract definition events and the notifications are the only source.
  *
  * <p>Product specifications are audited as assets and product offerings as contract definitions,
- * using the TMForum externalId as entity id. Deletions are not covered: the marketplace retires
- * entities through lifecycleStatus instead of deleting them.
+ * using the TMForum externalId as entity id. Event types and attribute names follows the catalog
+ * audit logs of participant-edc-connector ({@code AssetCreated}, {@code catalog.asset.id}...); the
+ * original TMForum event type is kept in {@code tmf.event.type}. Deletions are not covered: the
+ * marketplace retires entities through lifecycleStatus instead of deleting them.
  */
 public class TmfCatalogEventAuditor {
 
@@ -58,8 +60,14 @@ public class TmfCatalogEventAuditor {
   static final String ATTR_TMF_ID = "tmf.id";
   static final String ATTR_LIFECYCLE_STATUS = "tmf.lifecycle_status";
   static final String ATTR_TMF_SPECIFICATION_ID = "tmf.product_specification.id";
-  static final String ATTR_CONTRACT_POLICY_ID = "edc.contract_policy.id";
-  static final String ATTR_ACCESS_POLICY_ID = "edc.access_policy.id";
+  static final String ATTR_TMF_EVENT_TYPE = "tmf.event.type";
+
+  // shared with particioant-edc-connector
+  static final String ATTR_ASSET_ID = "catalog.asset.id";
+  static final String ATTR_DEFINITION_ID = "catalog.definition.id";
+  static final String ATTR_CONTRACT_POLICY_ID = "catalog.policy.id";
+
+  static final String ATTR_ACCESS_POLICY_ID = "catalog.access.policy.id";
 
   // same keys as TMFEdcMapper, duplicated to keep this module independent of tmf-extension
   static final String TERM_NAME_CONTRACT_DEFINITION = "edc:contractDefinition";
@@ -69,6 +77,23 @@ public class TmfCatalogEventAuditor {
 
   private static final Map<String, String> ENTITY_DOMAINS =
       Map.of("ProductSpecification", DOMAIN_ASSET, "ProductOffering", DOMAIN_CONTRACT_DEFINITION);
+
+  // EDC event names for each domain and action, as emitted by participant-edc-connector. EDC has no
+  // state change event, the closest name is used instead
+  private static final Map<String, String> DOMAIN_EVENT_PREFIXES =
+      Map.of(DOMAIN_ASSET, "Asset", DOMAIN_CONTRACT_DEFINITION, "ContractDefinition");
+
+  private static final Map<String, String> ACTION_EVENT_SUFFIXES =
+      Map.of(
+          ACTION_CREATED,
+          "Created",
+          ACTION_UPDATED,
+          "Updated",
+          ACTION_STATE_CHANGED,
+          "StateChanged");
+
+  private static final Map<String, String> DOMAIN_ID_ATTRIBUTES =
+      Map.of(DOMAIN_ASSET, ATTR_ASSET_ID, DOMAIN_CONTRACT_DEFINITION, ATTR_DEFINITION_ID);
 
   private static final List<Map.Entry<String, String>> SUFFIX_ACTIONS =
       List.of(
@@ -119,14 +144,17 @@ public class TmfCatalogEventAuditor {
     }
 
     var externalId = asString(entity.get("externalId"));
+    var edcEventType =
+        DOMAIN_EVENT_PREFIXES.get(kind.domain()) + ACTION_EVENT_SUFFIXES.get(kind.action());
     var attributes =
         Attributes.builder()
+            .put(ATTR_EVENT_TYPE, edcEventType)
+            .put(ATTR_TMF_EVENT_TYPE, eventType)
             .put(ATTR_DOMAIN, kind.domain())
-            .put(ATTR_EVENT_NAME, eventType)
             .put(ATTR_ACTION, kind.action())
             .put(ATTR_SOURCE, SOURCE_TMFORUM)
             .put(ATTR_TMF_ID, tmfId);
-    putIfPresent(attributes, ATTR_ENTITY_ID, externalId);
+    putIfPresent(attributes, DOMAIN_ID_ATTRIBUTES.get(kind.domain()), externalId);
     putIfPresent(attributes, ATTR_EVENT_ID, asString(notification.get("eventId")));
     putIfPresent(attributes, ATTR_LIFECYCLE_STATUS, asString(entity.get("lifecycleStatus")));
     if (DOMAIN_CONTRACT_DEFINITION.equals(kind.domain())) {
@@ -149,7 +177,7 @@ public class TmfCatalogEventAuditor {
         .setObservedTimestamp(clock.instant())
         .setSeverity(Severity.INFO)
         .setSeverityText(Severity.INFO.name())
-        .setBody(String.format("%s id=%s tmfId=%s", eventType, externalId, tmfId))
+        .setBody(BODY_PREFIX + edcEventType)
         .setAllAttributes(attributes.build())
         .emit();
   }
