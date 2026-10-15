@@ -86,6 +86,16 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
+            <artifactId>connector-participant-context-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>participant-context-single-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
             <artifactId>data-plane-selector-spi</artifactId>
             <version>${edc.version}</version>
         </dependency>
@@ -140,12 +150,6 @@
             <groupId>org.openapitools</groupId>
             <artifactId>jackson-databind-nullable</artifactId>
             <version>${version.org.openapitools.jackson-databind-nullable}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-spi-2024</artifactId>
-            <version>${edc.version}</version>
         </dependency>
 
         <dependency>

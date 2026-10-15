@@ -38,15 +38,11 @@ package org.seamware.edc.transfer;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.List;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.DeprovisionedResource;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionResponse;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionedResource;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinition;
-import org.eclipse.edc.policy.model.*;
+import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.response.ResponseStatus;
 import org.eclipse.edc.spi.response.StatusResult;
@@ -55,16 +51,13 @@ import org.seamware.edc.HttpClientException;
 import org.seamware.edc.apisix.ApisixAdminClient;
 import org.seamware.edc.apisix.Route;
 import org.seamware.edc.domain.ExtendableProductSpecification;
-import org.seamware.edc.pap.*;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
-import org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
-import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 
-/** Provisioner for Transfer Processes in the FIWARE Dataspace Connector */
-public class FDSCDcpProvisioner
-    extends FDSCProvisioner<FDSCDcpProviderResourceDefinition, FDSCProvisionedResource> {
+/** Provisions the APISIX route that fronts a DCP-secured FDSC data flow. */
+public class FDSCDcpProvisioner extends FDSCProvisioner {
 
-  private final ObjectMapper objectMapper;
+  /** Resource type emitted by {@link FDSCDcpProviderResourceDefinitionGenerator}. */
+  public static final String PROVISION_TYPE = "fdsc-dcp-provider";
 
   public FDSCDcpProvisioner(
       Monitor monitor,
@@ -72,40 +65,38 @@ public class FDSCDcpProvisioner
       ProductCatalogApiClient productCatalogApiClient,
       TransferMapper transferMapper,
       ObjectMapper objectMapper) {
-    super(monitor, apisixAdminClient, productCatalogApiClient, transferMapper, objectMapper);
-    this.objectMapper = objectMapper.copy();
-    this.objectMapper.configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, false);
-    this.objectMapper.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
+    super(monitor, apisixAdminClient, productCatalogApiClient, transferMapper, copy(objectMapper));
+  }
+
+  private static ObjectMapper copy(ObjectMapper objectMapper) {
+    ObjectMapper copy = objectMapper.copy();
+    copy.configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, false);
+    copy.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
+    return copy;
   }
 
   @Override
-  public boolean canProvision(ResourceDefinition resourceDefinition) {
-
-    return resourceDefinition instanceof FDSCDcpProviderResourceDefinition;
+  public String supportedType() {
+    return PROVISION_TYPE;
   }
 
   @Override
-  public boolean canDeprovision(ProvisionedResource provisionedResource) {
-
-    return provisionedResource instanceof FDSCProvisionedResource;
-  }
-
-  /**
-   * -> create routes for service
-   *
-   * @param resourceDefinition that contains metadata associated with the provision operation
-   * @param policy the contract agreement usage policy for the asset being transferred
-   */
-  @Override
-  public CompletableFuture<StatusResult<ProvisionResponse>> provision(
-      FDSCDcpProviderResourceDefinition resourceDefinition, Policy policy) {
-    monitor.debug("Provision dcp resource " + resourceDefinition.getId());
+  public CompletableFuture<StatusResult<ProvisionedResource>> provision(
+      ProvisionResource provisionResource) {
+    monitor.debug("Provision dcp resource " + provisionResource.getId());
 
     return CompletableFuture.supplyAsync(
         () -> {
           try {
+            Optional<String> assetId = stringProperty(provisionResource, ASSET_ID_PROPERTY);
+            if (assetId.isEmpty()) {
+              return StatusResult.failure(
+                  ResponseStatus.FATAL_ERROR,
+                  "Without an asset id, no FDSC Provider can be provisioned.");
+            }
+
             Optional<ExtendableProductSpecification> optionalExtendableProductSpecification =
-                productCatalogApiClient.getProductSpecByExternalId(resourceDefinition.getAssetId());
+                productCatalogApiClient.getProductSpecByExternalId(assetId.get());
             if (optionalExtendableProductSpecification.isEmpty()) {
               return StatusResult.failure(
                   ResponseStatus.FATAL_ERROR,
@@ -122,19 +113,12 @@ public class FDSCDcpProvisioner
             }
 
             Route serviceRoute =
-                transferMapper.toDcpServiceRoute(resourceDefinition, upstreamAddress.get());
+                transferMapper.toDcpServiceRoute(
+                    provisionResource.getFlowId(), upstreamAddress.get());
             apisixAdminClient.addRoute(serviceRoute);
 
             return StatusResult.success(
-                ProvisionResponse.Builder.newInstance()
-                    .inProcess(false)
-                    .resource(
-                        FDSCProvisionedResource.Builder.newInstance()
-                            .id(UUID.randomUUID().toString())
-                            .resourceDefinitionId(resourceDefinition.getId())
-                            .transferProcessId(resourceDefinition.getTransferProcessId())
-                            .build())
-                    .build());
+                ProvisionedResource.Builder.from(provisionResource).build());
           } catch (BadGatewayException e) {
             monitor.warning("Was not able to provision, cannot reach remote server.", e);
             return StatusResult.failure(ResponseStatus.ERROR_RETRY);
@@ -148,20 +132,17 @@ public class FDSCDcpProvisioner
 
   @Override
   public CompletableFuture<StatusResult<DeprovisionedResource>> deprovision(
-      FDSCProvisionedResource provisionedResource, Policy policy) {
-    monitor.debug("Deprovision " + provisionedResource.getTransferProcessId());
+      ProvisionResource provisionResource) {
+    monitor.debug("Deprovision " + provisionResource.getFlowId());
     return CompletableFuture.supplyAsync(
         () -> {
           try {
-            String serviceRouteId = transferMapper.toServiceRouteId(provisionedResource);
+            String serviceRouteId = transferMapper.toServiceRouteId(provisionResource.getFlowId());
 
             executeDeletion(apisixAdminClient::deleteRoute, serviceRouteId);
 
             return StatusResult.success(
-                DeprovisionedResource.Builder.newInstance()
-                    .inProcess(false)
-                    .provisionedResourceId(provisionedResource.getId())
-                    .build());
+                DeprovisionedResource.Builder.from(provisionResource).build());
           } catch (HttpClientException e) {
             monitor.warning(
                 "Was not able to deprovision, downstream server not reachable. Retry.", e);
@@ -172,34 +153,5 @@ public class FDSCDcpProvisioner
             return StatusResult.failure(ResponseStatus.FATAL_ERROR, "Was not able to deprovision.");
           }
         });
-  }
-
-  public <T> Optional<T> getCharValue(
-      ExtendableProductSpecification extendableProductSpecification,
-      String valueKey,
-      Class<T> targetClass) {
-    List<CharacteristicValueSpecificationVO> cvsList =
-        Optional.ofNullable(extendableProductSpecification.getProductSpecCharacteristic())
-            .orElse(List.of())
-            .stream()
-            .filter(psc -> Optional.ofNullable(psc.getId()).orElse("").equals(valueKey))
-            .map(ProductSpecificationCharacteristicVO::getProductSpecCharacteristicValue)
-            .map(Optional::ofNullable)
-            .map(ol -> ol.orElse(List.of()))
-            .flatMap(List::stream)
-            .toList();
-    return Optional.ofNullable(
-            cvsList.stream()
-                .filter(cvs -> Optional.ofNullable(cvs.getIsDefault()).orElse(false))
-                .findAny()
-                .orElseGet(
-                    () -> {
-                      if (cvsList.isEmpty()) {
-                        return null;
-                      }
-                      return cvsList.getFirst();
-                    }))
-        .map(CharacteristicValueSpecificationVO::getValue)
-        .map(val -> objectMapper.convertValue(val, targetClass));
   }
 }

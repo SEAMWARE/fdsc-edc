@@ -13,7 +13,7 @@ The EDC framework provides a `TransactionContext` SPI (`org.eclipse.edc.transact
 | Location | Usage |
 |---|---|
 | `TMFBackedContractNegotiationStore` | **Not used.** Multi-step API calls have no transactional guarantee. |
-| `TMFLeaseContext` | Wraps in-memory lease operations in `transactionContext.execute()`. With `NoopTransactionContext`, this is a no-op wrapper. |
+| `TMFLeaseContext` | **Removed in the EDC 0.18.1 upgrade.** It wrapped in-memory lease operations in `transactionContext.execute()`, but nothing injected a `LeaseContext`; leasing runs through `LeaseHolder` / `TMFBackedLeaseHolder`. |
 | `ContractNegotiationTriggerSubscriber` (test-extension) | Wraps `findByIdAndLease` + `save` in a single `transactionContext.execute()` block — shows the intended EDC pattern. |
 | `TMFContractNegotiationExtension` | Does not inject or wire `TransactionContext`. |
 
@@ -261,6 +261,6 @@ The `save()` flow becomes:
 
 2. **Should `nextNotLeased` and `findByIdAndLease` also be wrapped in transactions?** These are read-heavy operations with lease acquisition. If `acquireLease` fails after reads, there's nothing to compensate. The transaction wrapper would be a no-op.
 
-3. **Should `TMFTransactionContext` replace `TMFLeaseContext`'s usage of `TransactionContext`?** Yes — once `TMFTransactionContext` is registered as the `TransactionContext` implementation, `TMFLeaseContext` will automatically use it. Since `TMFLeaseContext` is in-memory only, the saga wrapper adds negligible overhead.
+3. **Should `TMFTransactionContext` replace `TMFLeaseContext`'s usage of `TransactionContext`?** Moot — `TMFLeaseContext` was deleted in the EDC 0.18.1 upgrade as dead code. Leases are taken through `LeaseHolder`, which is not transaction-wrapped.
 
 4. **Thread-safety of SagaContext.** Since `save()` holds the write lock via `LockManager`, and `SagaContext` is per-thread via `ThreadLocal`, concurrent access to the same `SagaContext` is not possible. No additional synchronization is needed.

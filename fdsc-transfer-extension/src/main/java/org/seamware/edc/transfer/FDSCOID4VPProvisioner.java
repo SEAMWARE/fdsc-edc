@@ -45,15 +45,14 @@ import jakarta.json.Json;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
 import java.io.StringReader;
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.DeprovisionedResource;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionResponse;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionedResource;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinition;
+import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
+import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
+import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -67,27 +66,28 @@ import org.seamware.edc.apisix.Route;
 import org.seamware.edc.ccs.CredentialsConfigServiceClient;
 import org.seamware.edc.ccs.MetaQueryMixin;
 import org.seamware.edc.domain.ExtendableProductSpecification;
-import org.seamware.edc.pap.*;
+import org.seamware.edc.pap.OdrlPapClient;
 import org.seamware.edc.store.TMFEdcMapper;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 import org.seamware.pap.model.PolicyPathVO;
 import org.seamware.pap.model.ServiceCreateVO;
-import org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
-import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 
-/** Provisioner for Transfer Processes in the FIWARE Dataspace Connector */
-public class FDSCOID4VPProvisioner
-    extends FDSCProvisioner<FDSCOID4VPProviderResourceDefinition, FDSCProvisionedResource> {
+/**
+ * Provisions the APISIX route, PAP policy and credentials-config entry for an OID4VP-secured FDSC
+ * data flow.
+ *
+ * <p>The usage policy is no longer handed to the provisioner: since EDC 0.16.0 provisioning runs in
+ * the data plane, where only the flow's agreement id is known, so the policy is re-read from the
+ * agreement store.
+ */
+public class FDSCOID4VPProvisioner extends FDSCProvisioner {
 
-  private static final String SERVICE_CONFIGURATION_KEY = "serviceConfiguration";
-  private static final String TARGET_KEY = "targetSpecification";
-  private static final String UPSTREAM_KEY = "upstreamAddress";
-  private static final String ODRL_TARGET_KEY = "target";
-  public static final String ODRL_UID = "odrl:uid";
+  /** Resource type emitted by {@link FDSCOID4VPProviderResourceDefinitionGenerator}. */
+  public static final String PROVISION_TYPE = "fdsc-oid4vp-provider";
 
-  private final ObjectMapper objectMapper;
   private final CredentialsConfigServiceClient credentialsConfigServiceClient;
   private final OdrlPapClient odrlPapClient;
+  private final ContractNegotiationStore contractNegotiationStore;
   private final TMFEdcMapper tmfEdcMapper;
   private final JsonLd jsonLd;
 
@@ -97,51 +97,63 @@ public class FDSCOID4VPProvisioner
       CredentialsConfigServiceClient credentialsConfigServiceClient,
       OdrlPapClient odrlPapClient,
       ProductCatalogApiClient productCatalogApiClient,
+      ContractNegotiationStore contractNegotiationStore,
       TransferMapper transferMapper,
       ObjectMapper objectMapper,
       TMFEdcMapper tmfEdcMapper,
       JsonLd jsonLd) {
-    super(monitor, apisixAdminClient, productCatalogApiClient, transferMapper, objectMapper);
+    super(monitor, apisixAdminClient, productCatalogApiClient, transferMapper, copy(objectMapper));
     this.credentialsConfigServiceClient = credentialsConfigServiceClient;
     this.odrlPapClient = odrlPapClient;
-    this.objectMapper = objectMapper.copy();
+    this.contractNegotiationStore = contractNegotiationStore;
     this.tmfEdcMapper = tmfEdcMapper;
     this.jsonLd = jsonLd;
-    this.objectMapper.configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, false);
-    this.objectMapper.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
-    this.objectMapper.addMixIn(MetaDataQueryVO.class, MetaQueryMixin.class);
+  }
+
+  private static ObjectMapper copy(ObjectMapper objectMapper) {
+    ObjectMapper copy = objectMapper.copy();
+    copy.configure(DeserializationFeature.FAIL_ON_MISSING_CREATOR_PROPERTIES, false);
+    copy.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
+    copy.addMixIn(MetaDataQueryVO.class, MetaQueryMixin.class);
+    return copy;
   }
 
   @Override
-  public boolean canProvision(ResourceDefinition resourceDefinition) {
-
-    return resourceDefinition instanceof FDSCOID4VPProviderResourceDefinition;
-  }
-
-  @Override
-  public boolean canDeprovision(ProvisionedResource resourceDefinition) {
-
-    return resourceDefinition instanceof FDSCProvisionedResource;
+  public String supportedType() {
+    return PROVISION_TYPE;
   }
 
   /**
-   * Policies and Trusted Issuers Entries are created by the contract-management -> create routes
-   * for service and well-known -> conditionally: create credentials config entry -> create policies
-   * at the pap
-   *
-   * @param resourceDefinition that contains metadata associated with the provision operation
-   * @param policy the contract agreement usage policy for the asset being transferred
-   * @return
+   * Creates the service and well-known routes, the PAP policy and - when the spec provides one -
+   * the credentials-config entry. Trusted-issuer entries are created by the contract management.
    */
   @Override
-  public CompletableFuture<StatusResult<ProvisionResponse>> provision(
-      FDSCOID4VPProviderResourceDefinition resourceDefinition, Policy policy) {
+  public CompletableFuture<StatusResult<ProvisionedResource>> provision(
+      ProvisionResource provisionResource) {
+    String serviceId = provisionResource.getFlowId();
+
     return CompletableFuture.supplyAsync(
         () -> {
           try {
+            Optional<String> assetId = stringProperty(provisionResource, ASSET_ID_PROPERTY);
+            if (assetId.isEmpty()) {
+              return StatusResult.failure(
+                  ResponseStatus.FATAL_ERROR,
+                  "Without an asset id, no FDSC Provider can be provisioned.");
+            }
+
+            Optional<Policy> agreementPolicy =
+                stringProperty(provisionResource, AGREEMENT_ID_PROPERTY)
+                    .map(contractNegotiationStore::findContractAgreement)
+                    .map(ContractAgreement::getPolicy);
+            if (agreementPolicy.isEmpty()) {
+              return StatusResult.failure(
+                  ResponseStatus.FATAL_ERROR,
+                  "Without the agreement policy, no FDSC Provider can be provisioned.");
+            }
 
             Optional<ExtendableProductSpecification> optionalExtendableProductSpecification =
-                productCatalogApiClient.getProductSpecByExternalId(resourceDefinition.getAssetId());
+                productCatalogApiClient.getProductSpecByExternalId(assetId.get());
             if (optionalExtendableProductSpecification.isEmpty()) {
               return StatusResult.failure(
                   ResponseStatus.FATAL_ERROR,
@@ -157,20 +169,17 @@ public class FDSCOID4VPProvisioner
                   "Without an configured upstreamAddress, the service cannot be provisioned.");
             }
 
-            String serviceId = resourceDefinition.getTransferProcessId();
-
             PolicyPathVO policyPathVO =
                 odrlPapClient.createService(new ServiceCreateVO().id(serviceId));
 
-            // in order to not conflict in the pap, the policy should be identified by the process,
+            // in order to not conflict in the pap, the policy should be identified by the flow,
             // rather than its original id
-            policy
-                .getExtensibleProperties()
-                .put(ODRL_UID, resourceDefinition.getTransferProcessId());
+            Policy policy =
+                agreementPolicy.get().toBuilder().extensibleProperty(ODRL_UID, serviceId).build();
             // translate the policy into expanded odrl-jsonld
             Map<String, Object> odrlPolicy = tmfEdcMapper.fromEdcPolicy(policy);
             String policyString = objectMapper.writeValueAsString(odrlPolicy);
-            JsonObject compactedPolicy = null;
+            JsonObject compactedPolicy;
             try (JsonReader reader = Json.createReader(new StringReader(policyString))) {
               compactedPolicy =
                   jsonLd
@@ -192,15 +201,13 @@ public class FDSCOID4VPProvisioner
             if (targetSpec.isPresent()) {
               monitor.debug("Replace target with the asset specific config.");
               policyMap.put(ODRL_TARGET_KEY, targetSpec.get());
-              odrlPapClient.createPolicy(serviceId, policyMap);
-            } else {
-              odrlPapClient.createPolicy(serviceId, policyMap);
             }
+            odrlPapClient.createPolicy(serviceId, policyMap);
 
             Route serviceRoute =
                 transferMapper.toOid4VpServiceRoute(
-                    resourceDefinition, upstreamAddress.get(), policyPathVO.getPolicyPath());
-            Route wellKnownRoute = transferMapper.toWellknownRoute(resourceDefinition);
+                    serviceId, upstreamAddress.get(), policyPathVO.getPolicyPath());
+            Route wellKnownRoute = transferMapper.toWellknownRoute(serviceId);
             apisixAdminClient.addRoute(serviceRoute);
             apisixAdminClient.addRoute(wellKnownRoute);
 
@@ -209,27 +216,19 @@ public class FDSCOID4VPProvisioner
                 .flatMap(eps -> getCharValue(eps, SERVICE_CONFIGURATION_KEY, ServiceVO.class))
                 .ifPresent(
                     serviceVO -> {
-                      serviceVO.id(resourceDefinition.getTransferProcessId());
+                      serviceVO.id(serviceId);
                       credentialsConfigServiceClient.createService(serviceVO);
                     });
 
             return StatusResult.success(
-                ProvisionResponse.Builder.newInstance()
-                    .inProcess(false)
-                    .resource(
-                        FDSCProvisionedResource.Builder.newInstance()
-                            .id(UUID.randomUUID().toString())
-                            .resourceDefinitionId(resourceDefinition.getId())
-                            .transferProcessId(resourceDefinition.getTransferProcessId())
-                            .build())
-                    .build());
+                ProvisionedResource.Builder.from(provisionResource).build());
 
           } catch (HttpClientException e) {
             // Best-effort cleanup of any partial state left in the PAP so the
             // next retry doesn't fail with "Service ... already exists". The
             // PAP service is created first, so any later failure may leave it
             // dangling and turn every retry into a permanent error.
-            rollbackPapService(resourceDefinition);
+            rollbackPapService(serviceId);
             if (e.getStatusCode().isPresent() && e.getStatusCode().get() == 400) {
               return StatusResult.failure(
                   ResponseStatus.FATAL_ERROR,
@@ -238,7 +237,7 @@ public class FDSCOID4VPProvisioner
             monitor.warning("Was not able to provision, remote server issue. Retry.", e);
             return StatusResult.failure(ResponseStatus.ERROR_RETRY, "Unable to provision");
           } catch (Exception e) {
-            rollbackPapService(resourceDefinition);
+            rollbackPapService(serviceId);
             monitor.warning("Was not able to provision.", e);
             return StatusResult.failure(ResponseStatus.FATAL_ERROR, "Unable to provision");
           }
@@ -246,19 +245,19 @@ public class FDSCOID4VPProvisioner
   }
 
   /**
-   * Best-effort delete of the PAP service for this transfer process. Swallows any error: if the
-   * service was never created (or already gone) the delete is a no-op, and if the PAP itself is
-   * down the original provision failure already surfaces the same condition. Without this, a single
+   * Best-effort delete of the PAP service for this flow. Swallows any error: if the service was
+   * never created (or already gone) the delete is a no-op, and if the PAP itself is down the
+   * original provision failure already surfaces the same condition. Without this, a single
    * transient failure between createService and a later step leaves an orphan that turns every
    * subsequent retry into "already exists" until the transfer is permanently terminated.
    */
-  private void rollbackPapService(FDSCOID4VPProviderResourceDefinition resourceDefinition) {
+  private void rollbackPapService(String serviceId) {
     try {
-      odrlPapClient.deleteService(resourceDefinition.getTransferProcessId());
+      odrlPapClient.deleteService(serviceId);
     } catch (Exception cleanupFailure) {
       monitor.debug(
           "Rollback of PAP service "
-              + resourceDefinition.getTransferProcessId()
+              + serviceId
               + " failed (ignored): "
               + cleanupFailure.getMessage());
     }
@@ -266,31 +265,26 @@ public class FDSCOID4VPProvisioner
 
   @Override
   public CompletableFuture<StatusResult<DeprovisionedResource>> deprovision(
-      FDSCProvisionedResource provisionedResource, Policy policy) {
-    monitor.debug("Deprovision " + provisionedResource.getTransferProcessId());
+      ProvisionResource provisionResource) {
+    String serviceId = provisionResource.getFlowId();
+    monitor.debug("Deprovision " + serviceId);
 
     return CompletableFuture.supplyAsync(
         () -> {
           try {
 
-            String serviceRouteId = transferMapper.toServiceRouteId(provisionedResource);
-            String wellKnownRouteId = transferMapper.toWellKnownRouteId(provisionedResource);
+            String serviceRouteId = transferMapper.toServiceRouteId(serviceId);
+            String wellKnownRouteId = transferMapper.toWellKnownRouteId(serviceId);
 
-            executeDeletion(
-                odrlPapClient::deleteService, provisionedResource.getTransferProcessId());
+            executeDeletion(odrlPapClient::deleteService, serviceId);
 
             executeDeletion(apisixAdminClient::deleteRoute, serviceRouteId);
             executeDeletion(apisixAdminClient::deleteRoute, wellKnownRouteId);
 
-            executeDeletion(
-                credentialsConfigServiceClient::deleteService,
-                provisionedResource.getTransferProcessId());
+            executeDeletion(credentialsConfigServiceClient::deleteService, serviceId);
 
             return StatusResult.success(
-                DeprovisionedResource.Builder.newInstance()
-                    .inProcess(false)
-                    .provisionedResourceId(provisionedResource.getId())
-                    .build());
+                DeprovisionedResource.Builder.from(provisionResource).build());
           } catch (HttpClientException e) {
             monitor.warning("Was not able to deprovision, remote server error.", e);
             return StatusResult.failure(ResponseStatus.ERROR_RETRY, "Was not able to deprovision.");
@@ -299,39 +293,5 @@ public class FDSCOID4VPProvisioner
             return StatusResult.failure(ResponseStatus.FATAL_ERROR, "Was not able to deprovision.");
           }
         });
-  }
-
-  private Optional<CharacteristicValueSpecificationVO> getCharValueSpec(
-      ExtendableProductSpecification extendableProductSpecification, String valueKey) {
-    List<CharacteristicValueSpecificationVO> cvsList =
-        Optional.ofNullable(extendableProductSpecification.getProductSpecCharacteristic())
-            .orElse(List.of())
-            .stream()
-            .filter(psc -> Optional.ofNullable(psc.getId()).orElse("").equals(valueKey))
-            .map(ProductSpecificationCharacteristicVO::getProductSpecCharacteristicValue)
-            .map(Optional::ofNullable)
-            .map(ol -> ol.orElse(List.of()))
-            .flatMap(List::stream)
-            .toList();
-    return Optional.ofNullable(
-        cvsList.stream()
-            .filter(cvs -> Optional.ofNullable(cvs.getIsDefault()).orElse(false))
-            .findAny()
-            .orElseGet(
-                () -> {
-                  if (cvsList.isEmpty()) {
-                    return null;
-                  }
-                  return cvsList.getFirst();
-                }));
-  }
-
-  public <T> Optional<T> getCharValue(
-      ExtendableProductSpecification extendableProductSpecification,
-      String valueKey,
-      Class<T> targetClass) {
-    return getCharValueSpec(extendableProductSpecification, valueKey)
-        .map(CharacteristicValueSpecificationVO::getValue)
-        .map(val -> objectMapper.convertValue(val, targetClass));
   }
 }

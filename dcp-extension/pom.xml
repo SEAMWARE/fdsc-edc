@@ -19,12 +19,12 @@
     <dependencies>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>identity-trust-core</artifactId>
+            <artifactId>decentralized-claims-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>identity-trust-spi</artifactId>
+            <artifactId>decentralized-claims-spi</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -49,7 +49,7 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>identity-trust-transform</artifactId>
+            <artifactId>decentralized-claims-transform</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>

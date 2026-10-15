@@ -37,17 +37,39 @@ package org.seamware.edc.transfer;
  */
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
-import org.eclipse.edc.connector.controlplane.transfer.spi.provision.Provisioner;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionedResource;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinition;
+import org.eclipse.edc.connector.dataplane.spi.provision.Deprovisioner;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.Provisioner;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.seamware.edc.HttpClientException;
 import org.seamware.edc.apisix.ApisixAdminClient;
+import org.seamware.edc.domain.ExtendableProductSpecification;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
+import org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
+import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
 
-public abstract class FDSCProvisioner<RD extends ResourceDefinition, PR extends ProvisionedResource>
-    implements Provisioner<RD, PR> {
+/**
+ * Shared state and helpers for the data-plane provisioners that configure the FDSC gateway.
+ *
+ * <p>Since EDC 0.16.0 provisioning is a data-plane concern: a {@link ProvisionResource} carries the
+ * flow id and the properties stashed by the matching {@code ResourceDefinitionGenerator} instead of
+ * the control-plane {@code ResourceDefinition} that used to be passed in.
+ */
+public abstract class FDSCProvisioner implements Provisioner, Deprovisioner {
+
+  /**
+   * Property key under which the generators stash the asset id on the {@link ProvisionResource}.
+   */
+  public static final String ASSET_ID_PROPERTY = "assetId";
+
+  /**
+   * Property key under which the generators stash the agreement id on the {@link
+   * ProvisionResource}.
+   */
+  public static final String AGREEMENT_ID_PROPERTY = "agreementId";
 
   protected static final String SERVICE_CONFIGURATION_KEY = "serviceConfiguration";
   protected static final String TARGET_KEY = "targetSpecification";
@@ -74,6 +96,11 @@ public abstract class FDSCProvisioner<RD extends ResourceDefinition, PR extends 
     this.objectMapper = objectMapper;
   }
 
+  /** Reads a string property stashed on the resource by the generator; empty when absent. */
+  protected static Optional<String> stringProperty(ProvisionResource resource, String key) {
+    return Optional.ofNullable(resource.getProperty(key)).map(Object::toString);
+  }
+
   protected void executeDeletion(Consumer<String> deletionMethod, String idToDelete) {
 
     try {
@@ -89,5 +116,40 @@ public abstract class FDSCProvisioner<RD extends ResourceDefinition, PR extends 
         throw e;
       }
     }
+  }
+
+  /** Resolves a product-spec characteristic, preferring the one flagged as default. */
+  protected Optional<CharacteristicValueSpecificationVO> getCharValueSpec(
+      ExtendableProductSpecification extendableProductSpecification, String valueKey) {
+    List<CharacteristicValueSpecificationVO> cvsList =
+        Optional.ofNullable(extendableProductSpecification.getProductSpecCharacteristic())
+            .orElse(List.of())
+            .stream()
+            .filter(psc -> Optional.ofNullable(psc.getId()).orElse("").equals(valueKey))
+            .map(ProductSpecificationCharacteristicVO::getProductSpecCharacteristicValue)
+            .map(Optional::ofNullable)
+            .map(ol -> ol.orElse(List.of()))
+            .flatMap(List::stream)
+            .toList();
+    return Optional.ofNullable(
+        cvsList.stream()
+            .filter(cvs -> Optional.ofNullable(cvs.getIsDefault()).orElse(false))
+            .findAny()
+            .orElseGet(
+                () -> {
+                  if (cvsList.isEmpty()) {
+                    return null;
+                  }
+                  return cvsList.getFirst();
+                }));
+  }
+
+  public <T> Optional<T> getCharValue(
+      ExtendableProductSpecification extendableProductSpecification,
+      String valueKey,
+      Class<T> targetClass) {
+    return getCharValueSpec(extendableProductSpecification, valueKey)
+        .map(CharacteristicValueSpecificationVO::getValue)
+        .map(val -> objectMapper.convertValue(val, targetClass));
   }
 }

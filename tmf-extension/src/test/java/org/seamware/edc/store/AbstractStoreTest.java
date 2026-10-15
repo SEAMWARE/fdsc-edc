@@ -43,9 +43,15 @@ public abstract class AbstractStoreTest {
   protected static final String TEST_PROVIDER_DID = "did:web:test-provider.io";
   protected static final String TEST_CONSUMER_TMF_ID = "tmf-consumer";
   protected static final String TEST_PROVIDER_TMF_ID = "tmf-provider";
+  protected static final String TEST_PARTICIPANT_CONTEXT_ID = "test-participant-context";
 
   protected static final String TEST_ASSET_ID = "asset-id";
   protected static final String TEST_AGREEMENT_ID = "agreement-id";
+  // Since 0.18.1 the DSP-visible agreement id is independent of the EDC row id, so the
+  // fixtures keep them distinct - equal ids would hide a mapper that conflates the two.
+  protected static final String TEST_DSP_AGREEMENT_ID = "dsp-agreement-id";
+  protected static final Map<String, Object> TEST_AGREEMENT_CLAIMS =
+      Map.of("sub", TEST_CONSUMER_DID);
   protected static final String TEST_NEGOTIATION_ID = "negotiation-id";
   protected static final String TEST_CORRELATION_ID = "correlation-id";
   protected static final String TEST_OFFER_ID = "offer-id";
@@ -196,13 +202,17 @@ public abstract class AbstractStoreTest {
         .addCharacteristicItem(new CharacteristicVO().name("provider-id").value(TEST_PROVIDER_DID))
         .addCharacteristicItem(new CharacteristicVO().name("policy").value(getTestOdrlPolicy()))
         .addCharacteristicItem(new CharacteristicVO().name("consumer-id").value(TEST_CONSUMER_DID))
-        .addCharacteristicItem(new CharacteristicVO().name("signing-date").value(1));
+        .addCharacteristicItem(new CharacteristicVO().name("signing-date").value(1))
+        .addCharacteristicItem(
+            new CharacteristicVO().name("agreement-id").value(TEST_DSP_AGREEMENT_ID));
     return agreementVO;
   }
 
   protected static ContractAgreement getValidContractAgreement() {
     return ContractAgreement.Builder.newInstance()
         .id(TEST_AGREEMENT_ID)
+        .agreementId(TEST_DSP_AGREEMENT_ID)
+        .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
         .assetId(TEST_ASSET_ID)
         .consumerId(TEST_CONSUMER_DID)
         .providerId(TEST_PROVIDER_DID)
@@ -367,6 +377,7 @@ public abstract class AbstractStoreTest {
     ContractNegotiation.Builder builder =
         ContractNegotiation.Builder.newInstance()
             .id(TEST_NEGOTIATION_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
             .type(type)
             .counterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
             .correlationId(TEST_CORRELATION_ID)

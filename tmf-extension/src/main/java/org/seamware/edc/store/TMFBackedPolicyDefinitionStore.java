@@ -34,10 +34,15 @@ public class TMFBackedPolicyDefinitionStore implements PolicyDefinitionStore {
 
   private final ProductCatalogApiClient productCatalogApiClient;
 
+  private final String participantContextId;
+
   public TMFBackedPolicyDefinitionStore(
-      Monitor monitor, ProductCatalogApiClient productCatalogApiClient) {
+      Monitor monitor,
+      ProductCatalogApiClient productCatalogApiClient,
+      String participantContextId) {
     this.monitor = monitor;
     this.productCatalogApiClient = productCatalogApiClient;
+    this.participantContextId = participantContextId;
   }
 
   @Override
@@ -50,6 +55,7 @@ public class TMFBackedPolicyDefinitionStore implements PolicyDefinitionStore {
                   PolicyDefinition.Builder.newInstance()
                       .policy(p)
                       .id(TMFEdcMapper.getIdFromPolicy(p))
+                      .participantContextId(participantContextId)
                       .build())
           .orElse(null);
     } catch (RuntimeException e) {

@@ -47,8 +47,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.util.Optional;
 import okhttp3.OkHttpClient;
-import org.eclipse.edc.connector.controlplane.transfer.spi.provision.ProvisionManager;
-import org.eclipse.edc.connector.controlplane.transfer.spi.provision.ResourceManifestGenerator;
+import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
 import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
 import org.eclipse.edc.connector.dataplane.selector.spi.instance.DataPlaneInstance;
 import org.eclipse.edc.connector.dataplane.selector.spi.instance.DataPlaneInstanceStates;
@@ -56,6 +55,10 @@ import org.eclipse.edc.connector.dataplane.selector.spi.store.DataPlaneInstanceS
 import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
 import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceServiceRegistry;
 import org.eclipse.edc.connector.dataplane.spi.iam.PublicEndpointGeneratorService;
+import org.eclipse.edc.connector.dataplane.spi.provision.Deprovisioner;
+import org.eclipse.edc.connector.dataplane.spi.provision.Provisioner;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionerManager;
+import org.eclipse.edc.connector.dataplane.spi.provision.ResourceDefinitionGeneratorManager;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provider;
@@ -86,7 +89,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
   public static final String DATAPLANE_DCP_ID = "FDSC-DCP";
   public static final String FDSC_TYPE = "FDSC";
 
-  @Inject public ProvisionManager provisionManager;
+  @Inject public ProvisionerManager provisionerManager;
 
   @Inject public Monitor monitor;
 
@@ -98,7 +101,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
 
   @Inject public CriterionOperatorRegistry criterionOperatorRegistry;
 
-  @Inject public ResourceManifestGenerator resourceManifestGenerator;
+  @Inject public ResourceDefinitionGeneratorManager resourceDefinitionGeneratorManager;
 
   @Inject public DataPlaneInstanceStore dataPlaneInstanceStore;
 
@@ -115,6 +118,10 @@ public class FDSCTransferControlExtension implements ServiceExtension {
   @Inject public TMFEdcMapper tmfEdcMapper;
 
   @Inject public JsonLd jsonLd;
+
+  @Inject public TMFConfig tmfConfig;
+
+  @Inject public ContractNegotiationStore contractNegotiationStore;
 
   private ApisixAdminClient apisixAdminClient;
   private CredentialsConfigServiceClient credentialsConfigServiceClient;
@@ -179,11 +186,12 @@ public class FDSCTransferControlExtension implements ServiceExtension {
     }
     webService.registerResource(new JwksController(vault, monitor));
     webService.registerResource(
-        new OidConfigController(monitor, transferConfig, context.getParticipantId()));
+        new OidConfigController(monitor, transferConfig, tmfConfig.getParticipantId()));
 
     FDSCDcpProviderResourceDefinitionGenerator fdscProviderResourceDefinitionGenerator =
         new FDSCDcpProviderResourceDefinitionGenerator(monitor);
-    resourceManifestGenerator.registerGenerator(fdscProviderResourceDefinitionGenerator);
+    resourceDefinitionGeneratorManager.registerProviderGenerator(
+        fdscProviderResourceDefinitionGenerator);
 
     FDSCDcpProvisioner fdscDcpProvisioner =
         new FDSCDcpProvisioner(
@@ -192,7 +200,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             productCatalogApiClient,
             transferMapper(context),
             objectMapper);
-    provisionManager.register(fdscDcpProvisioner);
+    registerProvisioner(fdscDcpProvisioner);
     monitor.info("Registered DCP Provisioner.");
     dataPlaneInstanceStore.save(
         DataPlaneInstance.Builder.newInstance()
@@ -204,7 +212,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             .build());
     EndpointDataReferenceService endpointDataReferenceService =
         new FDSCDcpEndpointDataReferenceService(
-            transferConfig, vault, context.getParticipantId(), clock);
+            transferConfig, vault, tmfConfig.getParticipantId(), clock);
 
     endpointDataReferenceServiceRegistry.register(
         TransferTypes.TYPE_HTTP_DATA, endpointDataReferenceService);
@@ -214,7 +222,8 @@ public class FDSCTransferControlExtension implements ServiceExtension {
   private void enableOid4Vc(ServiceExtensionContext context, TransferConfig.Oid4Vc oid4Vc) {
     FDSCOID4VPProviderResourceDefinitionGenerator fdscProviderResourceDefinitionGenerator =
         new FDSCOID4VPProviderResourceDefinitionGenerator(monitor);
-    resourceManifestGenerator.registerGenerator(fdscProviderResourceDefinitionGenerator);
+    resourceDefinitionGeneratorManager.registerProviderGenerator(
+        fdscProviderResourceDefinitionGenerator);
 
     jsonLd.registerContext("http://www.w3.org/ns/odrl.jsonld", CONTEXT_SCOPE);
 
@@ -225,11 +234,12 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             credentialsConfigServiceClient(transferConfig.getOid4Vc()),
             odrlPapClient(transferConfig.getOid4Vc()),
             productCatalogApiClient,
+            contractNegotiationStore,
             transferMapper(context),
             objectMapper,
             tmfEdcMapper,
             jsonLd);
-    provisionManager.register(FDSCOID4VPProvisioner);
+    registerProvisioner(FDSCOID4VPProvisioner);
 
     dataPlaneInstanceStore.save(
         DataPlaneInstance.Builder.newInstance()
@@ -246,6 +256,17 @@ public class FDSCTransferControlExtension implements ServiceExtension {
     endpointDataReferenceServiceRegistry.register(
         TransferTypes.TYPE_HTTP_DATA, endpointDataReferenceService);
     endpointDataReferenceServiceRegistry.register(FDSC_TYPE, endpointDataReferenceService);
+  }
+
+  /**
+   * Registers a provisioner on both halves of the manager API.
+   *
+   * <p>{@link ProvisionerManager#register} is overloaded, so the casts are required for an
+   * implementation that is both a {@link Provisioner} and a {@link Deprovisioner}.
+   */
+  private void registerProvisioner(FDSCProvisioner provisioner) {
+    provisionerManager.register((Provisioner) provisioner);
+    provisionerManager.register((Deprovisioner) provisioner);
   }
 
   @Provider

@@ -26,6 +26,9 @@ import org.seamware.tmforum.productorder.model.ProductOrderVO;
 @Mapper
 public interface TMFObjectMapper {
 
+  /** Pre-0.18.1 spelling of {@link TransferProcessStates#PREPARATION_REQUESTED}. */
+  String LEGACY_PROVISIONING_REQUESTED_STATE = "PROVISIONING_REQUESTED";
+
   ProductOrderUpdateVO map(ProductOrderVO productOrderVO);
 
   ExtendableAgreementCreateVO map(ExtendableAgreementVO extendableAgreementVO);
@@ -65,7 +68,10 @@ public interface TMFObjectMapper {
     return switch (state) {
       case "INITIAL" -> TransferProcessStates.INITIAL;
       case "PROVISIONING" -> TransferProcessStates.PROVISIONING;
-      case "PROVISIONING_REQUESTED" -> TransferProcessStates.PROVISIONING_REQUESTED;
+      // EDC 0.18.1 renamed PROVISIONING_REQUESTED to PREPARATION_REQUESTED; the old spelling
+      // stays accepted so transfers persisted by a 0.14.1 connector still deserialize.
+      case LEGACY_PROVISIONING_REQUESTED_STATE, "PREPARATION_REQUESTED" ->
+          TransferProcessStates.PREPARATION_REQUESTED;
       case "PROVISIONED" -> TransferProcessStates.PROVISIONED;
       case "REQUESTING" -> TransferProcessStates.REQUESTING;
       case "REQUESTED" -> TransferProcessStates.REQUESTED;
@@ -76,6 +82,7 @@ public interface TMFObjectMapper {
       case "SUSPENDING_REQUESTED" -> TransferProcessStates.SUSPENDING_REQUESTED;
       case "SUSPENDED" -> TransferProcessStates.SUSPENDED;
       case "RESUMING" -> TransferProcessStates.RESUMING;
+      case "RESUMING_REQUESTED" -> TransferProcessStates.RESUMING_REQUESTED;
       case "RESUMED" -> TransferProcessStates.RESUMED;
       case "COMPLETING" -> TransferProcessStates.COMPLETING;
       case "COMPLETING_REQUESTED" -> TransferProcessStates.COMPLETING_REQUESTED;

@@ -16,7 +16,6 @@
  */
 package org.seamware.edc;
 
-import static org.eclipse.edc.protocol.dsp.spi.type.Dsp2024Constants.DSP_TRANSFORMER_CONTEXT_V_2024_1;
 import static org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants.DSP_TRANSFORMER_CONTEXT_V_2025_1;
 import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
 
@@ -36,6 +35,8 @@ import org.eclipse.edc.connector.controlplane.policy.spi.store.PolicyDefinitionS
 import org.eclipse.edc.connector.controlplane.transform.odrl.OdrlTransformersFactory;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participant.spi.ParticipantIdMapper;
+import org.eclipse.edc.participantcontext.single.spi.SingleParticipantContextSupplier;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.policy.model.Constraint;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.protocol.spi.DataspaceProfileContextRegistry;
@@ -43,6 +44,7 @@ import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provider;
 import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.runtime.metamodel.annotation.Requires;
+import org.eclipse.edc.spi.EdcException;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.query.CriterionOperatorRegistry;
 import org.eclipse.edc.spi.system.ServiceExtension;
@@ -109,6 +111,11 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
 
   @Inject private JsonLd jsonLd;
 
+  // Default-provided by participant-context-connector-classic-core. Absent in a multi-participant
+  // runtime, which registers a different supplier type - hence optional rather than required.
+  @Inject(required = false)
+  private SingleParticipantContextSupplier participantContextSupplier;
+
   @Override
   public String name() {
     return NAME;
@@ -117,9 +124,23 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   @Provider
   public TMFConfig tmfConfig(ServiceExtensionContext context) {
     if (tmfConfig == null) {
-      tmfConfig = TMFConfig.fromConfig(context.getConfig());
+      tmfConfig = TMFConfig.fromConfig(context.getConfig(), participantContext());
     }
     return tmfConfig;
+  }
+
+  /** Resolves the runtime's participant context, or null when no supplier is registered. */
+  private ParticipantContext participantContext() {
+    if (participantContextSupplier == null) {
+      monitor.warning(
+          "No participant context supplier registered, falling back to the edc.participant.*"
+              + " settings. Entities are stamped with the context id derived from them, which a"
+              + " multi-participant runtime may not resolve.");
+      return null;
+    }
+    return participantContextSupplier
+        .get()
+        .orElseThrow(failure -> new EdcException(failure.getFailureDetail()));
   }
 
   @Override
@@ -156,10 +177,6 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
     typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
 
     registerTypePreservingTransformers(
-        DSP_TRANSFORMER_CONTEXT_V_2024_1,
-        typePreservingPolicyTransformer,
-        typePreservingConstraintTransformer);
-    registerTypePreservingTransformers(
         DSP_TRANSFORMER_CONTEXT_V_2025_1,
         typePreservingPolicyTransformer,
         typePreservingConstraintTransformer);
@@ -191,7 +208,8 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               participantResolver(config),
               typeTransformerRegistry,
               jsonLd,
-              clock);
+              clock,
+              config.getParticipantContextId());
     }
     return tmfEdcMapper;
   }
@@ -292,7 +310,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               productInventoryApi(tmfConfig),
               participantResolver(tmfConfig),
               tmfEdcMapper(tmfConfig),
-              serviceExtensionContext.getParticipantId(),
+              tmfConfig.getParticipantId(),
               controlplane,
               criterionOperatorRegistry,
               new TMFBackedLeaseHolder(
@@ -314,7 +332,8 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   public PolicyDefinitionStore policyDefinitionStore(TMFConfig tmfConfig) {
     if (policyDefinitionStore == null) {
       policyDefinitionStore =
-          new TMFBackedPolicyDefinitionStore(monitor, productCatalogApi(tmfConfig));
+          new TMFBackedPolicyDefinitionStore(
+              monitor, productCatalogApi(tmfConfig), tmfConfig.getParticipantContextId());
     }
     return policyDefinitionStore;
   }

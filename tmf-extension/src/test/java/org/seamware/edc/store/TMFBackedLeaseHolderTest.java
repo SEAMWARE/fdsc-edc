@@ -383,7 +383,7 @@ public class TMFBackedLeaseHolderTest {
   }
 
   @Nested
-  class FreeLease {
+  class ReleaseLease {
 
     @Test
     void clears_lease_fields_on_leased_quote() {
@@ -392,7 +392,7 @@ public class TMFBackedLeaseHolderTest {
           .thenReturn(List.of(quote));
       when(quoteApi.updateQuote(eq("q-1"), any())).thenReturn(quote);
 
-      leaseHolder.freeLease("neg-1", "done");
+      leaseHolder.releaseLease("neg-1", "lock-1", "done");
 
       verify(quoteApi)
           .updateQuote(
@@ -413,7 +413,7 @@ public class TMFBackedLeaseHolderTest {
       when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
           .thenReturn(List.of(quote));
 
-      leaseHolder.freeLease("neg-1", "cleanup");
+      leaseHolder.releaseLease("neg-1", "lock-1", "cleanup");
 
       verify(quoteApi, never()).updateQuote(any(), any());
     }
@@ -423,7 +423,7 @@ public class TMFBackedLeaseHolderTest {
       when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
           .thenReturn(List.of());
 
-      leaseHolder.freeLease("neg-1", "cleanup");
+      leaseHolder.releaseLease("neg-1", "lock-1", "cleanup");
 
       verify(quoteApi, never()).updateQuote(any(), any());
     }
@@ -436,7 +436,7 @@ public class TMFBackedLeaseHolderTest {
           .thenReturn(List.of(q1, q2));
       when(quoteApi.updateQuote(any(), any())).thenReturn(q1);
 
-      leaseHolder.freeLease("neg-1", "done");
+      leaseHolder.releaseLease("neg-1", "lock-1", "done");
 
       verify(quoteApi).updateQuote(eq("q-1"), any());
       verify(quoteApi).updateQuote(eq("q-2"), any());
@@ -448,7 +448,7 @@ public class TMFBackedLeaseHolderTest {
       when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
           .thenReturn(List.of(quote));
 
-      leaseHolder.freeLease("neg-1", "done");
+      leaseHolder.releaseLease("neg-1", "lock-1", "done");
 
       verify(quoteApi, never()).updateQuote(any(), any());
     }
@@ -461,7 +461,7 @@ public class TMFBackedLeaseHolderTest {
           .thenReturn(List.of(quote));
       when(quoteApi.updateQuote(eq("q-1"), any())).thenReturn(quote);
 
-      leaseHolder.freeLease("neg-1", "done");
+      leaseHolder.releaseLease("neg-1", "lock-1", "done");
 
       verify(quoteApi)
           .updateQuote(
@@ -474,6 +474,39 @@ public class TMFBackedLeaseHolderTest {
                         && CONTROLPLANE.equals(s.getControlplane())
                         && !s.isLeased();
                   }));
+    }
+
+    @Test
+    void keeps_lease_held_by_another_lock() {
+      ExtendableQuoteVO quote = quoteWith("q-1", CONTROLPLANE, true, "other-lock", NOW + 30000);
+      when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
+          .thenReturn(List.of(quote));
+
+      assertEquals(
+          LeaseHolder.LeaseRelease.HELD_BY_OTHER,
+          leaseHolder.releaseLease("neg-1", "lock-1", "done"));
+      verify(quoteApi, never()).updateQuote(any(), any());
+    }
+
+    @Test
+    void clears_an_expired_lease_of_another_lock() {
+      ExtendableQuoteVO quote = quoteWith("q-1", CONTROLPLANE, true, "other-lock", NOW - 1);
+      when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
+          .thenReturn(List.of(quote));
+      when(quoteApi.updateQuote(eq("q-1"), any())).thenReturn(quote);
+
+      assertEquals(
+          LeaseHolder.LeaseRelease.RELEASED, leaseHolder.releaseLease("neg-1", "lock-1", "done"));
+      verify(quoteApi).updateQuote(eq("q-1"), any());
+    }
+
+    @Test
+    void reports_not_leased_when_nothing_is_leased() {
+      when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
+          .thenReturn(List.of(unleased("q-1")));
+
+      assertEquals(
+          LeaseHolder.LeaseRelease.NOT_LEASED, leaseHolder.releaseLease("neg-1", "lock-1", "done"));
     }
   }
 

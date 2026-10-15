@@ -38,6 +38,7 @@ package org.seamware.edc.tck;
 
 import org.eclipse.edc.connector.controlplane.services.spi.contractnegotiation.ContractNegotiationService;
 import org.eclipse.edc.connector.controlplane.services.spi.transferprocess.TransferProcessService;
+import org.eclipse.edc.participantcontext.single.spi.SingleParticipantContextSupplier;
 import org.eclipse.edc.runtime.metamodel.annotation.Configuration;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Setting;
@@ -62,6 +63,7 @@ public class TckControllerExtension implements ServiceExtension {
   @Inject private WebServer webServer;
   @Inject private ContractNegotiationService negotiationService;
   @Inject private TransferProcessService transferProcessService;
+  @Inject private SingleParticipantContextSupplier participantContextSupplier;
   @Inject private Monitor monitor;
   @Configuration private TckWebhookApiConfiguration apiConfiguration;
 
@@ -80,7 +82,9 @@ public class TckControllerExtension implements ServiceExtension {
     mappingRegistry.register(
         new PortMapping(PROTOCOL, apiConfiguration.port(), apiConfiguration.path()));
     webService.registerResource(
-        PROTOCOL, new TckWebhookController(monitor, negotiationService, transferProcessService));
+        PROTOCOL,
+        new TckWebhookController(
+            monitor, negotiationService, transferProcessService, participantContextSupplier));
   }
 
   @Settings

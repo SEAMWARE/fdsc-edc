@@ -1,0 +1,1277 @@
+# EDC 0.14.1 -> 0.18.1 upgrade: compatibility report
+
+Status: **migration complete (Step 9).** All nine plan steps have landed on
+`ticket-72/work`, the reactor builds and packages against EDC 0.18.1, and the DSP
+TCK is green at `1.0.1` against DSP `2025-1`. The per-item resolution is tracked in
+§11; the findings below stay as recorded so the reasoning behind each decision is
+preserved. This document is the single source of truth for the upgrade;
+`IMPLEMENTATION_PLAN.md` points here instead of carrying its own copy of the
+findings. Everything below was verified directly against Maven Central and by
+`javap` on the published 0.14.1 / 0.18.1 jars, or against the repository itself
+(file:line references). Treat it as ground truth and do not re-research it.
+
+Seven upstream releases are crossed: 0.15.0, 0.15.1, 0.16.0, 0.16.1, 0.17.0,
+0.18.0, 0.18.1 (there is no 0.17.1).
+
+The three dominant breaks, in order of cost to this repository:
+
+1. **Participant Context** — `ParticipantContext` is threaded through the protocol
+   services and a `participantContextId` lands on every control-plane entity. The
+   TMForum-backed stores filter in memory, so this one can fail *silently* (§4).
+2. **DCP module rename** — `identity-trust-*` -> `decentralized-claims-*`, with the
+   package root moving with it.
+3. **Removal of DSP 0.8 and DSP 2024/1** — this repo still declares the 2024
+   artifacts alongside the 2025 ones.
+
+---
+
+## 1. Release-by-release summary
+
+
+Release index: <https://github.com/eclipse-edc/Connector/releases>. PR numbers link to `https://github.com/eclipse-edc/Connector/pull/NNNN` unless another repo is named.
+
+### 0.15.0
+
+Released 2025-12-02 — <https://github.com/eclipse-edc/Connector/releases/tag/v0.15.0>. By far the largest break in this range.
+
+- **Participant Context introduced.** New entity `ParticipantContext`; `participantContextId` added to `Asset`, `PolicyDefinition`, `ContractDefinition`, `ContractNegotiation`, `ContractAgreement`, `TransferProcess`, `DataPlaneInstance`, `EndpointDataReferenceEntry`. Design: `docs/developer/decision-records/2025-08-26-participant-context/README.md` (PR #5193). Entity PRs: #5208 (entity), #5217 (asset), #5222 (policy definitions), #5225 (contracts), #5236 (transfers).
+- **Protocol service layer signatures changed.** `CatalogProtocolService`, `ContractNegotiationProtocolService` and `TransferProcessProtocolService` now take `ParticipantContext` as first argument; `getDataset`/`findById` now take a message object instead of loose `String` args (PR #5251, see also #5240 DSP layer, #5253 fallible participant-context supplier). Verified by diffing `spi/control-plane/control-plane-spi/.../CatalogProtocolService.java` between tags v0.14.1 and v0.15.0.
+- **`IdentityService` signature changed** — `obtainClientCredentials(String participantContextId, TokenParameters)` and `verifyJwtToken(String participantContextId, TokenRepresentation, VerificationContext)` (PR #5259; DCP side #5298). Verified in `spi/common/core-spi/.../iam/IdentityService.java` at v0.15.0.
+- **`AudienceResolver.resolve()` now takes `ProtocolRemoteMessage`** instead of `RemoteMessage` (RemoteMessage hierarchy cleanup, PR #5350). Verified in `spi/common/core-spi/.../iam/AudienceResolver.java` at v0.15.0.
+- **New artifact `connector-participant-context-spi`** — `spi/common/participant-context-spi` was renamed to avoid a name clash with the IdentityHub module of the same name (PR #5229). Companion modules added: `spi/common/participant-context-single-spi`, `spi/common/participant-context-config-spi`, `core/common/participant-context-core`, `core/common/participant-context-single-core`, `core/common/participant-context-config-core`.
+- **New config key `edc.participant.context.id`** (optional; falls back to `edc.participant.id`) for single-participant ("classic") runtimes (PR #5280; DR `docs/developer/decision-records/2025-10-15-participant-context-config`, PR #5279). The DR explicitly recommends a stable, dedicated value because it is written into every participant-context-aware row.
+- **DCP module/package/class rename** `identity-trust-*` → `decentralized-claims-*`, package `org.eclipse.edc.iam.identitytrust.*` → `org.eclipse.edc.iam.decentralizedclaims.*`, classes `IdentityAndTrustService` → `DcpIdentityService`, `IdentityAndTrustExtension` → `DcpCoreExtension`, `IdentityAndTrustTransformExtension` → `DcpTransformExtension` (PR #5324, closes #4275). SPI module `spi/common/identity-trust-spi` → `spi/common/decentralized-claims-spi`.
+- **`StateEntityStore.save()` return type changed** from `void` to `StoreResult<Void>` (PR #5207). Same PR rewrote the lease mechanism: `edc_lease.lease_id` FK dropped, column renamed to `resource_id`, new `resource_kind` column, composite PK `(resource_id, resource_kind)`, lease acquisition is now a single atomic upsert. **DDL migration required.**
+- **`DataFlowController.provision()` renamed to `prepare()`** (PR #5325, part of #5323); control-plane provision stuff deprecated in the same PR. Signaling API start endpoint split into `prepare` + `start` (PR #5262).
+- **`ContractAgreement` schema change** — new `agreementId` field (`agr_agreement_id` column) distinct from `id`; agreement lookup on transfer request is by `(agreementId, participantContextId)` (PR #5275, DR #5273). **DDL migration required.**
+- Management API moved to **v4beta** (PR #5336; v4alpha controllers #5157, #5176, #5182); **protocol-version management API removed** (PR #5184).
+- `MutableEntity` removed (PR #5227); `CallbackAddresses` extracted as an interface (PR #5241); custom runtime extension classes removed (PR #5308); `TransferServiceSelectionStrategy` removed (PR #5297); deprecations from 0.6.x–0.13.0 cleaned up (PRs #5296, #5338, #5340).
+- Vault interfaces merged and made multi-tenant/partitioned (PRs #5372, #5352, #5384, #5376); transfer-destination secrets are offloaded to the vault before storage (PR #5381). New `private_entries` column (PR #5383). **DDL migration required.**
+- Control-plane/data-plane transformers relocated into `control-plane-transform` (PRs #5341, #5343, #5345).
+- `monitor-jdk-logger` deprecated (PR #5339); version endpoint moved under the default API context (PR #5263).
+- OAuth2/JWT-based authn/authz upstreamed for the management API (PR #5373).
+
+### 0.15.1
+
+Released 2025-12-17 — <https://github.com/eclipse-edc/Connector/releases/tag/v0.15.1>.
+
+- No changes listed in the release notes (empty generated changelog, compare `v0.15.0...v0.15.1`). No breaking changes.
+
+### 0.16.0
+
+Released 2026-02-19 — <https://github.com/eclipse-edc/Connector/releases/tag/v0.16.0>.
+
+- **DSP 0.8 and DSP 2024/1 removed.** The `data-protocols/dsp/dsp-08/*` and `data-protocols/dsp/dsp-2024/*` module trees (including `dsp-spi-08` and `dsp-spi-2024`) are deleted; only `dsp-2025` / `dsp-spi-2025` remain (PR #5452, "Delete deprecated DSP 0.8 and 2024 version modules"). All E2E tests were switched to DSP 2025/1 in PR #5427. Verified by diffing the v0.15.0 and v0.16.0 git trees.
+- **Control-plane provisioning/deprovisioning removed** (deprecated in 0.14.x). PR #5444 is flagged `BREAKING CHANGE`: internal APIs changed; the columns `resource_manifest`, `provisioned_resource_set` and `deprovisioned_resources` become unused and may be dropped **after** upgrading to 0.16.0.
+- **`TransferProcess` `DataAddress` is stored in the Vault.** PR #5489 is flagged `BREAKING CHANGE`: a new `data_address_alias TEXT` column must be added to the transfer-process SQL table. **DDL migration required.**
+- **`DataFlowResponse.provisioning` renamed to `async`** (builder method `provisioning(boolean)` → `async(boolean)`), PR #5471 ("feat(DPS): async prepare"). Verified by diffing `DataFlowResponse.java` between v0.15.0 and v0.16.0.
+- **`DataFlowController` gains `started()` and `completed()`** — `StatusResult<Void> started(TransferProcess)` / `StatusResult<Void> completed(TransferProcess)` (PR #5437; related restructuring in #5435 "inline DataFlowManager").
+- `DataFlowManager` inlined / removed as a separate abstraction (PR #5435, DR #5434); `DataPlaneSelectorManager` dismissed (PR #5500, DR #5497).
+- `Asset.dataAddress` is now optional (PR #5405); address validation semantics changed accordingly.
+- `ParticipantAgent` id made non-null (PR #5415).
+- Launchers removed from the repo (PR #5447); 0.14.0 generic deprecations cleaned up (PR #5438).
+- CEL expressions adopted for policy evaluation (PR #5476, DR #5473) — new `cel-store-sql` schema.
+- **Dynamic DCP scopes introduced** — config-driven `edc.iam.dcp.scopes.<id>.{id,type,value,prefix-mapping,profile}` replaces hand-written `ScopeExtractor`/`PolicyValidatorRule` extensions (PR #5485, DR #5478).
+- Revocation-registry registration moved from IdentityHub into the Connector (PR #5502).
+- `dataDestination` removed from the management transfer v4 API (PR #5510).
+- Data Plane Framework deprecated in favour of data-plane-signaling (PR #5514).
+- `TransferProcess.dataAddress` is cleaned up on final states (PR #5495).
+
+### 0.16.1
+
+Released 2026-08-11 (i.e. *after* 0.18.0) — <https://github.com/eclipse-edc/Connector/releases/tag/v0.16.1>.
+
+- Single change: `TypeTransformerRegistry` backed by a `Map` instead of an `ArrayList` (PR #5942). Backport of the same change released as 0.18.1. Behavioural note below under 0.18.1.
+- The generated changelog compares `v0.18.0...v0.16.1`, which is an artefact of the release tooling, not an indication that 0.16.1 contains 0.18.0 content.
+
+### 0.17.0
+
+Released 2026-04-20 — <https://github.com/eclipse-edc/Connector/releases/tag/v0.17.0>.
+
+- **`edc.dsp.well-known-path.enabled` removed.** `DspRequestBasePathProvider` became a default provider; equivalent behaviour now requires supplying a custom `DspRequestBasePathProvider` (PR #5527, closes #5525).
+- **`edc.iam.issuer.id` → `edc.participant.did`.** Old key deprecated but still honoured; annotated `@Deprecated(since = "0.17.0")` on `DcpCoreExtension.DEPRECATED_ISSUER_ID_KEY` (PR #5559).
+- **`StateEntityStore.breakLease(T entity)` added** — returns `StoreResult<Void>`; lets state machines release a lease without updating the entity (PR #5533). Custom `StateEntityStore` implementations must implement it.
+- **Participant-context module split/rename** — `participant-context-single-core` → `participant-context-connector-classic-core` (single-participant "classic" compatibility shim: auto-creates a `ParticipantContext` from `edc.participant.id` / `edc.participant.context.id`, provides `SingleParticipantContextSupplier` and a config-backed `ParticipantContextConfigStore`), plus a new `participant-context-connector-core` usable in both classic and virtual mode providing default `ParticipantIdentityResolver` and `ProtocolWebhookResolver` (PR #5598, closes #5591).
+- **DCP scope alias changed** `org.eclipse.edc.vc.type` → `org.eclipse.dspace.dcp.vc.type` for spec compliance (PR #5593). Policy constraints/left operands using the old alias stop matching.
+- **Counter-party claims stored on `ContractAgreement`** (consumer side). PR #5626 is flagged `BREAKING CHANGE`: new `claims JSON` column on `edc_contract_agreement`. Claims on `TransferProcess` added in the same release (PRs #5631, #5632, #5633). **DDL migration required.**
+- `monitor-jdk-logger` module removed (PR #5539).
+- **Management API versioning**: V4 stabilised, V3 deprecated, V5 promoted to beta (PR #5668); v5alpha controllers ported in #5588, #5594, #5603; authn/authz ported to the management API in #5566.
+- ~~`DataFlowResponseMessage` renamed to `DataFlowStatusMessage` and `dataplaneId` removed from it (PR #5652).~~
+  **Corrected — it is not a rename of the `core-spi` type.** `core-spi` 0.18.1 still ships
+  `org/eclipse/edc/spi/types/domain/transfer/DataFlowResponseMessage.class`, byte-identical to
+  0.14.1. `DataFlowStatusMessage` exists only in the *new* `data-plane-signaling-core` module
+  (`org.eclipse.edc.signaling.domain.DataFlowStatusMessage`), as one of that module's own
+  signaling message types. Two different classes in two different artifacts — see §3.2.
+- `jwt-signer-spi` merged into `jwt-spi` (PR #5657).
+- DPS signaling endpoints moved to a dedicated `signaling` API context (PR #5589); signaling API group renamed (#5625); DPS registration adapted to the latest spec (#5575, #5578); data-plane authorization profile became a single object (#5630); `DataPlaneMetadata#properties` became a `@json` type (#5642).
+- Connection-pool configuration switched to the new `@Configuration` format (PR #5667); `@Configuration` supports `Map` (#5649).
+- EDR cache deprecated (PR #5641, DR #5644).
+- `ParticipantAgentContextMapper` no longer maps the `vc` claim (PR #5548).
+- Policy monitor switched from a state machine to a watchdog (PR #5597); state-machine processors now return `CompletableFuture` (PR #5555).
+- Federated Catalog source moved into the Connector repo (PRs #5531, #5538, #5541, #5542, #5543) and its API exposed under the management context (#5549).
+- 0.14.0 and 0.15.0 deprecations cleaned up (PRs #5534, #5639).
+
+### 0.18.0
+
+Released 2026-06-30 — <https://github.com/eclipse-edc/Connector/releases/tag/v0.18.0>.
+
+- **`callback-http-dispatcher` module discontinued.** `extensions/control-plane/callback/callback-http-dispatcher` exists at v0.17.0 and is gone at v0.18.0 (verified by git-tree diff). HTTP delivery of `CallbackAddress` notifications is now done by a dedicated `CallbackClient` (`spi/control-plane/control-plane-spi/.../services/spi/callback/CallbackClient.java`), registered as a default service and overridable (PRs #5808, #5815). `callback-event-dispatcher` and `callback-static-endpoint` remain.
+- **`RemoteMessageDispatcherRegistry` and `RemoteMessageDispatcher` removed from `core-spi`**, `RemoteMessageDispatcherRegistryImpl` removed from `runtime-core`; DSP services now use `ProtocolRemoteMessageDispatcher` (moved to `control-plane-spi`) with the single `DspHttpRemoteMessageDispatcherImpl` implementation (PR #5814, DR `docs/developer/decision-records/2026-06-10-remove-dispatcher-registry`, PR #5811). Any extension injecting `RemoteMessageDispatcherRegistry` will fail to resolve.
+- **`DataFlowController.resume()` added** — `StatusResult<DataFlowResponse> resume(TransferProcess)` (PR #5709, "feat(dps): implement suspend/resume cases"). Verified by diffing `DataFlowController.java` v0.17.0 → v0.18.1.
+- **data-plane-signaling is the default in the BOMs.** PR #5694 is flagged `BREAKING CHANGE`: runtimes that still need the deprecated EDC Data Plane signaling API must swap the signaling modules back manually.
+- **Identity is carried in the `sub` claim** instead of `participant_context_id`; all remnants of the `role` claim dropped (PR #5813).
+- **API authorization moved from roles to scopes.** New `Scope` + `ScopeMatcher` model (#5804); `management-api:admin` becomes the cross-tenant elevation signal (#5805); v5 controllers use fine-grained scopes such as `management-api:assets:read` while coarse `management-api:read` / `management-api:*:read` still satisfy them, and the role-based filter is dropped (#5812); admin elevation scope made configurable (#5816). DR: `docs/developer/decision-records/2026-06-06-scope-based-api-authorization` (PR #5798).
+- **DCP scope config moved to an injected config map**, with env-friendly `edc.iam.dcp.scopes.<id>.prefix.mapping` replacing the now-deprecated `prefix-mapping` (PR #5795). Both keys are present in `DynamicDcpScopeConfigurationExtension` at v0.18.1, the hyphenated one marked "(Legacy Config)".
+- **`dct:conformsTo` adopted as a known `Asset` property** (PR #5780). Flagged as a potential break for anyone who already stored a `conformsTo` asset property: it was previously expanded into `https://w3id.org/edc/v0.0.1/ns/` and is now namespaced on Dublin Core, changing how it appears in the catalog and management API.
+- **HashiCorp Vault token-exchange auth**: `HashicorpJwtTokenProvider` and `HashicorpVaultCredentials` replaced by `HashicorpTokenExchangeProvider` (RFC 8693) plus `HashicorpVaultTokenProviderFactoryImpl` (PR #5821).
+- **Encryption disabled by default** unless explicitly configured; the `strict` setting became unnecessary (PR #5781).
+- **`@SettingContext` superseded by `@Configuration(context = ...)`** — the old annotation value is now only a fallback (PR #5791).
+- Counter-party claims also stored on the provider-side agreement (PR #5727) — `claims` column on `edc_contract_agreement` is written on both sides now.
+- `TransferProcessProtocolService` calls now fail when the store update fails, and missing `breakLease` calls were added in both protocol services (PRs #5793, #5729, #5788).
+- Default state-machine implementations moved out of `controlplane-core` (PR #5691); catalog-crawler core modules merged and `ExtensionManager` refactored into `CatalogCrawlerManager` (PRs #5762, #5730).
+- Address validation removed from `AssetService` (PR #5720) and control-plane address parse/validation removed (PR #5830).
+- Dataspace profile configuration + profile field + profile-based validation added for policy definitions and the v5 management API (PRs #5747, #5752, #5756, #5765, #5785); new discovery endpoint (#5768, #5789).
+- NOT in 0.18.x: the five-module SPI consolidation (PR #5842, DR #5831) lands only in the 1.0.0-RC line — `spi/common/core-spi` etc. still exist at v0.18.1.
+
+### 0.18.1
+
+Released 2026-09-25 — <https://github.com/eclipse-edc/Connector/releases/tag/v0.18.1>.
+
+- Single change: `TypeTransformerRegistry` switched from an `ArrayList` to `Map<inputType, Map<outputType, transformer>>` (PR #6019, backport of the main-branch fix for issue #5921). Not labelled breaking, but behaviour changes: transformer selection is now deterministic and most-specific-type based instead of `findAny()`, only one transformer per input/output pair can exist, and registering a duplicate logs an override warning. Extensions that relied on registering several transformers for the same type pair are affected.
+
+---
+
+## 2. Artifact coordinates
+
+### 2.1 Artifacts that no longer exist at 0.18.1
+
+**Artifacts that no longer exist at 0.18.1** (6 of the 72 EDC artifacts this repo declares):
+
+| Current (0.14.1) | Last published | Replacement at 0.18.1 |
+|---|---|---|
+| `identity-trust-core` | 0.14.1 | `decentralized-claims-core` |
+| `identity-trust-spi` | 0.14.1 | `decentralized-claims-spi` |
+| `identity-trust-transform` | 0.14.1 | `decentralized-claims-transform` |
+| `dsp-2024` | 0.15.1 | *none* — DSP 2024/1 support deleted in 0.16.0 |
+| `dsp-spi-2024` | 0.15.1 | *none* — same |
+| `callback-http-dispatcher` | 0.17.0 | *none* under that name — the HTTP transport moved into `callback-event-dispatcher` (§8.1) |
+
+The other 66 artifacts resolve unchanged at 0.18.1. Beware a false friend: `dcp-core`
+and `dcp-spi` **do** exist at 0.18.1 but are **IdentityHub-side** artifacts
+(`dcp-identityhub-core`, `dcp-issuer-*`); the Connector-side replacement for
+`identity-trust-*` is `decentralized-claims-*`, package
+`org.eclipse.edc.iam.decentralizedclaims.*`.
+
+Independently re-verified artifact by artifact: 145 `<dependency>` declarations
+across the 9 POMs resolve to **72 distinct `org.eclipse.edc` artifacts**, of which
+**66 resolve at 0.18.1** and exactly the 6 above return 404. Where each of the 6 is
+declared:
+
+| artifactId | declared in | last published |
+|---|---|---|
+| `callback-http-dispatcher` | `controlplane-oid4vc/pom.xml:210`, `controlplane-dcp/pom.xml:200` | 0.17.0 |
+| `dsp-2024` | `controlplane-oid4vc`, `controlplane-dcp` | 0.15.1 |
+| `dsp-spi-2024` | `tmf-extension`, `test-extension` | 0.15.1 |
+| `identity-trust-core` | `dcp-extension` | 0.14.1 |
+| `identity-trust-spi` | `dcp-extension` | 0.14.1 |
+| `identity-trust-transform` | `dcp-extension` | 0.14.1 |
+
+The `identity-trust-*` trio stopped *at* the version currently in use, so
+`dcp-extension` carries the largest coordinate rework. `dsp-2024` / `dsp-spi-2024`
+are a straight drop rather than a replacement hunt, because `dsp-2025` /
+`dsp-spi-2025` are already declared next to them and both resolve at 0.18.1.
+
+### 2.2 First false friend — `dcp-*` is IdentityHub, not the Connector
+
+`dcp-core` and `dcp-spi` **do** exist at 0.18.1 but are **IdentityHub-side**
+artifacts (siblings of `dcp-identityhub-core`, `dcp-issuer-*`). The Connector-side
+replacement for `identity-trust-*` is `decentralized-claims-*`, package
+`org.eclipse.edc.iam.decentralizedclaims.*`.
+
+### 2.3 Second false friend — pick the right participant artifact
+
+Three similarly named artifacts resolve at 0.18.1 and only the first is the one
+this document means:
+
+| Artifact | Package root | What it is |
+|---|---|---|
+| `connector-participant-context-spi` | `org.eclipse.edc.participantcontext.spi` | **Correct.** Connector-side `ParticipantContext`, `ParticipantContextService`, `ParticipantContextStore`. New at 0.18.1 (404 at 0.14.1). |
+| `participant-context-spi` | `org.eclipse.edc.identityhub.spi.participantcontext` | IdentityHub-side. Its `ParticipantContext` was **renamed** `IdentityHubParticipantContext` at 0.18.1 and its store/state types moved to the connector artifact. |
+| `participant-spi` | `org.eclipse.edc.participant.spi` | Unrelated to participant *context* — `ParticipantAgent`, `ParticipantAgentPolicyContext`, `ParticipantIdMapper`. **This repo already declares it**; do not mistake it for either of the above. |
+
+### 2.4 Full resolve-status table
+
+All 72 artifacts share groupId `org.eclipse.edc` (`—` in the groupId column means
+exactly that). `cp-oid4vc` / `cp-dcp` abbreviate the two controlplane modules.
+
+| artifactId | groupId | declared in | 0.18.1 | note |
+|---|---|---|---|---|
+| `api-core`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `api-observability`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `boot`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `boot-spi`  | — | tmf-extension, test-extension, oid4vc-extension, fdsc-transfer-extension | resolves |  |
+| `callback-event-dispatcher`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `callback-http-dispatcher`  | — | cp-oid4vc, cp-dcp | **404** | last published 0.17.0 |
+| `callback-static-endpoint`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `catalog-spi`  | — | dcp-extension, policy-extension | resolves |  |
+| `configuration-filesystem`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `connector-core`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `contract-spi`  | — | policy-extension | resolves |  |
+| `control-api-configuration`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `control-plane-api`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `control-plane-api-client`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `control-plane-core`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `control-plane-spi`  | — | tmf-extension, test-extension, fdsc-transfer-extension | resolves |  |
+| `control-plane-transform`  | — | tmf-extension | resolves |  |
+| `controlplane-base-bom`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `core-spi`  | — | tmf-extension, test-extension, oid4vc-extension, fdsc-transfer-extension | resolves |  |
+| `data-plane-core`  | — | dcp-extension, fdsc-transfer-extension | resolves |  |
+| `data-plane-selector-api`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `data-plane-selector-control-api`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `data-plane-selector-core`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `data-plane-selector-spi`  | — | tmf-extension, fdsc-transfer-extension | resolves |  |
+| `data-plane-signaling-client`  | — | *was* cp-oid4vc, cp-dcp | resolves | still published, but **dropped** — legacy client half of `transfer-data-plane-signaling` (§8.2) |
+| `data-plane-spi`  | — | tmf-extension, test-extension, fdsc-transfer-extension | resolves |  |
+| `did-spi`  | — | dcp-extension | resolves |  |
+| `dsp`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `dsp-2024`  | — | cp-oid4vc, cp-dcp | **404** | last published 0.15.1 |
+| `dsp-2025`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `dsp-catalog-lib`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `dsp-http-spi`  | — | tmf-extension, test-extension, fdsc-transfer-extension | resolves |  |
+| `dsp-spi-2024`  | — | tmf-extension, test-extension | **404** | last published 0.15.1 |
+| `dsp-spi-2025`  | — | tmf-extension, test-extension | resolves |  |
+| `dsp-version-http-api`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `edr-store-core`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `edr-store-receiver`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `edr-store-spi`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `http`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `http-spi`  | — | tmf-extension, test-extension, fdsc-transfer-extension | resolves |  |
+| `identity-did-core`  | — | dcp-extension | resolves |  |
+| `identity-did-spi`  | — | dcp-extension | resolves |  |
+| `identity-did-web`  | — | dcp-extension | resolves |  |
+| `identity-trust-core`  | — | dcp-extension | **404** | last published 0.14.1 |
+| `identity-trust-spi`  | — | dcp-extension | **404** | last published 0.14.1 |
+| `identity-trust-transform`  | — | dcp-extension | **404** | last published 0.14.1 |
+| `json-ld`  | — | tmf-extension | resolves |  |
+| `json-ld-spi`  | — | policy-extension | resolves |  |
+| `jws2020-lib`  | — | dcp-extension | resolves |  |
+| `management-api`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `management-api-configuration`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `oauth2-client`  | — | dcp-extension | resolves |  |
+| `participant-spi`  | — | policy-extension | resolves |  |
+| `policy-engine-spi`  | — | policy-extension | resolves |  |
+| `policy-monitor-core`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `protocol-spi`  | — | tmf-extension, test-extension, oid4vc-extension, fdsc-transfer-extension | resolves |  |
+| `query-lib`  | — | tmf-extension, fdsc-transfer-extension | resolves |  |
+| `request-policy-context-spi`  | — | policy-extension | resolves |  |
+| `runtime-core`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `sts-core`  | — | dcp-extension | resolves |  |
+| `token-core`  | — | dcp-extension | resolves |  |
+| `token-spi`  | — | tmf-extension, test-extension, oid4vc-extension, fdsc-transfer-extension | resolves |  |
+| `transaction-spi`  | — | tmf-extension, test-extension, fdsc-transfer-extension | resolves |  |
+| `transfer-data-plane-signaling`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `transform-lib`  | — | tmf-extension, dcp-extension, cp-oid4vc, cp-dcp | resolves |  |
+| `transform-spi`  | — | tmf-extension, test-extension, dcp-extension, fdsc-transfer-extension | resolves |  |
+| `util-lib`  | — | tmf-extension, fdsc-transfer-extension | resolves |  |
+| `validator-data-address-http-data`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `vault-hashicorp`  | — | dcp-extension, fdsc-transfer-extension, cp-dcp | resolves |  |
+| `verifiable-credentials-spi`  | — | policy-extension | resolves |  |
+| `version-api`  | — | cp-oid4vc, cp-dcp | resolves |  |
+| `web-spi`  | — | tmf-extension, test-extension, dcp-extension | resolves |  |
+
+---
+
+## 3. API break inventory
+
+### 3.1 Signature changes confirmed by `javap`
+
+```java
+// StateEntityStore<T>  — save() return type changed AND breakLease() added (0.17.0)
+0.14.1:  void                     save(T);
+0.18.1:  StoreResult<Void>        save(T);
+0.18.1:  StoreResult<Void>        breakLease(T);   // new abstract method
+
+// CatalogProtocolService — both methods changed
+0.14.1:  getCatalog(CatalogRequestMessage, TokenRepresentation)
+0.18.1:  getCatalog(ParticipantContext, CatalogRequestMessage, TokenRepresentation)
+0.14.1:  getDataset(String, TokenRepresentation, String)
+0.18.1:  getDataset(ParticipantContext, DatasetRequestMessage, TokenRepresentation)
+
+// IdentityService — participantContextId added to both methods
+0.18.1:  obtainClientCredentials(String participantContextId, TokenParameters)
+0.18.1:  verifyJwtToken(String participantContextId, TokenRepresentation, VerificationContext)
+
+// AudienceResolver — parameter type narrowed
+0.14.1:  Result<String> resolve(RemoteMessage)
+0.18.1:  Result<String> resolve(ProtocolRemoteMessage)
+
+// DataFlowResponse (artifact transfer-spi) — dataPlaneId KEPT, provisioning renamed
+0.14.1:  boolean provisioning;  isProvisioning();  Builder.provisioning(boolean)
+0.18.1:  boolean async;         isAsync();         Builder.async(boolean)
+0.18.1:  Builder toBuilder();            // new
+// dataAddress and dataPlaneId are present at BOTH versions — neither was removed.
+
+// DataFlowController (artifact transfer-spi) — provision() renamed, four methods added
+// Generic type arguments below are read from the Signature attribute (javap erases
+// them in its default output) — they matter, see resume().
+0.14.1:  boolean                      canHandle(TransferProcess)
+         StatusResult<DataFlowResponse> provision(TransferProcess, Policy)
+         StatusResult<DataFlowResponse> start(TransferProcess, Policy)
+         StatusResult<Void>           suspend(TransferProcess)
+         StatusResult<Void>           terminate(TransferProcess)
+         Set<String>                  transferTypesFor(Asset)
+0.18.1:  boolean                      canHandle(TransferProcess)
+         StatusResult<DataFlowResponse> prepare(TransferProcess, Policy)   // was provision
+         StatusResult<DataFlowResponse> start(TransferProcess, Policy)
+         StatusResult<Void>           suspend(TransferProcess)
+         StatusResult<Void>           terminate(TransferProcess)
+         Set<String>                  transferTypesFor(Asset)
+         StatusResult<DataFlowResponse> resume(TransferProcess)     // new — NOT Void
+         StatusResult<Void>           started(TransferProcess)      // new
+         StatusResult<Void>           completed(TransferProcess)    // new
+         Set<String>                  transferTypesFor(String)      // new overload
+
+// DataFlowResponseMessage (artifact core-spi) — UNCHANGED, byte-identical
+// Declares only dataAddress + provisioning at both versions. It never had a
+// dataPlaneId; do not confuse it with DataFlowResponse above.
+```
+
+`ContractDefinitionStore`, `ContractNegotiationStore`, `AssetIndex` and
+`PolicyDefinitionStore` declare **no** changed methods of their own — but
+`ContractNegotiationStore` inherits the two `StateEntityStore` breaks above.
+`PendingGuard<E>` and `EventSubscriber` are **unchanged**, so the existing guards
+and trigger subscribers survive.
+
+### 3.2 Which files in this repo break
+
+Every implementation site, located by grep over `src/main/java` (test sources
+follow their production class and are not listed separately):
+
+| Upstream break | File(s) in this repo | Current signature |
+|---|---|---|
+| `StateEntityStore.save` returns `StoreResult<Void>`; new abstract `breakLease` | `tmf-extension/.../store/TMFBackedContractNegotiationStore.java:374` | `public void save(ContractNegotiation)` — the **only** `StateEntityStore` implementation in the repo |
+| `CatalogProtocolService.getCatalog` / `getDataset` take a `ParticipantContext`, and `getDataset` takes a `DatasetRequestMessage` instead of `(String, TokenRepresentation, String)` | `tmf-extension/.../store/TMForumBackedCatalogProtocolService.java:88,127` | `getCatalog(CatalogRequestMessage, TokenRepresentation)`, `getDataset(String, TokenRepresentation, String)` |
+| `IdentityService` gains a leading `String participantContextId` on both methods | `oid4vc-extension/.../identity/OID4VPIdentityService.java:78,125`; `test-extension/.../services/TestIdentityService.java:60,70` | `obtainClientCredentials(TokenParameters)`, `verifyJwtToken(TokenRepresentation, VerificationContext)` |
+| `AudienceResolver.resolve` narrows `RemoteMessage` -> `ProtocolRemoteMessage` | `oid4vc-extension/.../identity/CounterPartyAddressAudienceResolver.java:50`; `test-extension/.../services/NoopAudienceResolver.java:53` | `Result<String> resolve(RemoteMessage)` |
+| `DataFlowController.provision` -> `prepare`, plus new `resume` / `started` / `completed` / `transferTypesFor(String)` | `test-extension/.../edc/NoopDataFlowController.java:35` | implements the 0.14.1 six-method interface; `provision` at :58 |
+| `DataFlowResponse.Builder.provisioning` -> `async` | `test-extension/.../edc/NoopDataFlowController.java:64,75` | `.provisioning(false)` |
+| entities gain `participantContextId` (§4) | `tmf-extension/.../store/TMFEdcMapper.java` and all four TMF-backed stores | builders never set it |
+| `ContractAgreement` gains `agreementId` (distinct from `id`) and `claims`; transfer-request lookup is by `(agreementId, participantContextId)` | `tmf-extension/.../store/TMFEdcMapper.java:176`; `tmf-extension/.../store/TMFBackedContractNegotiationStore.java:163,196` | `toContractAgreement` sets only `id(externalId)`; `findContractAgreement(String)` / `queryAgreements(QuerySpec)` resolve on `id` alone |
+| `DataFlowManager` removed; `DataFlowController` is a single injected service (§8.3) | `test-extension/.../edc/TckGuardExtension.java:50,88,151` | `@Inject DataFlowManager` + `register(noopPriority, controller)` |
+| `LeaseContext.acquireLease` / `breakLease` return `StoreResult<Void>` instead of `void` | `tmf-extension/.../store/TMFLeaseContext.java` — **deleted in Step 3** rather than ported: nothing injected a `LeaseContext`, the class carried a `// TODO: reevaluate usage` and leasing runs through `LeaseHolder` | `public void breakLease(String)` / `public void acquireLease(String)` |
+| `ProtocolTokenValidator.verify` gains a leading `ParticipantContext` | `tmf-extension/.../store/TMForumBackedCatalogProtocolService.java:91` | `verify(TokenRepresentation, ctor::new, CatalogRequestMessage)` |
+| `ServiceExtensionContext.getParticipantId()` removed (participant context, §4) | `tmf-extension/.../CatalogProtocolServiceExtension.java:63`; `tmf-extension/.../TMFContractNegotiationExtension.java:290` | `context.getParticipantId()` |
+| `Asset.Builder.version(String)` removed | `tmf-extension/.../store/TMFEdcMapper.java:643` | `.version(...)` on the asset builder |
+| Control-plane provisioning SPI removed: `TransferProcess.getResourceManifest()` and `TransferProcessStates.PROVISIONING_REQUESTED` are gone | `tmf-extension/.../store/TMFEdcMapper.java:967,970`; `tmf-extension/.../store/TMFObjectMapper.java:68` | reads the resource manifest and the provisioning state onto the TMForum model |
+| `RequestVersionPolicyContext` no longer in `org.eclipse.edc.policy.context.request.spi`; `SignatureSuiteRegistry` moved with the DCP rename | `dcp-extension/.../DCPExtension.java:51,82` | 0.14.1 imports |
+| DSP 2024/1 transformer context gone with `dsp-spi-2024` — **delete the registration, do not port it** | `tmf-extension/.../TMFContractNegotiationExtension.java:19,159` | `registerTypePreservingTransformers(DSP_TRANSFORMER_CONTEXT_V_2024_1, ...)`. Removed in Step 2 (§3.3), since it is the direct consequence of dropping the artifact. The `2025_1` registration on the next line stays |
+
+**`ContractAgreement.agreementId` — own characteristic, decided in Step 3.** At
+0.18.1 `ContractAgreement.Builder.build()` generates a *separate* random UUID for
+`id` and for `agreementId` when either is unset, and
+`NegotiationProcessorsImpl.processAgreeing` sets neither. DSP serialises the
+wire `@id` from `getAgreementId()`
+(`JsonObjectFromContractAgreementMessageV2025Transformer`), while
+`TransferProcessProtocolServiceImpl.findAgreement` resolves an incoming
+`TransferRequestMessage` through `queryAgreements` with
+`Criterion("agreementId", "=", <wire id>)`. Collapsing both onto the single
+TMForum external id would therefore make every transfer request against a
+freshly negotiated agreement fail to resolve.
+
+The TMForum external id stays the EDC row id — `findContractAgreement`,
+`handleAgreeStates` and `handleFinalStates` all resolve by it — and the
+DSP-visible id is carried next to `claims` as the `agreement-id` characteristic
+(`TMFEdcMapper.AGREEMENT_CHARACTERISTIC_AGREEMENT_ID`), mirroring the separate
+`agr_agreement_id` column of the upstream SQL store. `toContractAgreement` falls
+back to the external id when the characteristic is absent, so agreements written
+by a 0.14.1 connector — and the `init-tmforum.sh` TCK seed data, whose two ids
+are equal — keep resolving.
+
+**`ContractAgreement.claims` — mapped, decided in Step 3.** 0.17.0 moved the
+counter-party agent's claims onto the agreement so that transfer-time policy
+evaluation can rebuild the agent without re-resolving a token. The TMForum model
+has no column for them, so they are persisted as the `claims` agreement
+characteristic (`TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS`), written only
+when non-empty and read back as a plain map. Step 5 (`policy-extension`) can
+therefore assume an agreement read out of TMForum carries the claim set it was
+written with; agreements written by a 0.14.1 connector have no such
+characteristic and come back with an empty map.
+
+**Claims need an update path, not just a create path.** At 0.18.1 the only two
+production call sites that set claims on an agreement are both in
+`ContractNegotiationProtocolServiceImpl`:
+
+| Side | Method | Negotiation state at `save` | Agreement row |
+|---|---|---|---|
+| consumer | `agreedAction` (`notifyAgreed`) | `AGREED` | does not exist yet — insert |
+| provider | `verifiedAction` (`notifyVerified`) | `VERIFIED` | already exists — update |
+
+The provider agreement is first written claims-less by
+`NegotiationProcessorsImpl.processAgreeing` / `transitionToAgreed` at `AGREED`;
+the agent's claims only arrive with the verification message. Since
+`createAgreement` is skipped once `agreementApi.findByContractId(...)` finds a
+row, a create-only mapping would silently drop every provider-side claim set —
+and the provider is the side that evaluates transfer-time policy. So
+`TMFBackedContractNegotiationStore.persistAgreementClaims` re-writes the `claims`
+characteristic from `handleVerificationStates` (reached for both `VERIFYING` and
+`VERIFIED`), and `TMFEdcMapper.applyClaims` reports whether anything actually
+changed so an unchanged agreement is not rewritten.
+
+**Where the claims end up, and who can read them.** Upstream keeps claims in the
+private `agr_claims` column of a SQL store that nothing but the connector talks
+to; here they live on a TMForum Agreement, which is a business object in a shared
+backend — so the question is a deployment one, not a code one. Three points fix
+the answer for FDSC:
+
+- The agreement API the controlplane writes to (`tmfExtension.agreementApi`,
+  `config/tck/edc.properties:98`) is a cluster-internal service. In the FIWARE
+  Data Space Connector it sits behind the party's own PEP and is never routed
+  through the data-space ingress, so a counterparty cannot read it — the DSP
+  surface returns agreements through the connector, which does not serialise the
+  characteristic to the wire.
+- The claims are the counter-party agent's own claims, taken from a token that
+  party presented to this connector. Nothing in them is private to *us*, and the
+  same backend already holds the quotes, offers and the agreement itself. So the
+  boundary this crosses is operator-internal: the party's own business systems,
+  which already read agreements, can now also read the claims of the counterparty
+  they agreed with.
+- That is acceptable for a single-tenant controlplane, which is what
+  `participant-context-connector-classic-core` gives us (§4). It is **not**
+  automatically acceptable for a TMForum backend shared by several participants
+  or exposed to external consumers: there the claims would become visible to
+  tenants that were never party to the negotiation. A deployment that does either
+  must restrict the `claims` characteristic at the PEP, or move it out of TMForum
+  (vault-backed, keyed by agreement id) — the mapper writes it in exactly one
+  place (`TMFEdcMapper.applyClaims`), so the swap is local.
+
+Two non-breaks worth stating, because both look like breaks:
+
+- **`fdsc-transfer-extension` has no `DataFlowController`.** Its
+  `FDSCTransferControlExtension.java:197,234` only *calls*
+  `DataPlaneInstanceStore.save(...)`, and a caller that ignores the new
+  `StoreResult<Void>` return value still compiles. The repo's single
+  `DataFlowController` implementation lives in `test-extension`, so the
+  `prepare`/`resume`/`async` work belongs to the `test-extension` step, not the
+  transfer step.
+- **`DataFlowResponseMessage` (`core-spi`) is byte-identical** between 0.14.1 and
+  0.18.1 and still declares `provisioning`. Only the `provisioning` field of
+  `DataFlowResponse` (`transfer-spi`) was renamed. Do not "fix" the former.
+
+### 3.3 Observed breakage inventory at 0.18.1
+
+Output of `mvn -B -fae -DskipTests compile` on the Step 2 tree (parent SUCCESS,
+`fdsc-transfer-extension` / `policy-extension` / both controlplanes SKIPPED behind the
+failures below). 37 distinct compiler errors across 13 files:
+
+| Module | File | Errors | Owner |
+|---|---|---|---|
+| `tmf-extension` | `store/TMFLeaseContext.java` | 5 | Step 3 (file deleted — dead code) |
+| `tmf-extension` | `store/TMForumBackedCatalogProtocolService.java` | 4 | Step 3 |
+| `tmf-extension` | `store/TMFEdcMapper.java` | 3 | Step 3 |
+| `tmf-extension` | `store/TMFBackedContractNegotiationStore.java` | 3 | Step 3 |
+| `tmf-extension` | `store/TMFObjectMapper.java` | 1 | Step 3 |
+| `tmf-extension` | `CatalogProtocolServiceExtension.java` | 1 | Step 3 |
+| `tmf-extension` | `TMFContractNegotiationExtension.java` | 1 | Step 3 |
+| `dcp-extension` | `DCPExtension.java` | 6 | Step 4 |
+| `dcp-extension` | `policy/CredentialScopeExtractorRegistry.java` | 4 | Step 4 |
+| `dcp-extension` | `FixedJwtToVerifiableCredentialTransformer.java` | 2 | Step 4 |
+| `oid4vc-extension` | `identity/OID4VPIdentityService.java` | 3 | Step 4 |
+| `oid4vc-extension` | `identity/CounterPartyAddressAudienceResolver.java` | 2 | Step 4 |
+| `test-extension` | `edc/TckGuardExtension.java` | 2 | Step 6 |
+
+Every one of them maps to a row of §3.2.
+
+**This inventory is only trustworthy because the dead DSP 2024/1 import was removed first.**
+With `import static ...Dsp2024Constants.DSP_TRANSFORMER_CONTEXT_V_2024_1` still present,
+`tmf-extension` reported **4** errors, all in `TMFContractNegotiationExtension`, and the 14
+real errors in `store/` never appeared: the module runs Lombok and MapStruct annotation
+processors, and an error raised in the first processing round aborts the later rounds before
+those classes are analysed. Any step that reads a compile log from this repo as a complete
+breakage list must first clear the import-level errors and recompile — otherwise the list is
+silently truncated, and the truncation looks exactly like "that module is nearly done".
+
+**Step 5 addendum — `policy-extension` had no compile break at all.** Once
+`fdsc-transfer-extension` was migrated, `policy-extension` compiled unchanged against 0.18.1:
+`CatalogPolicyContext`, `ContractNegotiationPolicyContext`, `TransferProcessPolicyContext`,
+`ParticipantAgentPolicyContext` and `PolicyEngine.registerPreValidator` all kept their 0.14.1
+signatures. The single break was runtime and test-only: `ParticipantAgent`'s constructor now
+rejects a null identity (`NullPointerException: identity cannot be null`), so a test that built
+`new ParticipantAgent(null, …)` to exercise the mapper's null-identity branch had to stub the
+agent instead. The defensive branch in `PolicyContextInputMapper` was left in place rather than
+deleted: it is a single `putIfNotNull`, and the upstream guarantee is a constructor check that
+costs nothing to tolerate being wrong about.
+
+---
+
+---
+
+## 4. Participant Context impact analysis
+
+This is the central design question of the upgrade, and the only break that can
+pass compilation and still be wrong at runtime.
+
+### 4.1 What upstream actually added
+
+`connector-participant-context-spi` 0.18.1 (`javap`):
+
+```java
+// org.eclipse.edc.participantcontext.spi.types.ParticipantResource
+public interface ParticipantResource {
+  static QuerySpec.Builder queryByParticipantContextId(String);
+  static Criterion        filterByParticipantContextId(String);
+  String getParticipantContextId();
+}
+
+// org.eclipse.edc.participantcontext.spi.types.AbstractParticipantResource
+public abstract class AbstractParticipantResource extends Entity implements ParticipantResource {
+  protected String participantContextId;
+  public    String getParticipantContextId();
+  // Builder<T, B> extends Entity.Builder<T, B>
+  public    B      participantContextId(String);   // on every entity builder
+}
+```
+
+Which control-plane entities carry it at 0.18.1 (none of them did at 0.14.1):
+
+| Entity | 0.14.1 | 0.18.1 |
+|---|---|---|
+| `ContractNegotiation` | `extends StatefulEntity` | `extends StatefulEntity implements ParticipantResource`, own `participantContextId` field |
+| `TransferProcess` | `extends StatefulEntity` | same shape as `ContractNegotiation` |
+| `Asset` | `extends Entity` | `extends AbstractParticipantResource` |
+| `ContractDefinition` | `extends Entity` | `extends AbstractParticipantResource` |
+| `PolicyDefinition` | `extends Entity` | `extends AbstractParticipantResource` |
+| `ContractAgreement` | plain class, no `participantContextId`, no `agreementId` | `implements ParticipantResource`; also gains `agreementId` (distinct from `id`) and `claims` — see §3.2 |
+
+### 4.2 Why this is a silent failure here, not a compile error
+
+`TMFBackedAssetIndex.queryAssets` (`tmf-extension/.../store/TMFBackedAssetIndex.java:131-154`)
+does **not** translate the `QuerySpec` into a TMForum query. It pages the full
+ProductSpecification list out of TMForum, maps each one with `TMFEdcMapper`, and
+then applies the criteria **in memory** through
+`CriterionOperatorRegistry.toPredicate`, which reflects over the mapped `Asset`.
+
+So the moment EDC core starts appending `ParticipantResource.filterByParticipantContextId(ctx)`
+to its queries — which is the entire point of the refactor — the predicate reads
+`Asset.participantContextId`, finds `null` on every mapped asset, and the catalog
+comes back **empty**. No exception, no failed build, no failing unit test that
+mocks the registry. The same reasoning applies to the contract-definition and
+policy-definition stores, which filter the same way.
+
+**Therefore the hard requirement is:** `TMFEdcMapper` must set
+`participantContextId` on every entity it builds — `Asset`, `ContractDefinition`,
+`PolicyDefinition`, `ContractNegotiation` **and `ContractAgreement`** — and the
+value must be the same one the runtime is configured with. This belongs in the
+`tmf-extension` step and must be covered by a test that asserts a non-null
+`participantContextId` on mapper output.
+
+`ContractAgreement` is not an afterthought on that list.
+`TMFBackedContractNegotiationStore.queryAgreements` (:196) filters through the
+same in-memory `CriterionOperatorRegistry` path as `queryAssets`, so an agreement
+query carrying a `participantContextId` criterion comes back empty in exactly the
+same silent way — and 0.15.0 additionally looks agreements up by
+`(agreementId, participantContextId)` on the transfer request, which is the
+`agreementId` row in §3.2.
+
+### 4.3 Where `participantContextId` should live in the TMForum model
+
+The TMForum-backed stores have no SQL schema to migrate, and TMForum entities have
+no natural slot for a connector-internal context id. **Decision: do not persist it.**
+This connector serves exactly one participant; the id is a runtime constant, so it
+is *derived from configuration at mapping time*, not stored per entity and not
+round-tripped through TMForum. Persisting it would add a field to every TMForum
+payload that only this connector understands, and would let stored data drift out
+of sync with `edc.participant.context.id`.
+
+Consequence: the TMF stores can ignore a `participantContextId` criterion entirely
+(it is trivially true for every entity they can ever return) **provided** the
+mapper stamps the configured value, so that the generic in-memory predicate also
+passes. Stamping is the cheaper and less surprising of the two, so stamp.
+
+### 4.4 The classic core is an *addition*, not an alternative — declare `classic`
+
+`participant-context-connector-classic-core` 0.18.1 contains exactly three classes
+— `ClassicParticipantContextServicesExtension`,
+`ClassicParticipantContextDefaultServicesExtension` and
+`SingleParticipantContextConfigStore` — i.e. it is the single-participant
+compatibility mode: at `prepare()` it seeds one `ParticipantContext` into the
+`ParticipantContextStore` from configuration and nothing else.
+
+Its two settings, read straight off the `@Setting` annotations in the bytecode:
+
+| Setting key | Default | Required | Description (verbatim from the annotation) |
+|---|---|---|---|
+| `edc.participant.id` | `anonymous` | — | "Configures the participant id this runtime is operating on behalf of" |
+| `edc.participant.context.id` | — | **no** (`required = false`) | "Configures the participant context id for the single participant runtime" |
+
+Note `required = false`: `edc.participant.context.id` is *optional* in classic
+mode. It should still be set explicitly and kept stable across restarts, because
+it is the value that ends up on persisted entities — but a missing key will not
+fail startup, which is precisely how a wrong-but-silent configuration gets shipped.
+
+**The two cores are not an either/or — an earlier revision of this section framed
+them as one, and that was wrong.** `control-plane-core` 0.18.1 depends *directly*
+(runtime scope) on `participant-context-core`, `participant-context-connector-core`
+**and** `participant-context-config-core`, so the full connector core is on the
+classpath of both controlplane images whatever these POMs declare. Declaring
+`participant-context-connector-classic-core` adds to that; it substitutes for
+nothing.
+
+They coexist because they provide disjoint, complementary service types
+(`@Provider` methods read off the bytecode):
+
+| Artifact | Provides | Injects |
+|---|---|---|
+| `participant-context-connector-core` (transitive, unavoidable) | `ProtocolWebhookResolver`, `ParticipantProfileService`, `ParticipantIdentityResolver` | `ParticipantContextConfigStore`, `ParticipantContextService`, `DataspaceProfileContextRegistry` |
+| `participant-context-connector-classic-core` (declared by us) | `SingleParticipantContextSupplier`, `ParticipantContextConfigStore` | — |
+
+So the classic core supplies exactly the `ParticipantContextConfigStore` that the
+connector core injects. **Consequence for Step 3: `ParticipantIdentityResolver`,
+`ParticipantProfileService` and `ProtocolWebhookResolver` are all available for
+injection** — do not plan around their absence on the assumption that "classic"
+means a reduced service set. What `classic` actually buys is the single-participant
+*seeding* behaviour (one `ParticipantContext` from configuration) and the
+`SingleParticipantContextSupplier`, which is what lets this connector keep its one
+participant identity (`urn:connector:fdsc-edc`) without a real decision about
+per-context storage in TMForum.
+
+**`SingleParticipantContextSupplier` is also load-bearing for the data-plane
+signaling API** added in this step. `DataPlaneSignalingApiExtension#initialize()`
+optionally injects it: present → it registers `DataPlaneRegistrationApiV4Controller`;
+absent → it requires an `AuthorizationService` and otherwise throws
+`EdcException("Missing AuthorizationService which is required when running in multi
+participant mode.")`. Dropping the classic core would therefore not fall back
+gracefully — it would fail startup (§8.2).
+
+### 4.5 `SingleParticipantContextSupplier` is config-derived, so resolving it at `initialize()` is safe
+
+`TMFContractNegotiationExtension` resolves the participant context eagerly, inside
+the `@Provider` that builds `TMFConfig`. That is only correct if the supplier is
+usable before any store is populated. Confirmed against the 0.18.1 bytecode:
+
+- `SingleParticipantContextSupplier` comes from a **`@Provider` method** on
+  `ClassicParticipantContextDefaultServicesExtension`, built from its two
+  `@Setting` fields (`edc.participant.id`, `edc.participant.context.id`). It reads
+  no store, and default-services extensions are loaded before regular ones, so the
+  supplier exists by the time any `@Inject`ing extension is initialized.
+- The store write lives elsewhere — `ClassicParticipantContextServicesExtension#prepare()`
+  seeds the `ParticipantContextStore`. `prepare()` runs *after* `initialize()`, but
+  nothing on this path reads that store, so the ordering does not matter here.
+- The supplier's result is a constant success in classic mode, so the
+  `orElseThrow(... EdcException ...)` is unreachable there; it guards the
+  multi-participant case. A runtime with no supplier at all falls back to the
+  `edc.participant.*` settings with a warning.
+
+Still worth observing rather than assuming: the Step 7 container-start gate should
+confirm the boot log carries no participant-context warning and that persisted
+entities carry the configured `edc.participant.context.id`.
+---
+
+## 5. DSP protocol impact
+
+**Dropping `dsp-2024` / `dsp-spi-2024` is behaviour-neutral for this connector.**
+Three independent checks:
+
+- `config/tck/tck.properties:37` already points the TCK at
+  `http://edc:8282/protocol/2025-1`, the versioned endpoint registered by the
+  `dsp-2025` module, and `:40` sets the unversioned base URL. Nothing in the TCK
+  configuration exercises a 2024/1 endpoint.
+- Both controlplane POMs already declare `dsp-2025` and `dsp-spi-2025` next to the
+  2024 artifacts, and both 2025 artifacts resolve at 0.18.1 (§2.4).
+- DSP 0.8 and 2024/1 were deleted upstream in 0.16.0 (PR #5452), so staying on the
+  2024 modules is not an option in any case.
+
+**One code site went with the artifact.** `TMFContractNegotiationExtension` registered its
+type-preserving policy and constraint transformers under *both* transformer contexts, and the
+2024/1 half (`:19` import, `:159` registration) has no counterpart at 0.18.1. It is deleted,
+not ported — see the last row of §3.2. The `DSP_TRANSFORMER_CONTEXT_V_2025_1` registration
+immediately below it is the one that matters and is untouched. Nothing else in `src/main/java`
+references a 2024/1 *protocol* symbol; the remaining `2024/1` strings in `policy-extension` are
+the ODRL vocabulary IRIs ring-fenced below.
+
+**Consequence for counterparties.** After the upgrade this connector speaks DSP
+2025/1 only. Any external counterparty still on DSP 2024/1 (or 0.8) can no longer
+negotiate with it — that is an external coordination item, not a code change, and
+it should be announced with the release.
+
+**Do not delete the 2024/1 IRI in `config/tck/scope-mappings.json:8`.** That file
+maps ODRL *left operands* to credential scopes:
+
+```json
+{ "match": { "http://www.w3.org/ns/odrl/2/leftOperand": "https://w3id.org/dspace/2024/1/membershipType" },
+  "scopes": ["contract.negotiation", "catalog"] }
+```
+
+`https://w3id.org/dspace/2024/1/membershipType` is **policy vocabulary**, not
+protocol wiring: it is the stable IRI of the DSpace membership left operand and it
+is unaffected by the removal of the 2024/1 *protocol* modules. Removing it would
+silently stop the membership constraint from mapping to the
+`contract.negotiation` / `catalog` scopes. Ring-fenced here so the `dsp-2024`
+removal does not take it along.
+
+Related upstream change to watch in the same area: 0.17.0 changed the DCP scope
+alias `org.eclipse.edc.vc.type` -> `org.eclipse.dspace.dcp.vc.type` (PR #5593).
+Policy constraints using the old alias stop matching. This repo does not set the
+alias anywhere, but any policy authored externally against it does.
+
+### 5.1 The DSP version endpoint is unauthenticated at 0.18.1
+
+Verified against the published 0.18.1 jars and `eclipse-edc/Connector` tag
+`v0.18.1`, because the absence of `RequestVersionPolicyContext` from the SPI does
+not by itself prove the wire behaviour changed. It did:
+
+- **Outbound.** The only caller is
+  `connector.controlplane.discovery.DiscoveryServiceImpl` (`control-plane-core`),
+  constructed as `DiscoveryServiceImpl(EdcHttpClient, ParticipantProfileService,
+  ObjectMapper)` — no `IdentityService`, no `AudienceResolver`, no `PolicyEngine`.
+  `fetchProtocolVersions` issues a bare `GET` and sets no `Authorization` header.
+- **Not a `RemoteMessage`.** `protocol.spi.ProtocolVersions` / `ProtocolVersion`
+  are plain records, so a version request never reaches
+  `DspHttpRemoteMessageDispatcherImpl.dispatch(...)` — the method that evaluates
+  the policy engine, builds the `scope` claim and calls `obtainClientCredentials`.
+  `DspHttpCoreExtension` registers policy scopes for only the catalog,
+  negotiation and transfer contexts.
+- **Inbound.** `DspVersionApiController` (`@Path("/.well-known/dspace-version")`)
+  declares `getProtocolVersions()` with **zero** parameters — no
+  `@HeaderParam(AUTHORIZATION)`, unlike every other DSP controller — and is
+  registered with no auth filter. Upstream labels it the "unauthenticated DSP
+  version endpoint".
+
+So the `RequestVersionPolicyContext` post-validator was dropped rather than ported
+because the feature it scoped no longer exists, not merely because the SPI type
+went away. Two consequences:
+
+1. **Interop.** A counterparty still running a pre-0.17 EDC whose version endpoint
+   *requires* an authenticated, scoped request will now reject ours, which goes out
+   unscoped. This is a wire-visible behaviour change that no compile or unit gate
+   covers — **confirm it against a real counterparty in the Step 7 runtime gate**
+   and carry it into the Step 9 release notes alongside the loss of DSP 2024/1.
+2. **Exposure.** This connector's own version endpoint is now reachable without a
+   token. It returns only the supported protocol versions, so the disclosure is
+   negligible, but a deployment that fronts the connector with a PEP (Apisix in the
+   FDSC stack) must stop requiring a token on that path or version discovery
+   breaks. Operator-facing — Step 9.
+
+---
+
+## 6. Configuration migration
+
+### 6.1 What this repo actually sets
+
+The repository contains exactly **one** EDC properties file,
+`config/tck/edc.properties`, plus env vars in `docker-compose.tck.yml`. **There is
+no Helm chart, `values.yaml` or k8s manifest in this repository, and
+`docker/Dockerfile` bakes in no configuration** — production configuration for both
+controlplane images lives outside this repo and must be migrated by whoever owns
+the deployment.
+
+Distinct EDC-core keys found: 5 `edc.*` (`edc.participant.id`, `edc.hostname`,
+`edc.log.level`, `edc.dsp.callback.address`, `edc.fs.config`) plus 8 `web.http.*`
+keys, and 2 env vars (`EDC_FS_CONFIG`, `EDC_LOG_LEVEL`). Everything else in that
+file is this repo's own namespaces (`tmfExtension.*`, `testExtension.*`,
+`fdscTransfer.*`, `dcp.*`, `oid4vp.*`, `odrlPap.*`), which upstream does not touch.
+
+### 6.2 Migration table
+
+| Key | Status at 0.18.1 | Present in this repo? | Action |
+|---|---|---|---|
+| `edc.participant.id` | kept; default `anonymous` in classic mode | **yes** — `config/tck/edc.properties:19` = `urn:connector:fdsc-edc`, asserted by `scripts/verify-tck-config.sh:165`, must stay equal to `dataspacetck.dsp.connector.agent.id` (`config/tck/tck.properties:33`) | leave as is |
+| `edc.participant.context.id` | **new** (0.15.0, PR #5280), `required = false` | **no** | add, pinned to a stable value; see §4.4 |
+| `edc.iam.issuer.id` | renamed to `edc.participant.did` (0.17.0, PR #5559); old key deprecated but still honoured | **no** (prose only) | nothing to rename here; relevant only to external DCP deployments |
+| `edc.dsp.well-known-path.enabled` | **removed** (0.17.0, PR #5527) | **no** | nothing to remove here; external configs must drop it |
+| `edc.iam.dcp.scopes.<id>.prefix-mapping` | deprecated in favour of `...prefix.mapping` (0.18.0, PR #5795) | **no** — no `edc.iam.*` key is set or read anywhere in this repo | no action; see note below |
+| `web.http.signaling.port` | **new listener**, default `8182`, registered unconditionally by `DataPlaneSignalingApiExtension` once `data-plane-signaling` is on the classpath | **no** | **add**, pinned explicitly; publish the port in `docker-compose.tck.yml` and in the out-of-repo Helm service. See §8.2.1 |
+| `web.http.signaling.path` | **new**, default `/api/signaling` | **no** | add alongside the port |
+| `web.http.signaling.public.uri` | **new**, optional; defaults to `http://localhost:<port><path>` | **no** | set only if the data plane reaches the control plane across a container/pod boundary, where `localhost` is wrong |
+| `dcp.scopes.version` | **retired, no replacement** — this repo's own key; the `RequestVersionPolicyContext` it bound to was removed upstream (see §3.1) | **yes** — test fixtures only, `dcp-extension/src/test/resources/valid/dcp/{1,3,4,5}.properties` | key dropped from `DcpConfig.Scopes` in Step 4; it is now ignored, not rejected, so existing deployments keep loading. Operators should delete it — **belongs in the Step 9 release notes** |
+| `edc.hostname`, `edc.log.level`, `edc.dsp.callback.address`, `edc.fs.config`, `web.http.{default,management,protocol,tck}.*` | unchanged | yes | leave as is |
+
+**Note on DCP scopes.** `dcp-extension` has its own `dcp.scopes.*` namespace
+(`dcp-extension/.../DcpConfig.java:51`, four fixed leaves read at `:72-79`), set
+only in test fixtures under `dcp-extension/src/test/resources/valid/dcp/`. It is
+*this repo's* configuration and is unrelated to upstream's `edc.iam.dcp.scopes.*`
+(introduced 0.16.0, PR #5485). Do not conflate the two.
+
+**Decided in Step 4: keep the hand-rolled scope wiring.** The open design question
+— whether to replace the `DefaultScopeMappingFunction` post-validators with
+upstream's dynamic `DcpScopeRegistry` / `edc.iam.dcp.scopes.*` — is answered *no*
+for this upgrade, on two grounds. First, scope *and* the policy context it binds to
+are part of this connector's contract with its counterparties; swapping the
+configuration surface would force every FDSC deployment to rewrite its scope
+config in the same release that already renames connector keys, for no functional
+gain. Second, upstream's registry keys scopes by credential type, whereas this
+repo maps a single fixed scope string per protocol phase — the two are not
+config-compatible, so the swap is a behaviour change, not a migration. It is a
+reasonable follow-up ticket once 0.18.1 is green, and is explicitly **not** part
+of the 0.18.1 upgrade.
+
+The `dcp.scopes.version` leaf was removed in Step 4: the only context it could
+bind to, `RequestVersionPolicyContext`, no longer exists upstream. The remaining
+three leaves (`catalog`, `negotiation`, `transfer`) are unchanged. See the
+`dcp.scopes.version` row in §6.2.
+
+---
+
+## 7. External component alignment
+
+### 7.1 Eclipse IdentityHub — must move in lockstep
+
+No IdentityHub coordinate appears anywhere in this repository — it is deployed
+alongside fdsc-edc — so this is an external coordination item, not a code change
+here. It is a hard one: the Connector and IdentityHub share the DCP wire contract,
+and 0.18.1 exists on both sides, so they must be upgraded together.
+
+- **IdentityHub is version-aligned with the Connector**: <https://github.com/eclipse-edc/IdentityHub/releases> carries the same tags on the same dates — v0.15.0 (2025-12-02), v0.15.1 (2025-12-18), v0.16.0 (2026-02-19), v0.17.0 (2026-04-20), v0.18.0 (2026-06-30), v0.18.1 (2026-09-28). Exception: IdentityHub has **no 0.16.1** (the Connector's 0.16.1 is a standalone backport).
+- **STS did not move in 0.15.0.** The move of the STS modules from the Connector into IdentityHub was Connector PR #4839 (merged 2025-02-25, first released in **0.12.0**), paired with IdentityHub PR #623. At Connector v0.14.1 only the remote STS client remained (`extensions/common/iam/identity-trust/identity-trust-sts`), renamed to `decentralized-claims-sts` by the 0.15.0 DCP rename.
+- **IdentityHub 0.15.0** breaking changes (<https://github.com/eclipse-edc/IdentityHub/releases/tag/v0.15.0>): stores refactored onto the new lease model (IdentityHub PR #801), improved `VerifiableCredentialResource` handling (#834), improved `KeyPair` handling (#836), **`participantId` renamed to `participantContextId`** (#845), ownership check added to the authorization service (#847), holder attestation (#861). Also notable: `identity-api` module renamed to `identity-api-configuration` (#820), customizable API-key alias (#860), anonymous credential requests (#837).
+- **IdentityHub 0.18.0** breaking changes (<https://github.com/eclipse-edc/IdentityHub/releases/tag/v0.18.0>): profile strings replace the `CredentialFormat` enum for format matching (IdentityHub PR #993), Admin/Identity APIs bumped to **v1beta** (#998), Identity and Issuer Admin APIs migrated **from roles to scopes** (#1010, mirroring Connector #5805/#5812), participant-scoped vault auth switched to token exchange (#1014, mirroring Connector #5821).
+
+### 7.2 Unaffected components
+
+TMForum API, Scorpio, PostGIS and the ODRL-PAP / OPA pair are not EDC artifacts and
+carry no version coupling to the Connector. They stay where they are. The only
+indirect coupling is the ODRL vocabulary in `config/tck/scope-mappings.json` (§5).
+
+### 7.3 DSP TCK runtime
+
+`docker-compose.tck.yml` pins the TCK image at `1.0.0-RC6`. Released versions now go
+up to **1.0.2**, and EDC 0.18.1 itself pins `dsp-tck:1.0.1` in its
+`libs.versions.toml`. Re-pinning is part of the TCK step, and it must be done
+*after* the baseline in §10 is captured, so that a TCK-version change and a
+connector-version change never move at the same time.
+
+**Decided in Step 8: `1.0.1`.** The plan says prefer the version EDC itself pins unless
+`1.0.2` passes cleanly; `1.0.1` is what 0.18.1 pins and the suite is fully green against it, so
+there was no reason to move to `1.0.2`. `DSP_TCK_VERSION` is `1.0.1` in `docker-compose.tck.yml`,
+`docker/Dockerfile.tck-runner`, `.github/workflows/test.yml` and `README.md`.
+
+---
+
+## 8. Controlplane assembly
+
+### 8.1 Callback dispatch — the `callback-http-dispatcher` question, answered
+
+`callback-http-dispatcher` is discontinued (last published 0.17.0, 404 at 0.18.1)
+and no artifact of that name replaces it. **HTTP callback delivery is not gone,
+though — it moved inside `callback-event-dispatcher` at 0.18.0.** Evidence, from
+listing and `javap`-ing the published jars:
+
+| | 0.14.1 | 0.18.1 |
+|---|---|---|
+| `control-plane-spi` callback SPI | `CallbackRegistry`, `CallbackProtocolResolver`, `CallbackProtocolResolverRegistry`, `CallbackEventRemoteMessage` | `CallbackRegistry`, **`CallbackClient`** (the other three are gone) |
+| `callback-event-dispatcher` | `CallbackEventDispatcher`, `CallbackEventDispatcherExtension`, `CallbackProtocolResolverRegistryImpl` | `CallbackEventDispatcher`, `CallbackEventDispatcherExtension`, **`CallbackEventDispatcherDefaultExtension`**, **`CallbackHttpClient`** |
+| `callback-http-dispatcher` | `CallbackEventDispatcherHttpExtension`, `GenericHttpRemoteDispatcher(Impl)`, `GenericHttpDispatcherDelegate`, `CallbackEventRemoteMessage` | artifact does not exist |
+
+At 0.18.1 `CallbackHttpClient implements CallbackClient` and does the POST itself
+(`EdcHttpClient` + `ObjectMapper` + `Vault`, with a private
+`resolveAuthCode(String, String)` that reads the callback's auth code out of the
+vault); `CallbackEventDispatcherDefaultExtension` provides it as the default
+`CallbackClient`. `CallbackEventDispatcher` now holds a `CallbackClient` instead of
+routing through the `RemoteMessageDispatcherRegistry`, which was itself removed
+upstream (PR #5814). `CallbackHttpClient` first appears in the 0.18.0 jar and is
+absent from 0.16.1 and 0.17.0 — exactly matching the removal of the separate
+module (PRs #5808 / #5815).
+
+**Conclusion: delete the `callback-http-dispatcher` dependency and add nothing.**
+`callback-event-dispatcher` (already declared at `controlplane-oid4vc/pom.xml:205`
+and `controlplane-dcp/pom.xml:195`) carries the HTTP transport from 0.18.0 onward,
+so the consumer-supplied callback addresses this connector stores as
+`List<TMFCallbackAddress>` (`tmf-extension/.../domain/TMFContractNegotiation.java:24`)
+keep being delivered. Because nothing about this is caught by `dependency:resolve`
+or by compilation, the transfer/negotiation step must still prove it at runtime: a
+negotiation with a `CallbackAddress` set, and an actual HTTP hit observed on the
+far side.
+
+### 8.2 Other assembly facts
+
+- Bytecode target is still Java 17 at 0.18.1; the Java 21 toolchain is fine.
+- `controlplane-base-bom` is a flat `<dependencies>` POM (31 deps at 0.14.1, 39 at
+  0.18.1). Full diff, confirmed by fetching both POMs:
+  - **removed:** `callback-http-dispatcher`, `transfer-data-plane-signaling`
+  - **added:** `participant-context-connector-core`,
+    `participant-context-connector-classic-core`, `control-plane-contract-manager`,
+    `control-plane-transfer-manager`, `data-plane-signaling`,
+    `data-plane-signaling-oauth2`, `catalog-crawler-core`, `console-monitor`,
+    `federated-catalog-api`, `oauth2-client`
+  - `auth-configuration` was **already** a BOM dependency at 0.14.1 — it is not a
+    gain, and the assembly step must not treat it as new.
+
+  `participant-context-connector-classic-core` is the **single-participant
+  compatibility mode** and is the intended migration path for this connector (§4.4).
+  Upstream renamed it from `participant-context-single-core` in 0.17.0 (PR #5598).
+- **The BOM diff is informational only — BOM membership wires nothing here.**
+  `controlplane-base-bom` is imported under `<dependencyManagement>` with
+  `<scope>import</scope>` (`controlplane-oid4vc/pom.xml:13-21`,
+  `controlplane-dcp/pom.xml` likewise), and every dependency in both controlplane
+  POMs carries an explicit `${edc.version}` — so the BOM manages no version and
+  contributes no artifact to the runtime. Consequence: each artifact to be added (`participant-context-connector-classic-core`,
+  `data-plane-signaling`) **must be declared explicitly**; it does not arrive by
+  the BOM gaining it. Equally, an artifact the BOM *dropped* is still wired here
+  as long as the POM declares it — which is exactly the
+  `transfer-data-plane-signaling` trap below.
+- **`transfer-data-plane-signaling` is a silent carry-over, not a removal.** The
+  0.18.1 BOM dropped it in favour of `data-plane-signaling`, but both controlplane
+  POMs declare it explicitly (`controlplane-oid4vc/pom.xml:185`,
+  `controlplane-dcp/pom.xml:175`) and **it still resolves at 0.18.1** (confirmed —
+  `data-plane-signaling`, `data-plane-signaling-client`,
+  `transfer-data-plane-signaling` and `data-plane-signaling-oauth2` all return 200
+  at 0.18.1). So nothing in the pipeline catches it: `dependency:resolve` passes,
+  compilation passes, and the connector keeps loading a module upstream
+  deliberately removed from the default controlplane assembly. This is the same
+  shape of runtime-only regression as `callback-http-dispatcher` (§8.1), and the
+  dependency-coordinate step owes it an explicit keep-or-replace decision —
+  **decided: replaced** (§8.2.1).
+- **`data-plane-signaling-client` is the legacy *client* half of the same pair, and
+  goes with it.** It is not a substitute for either module above. Its four classes
+  (`LegacyDataPlaneSignalingClient`, `LegacyDataPlaneSignalingClientExtension`,
+  `EmbeddedDataPlaneClient`, `DataPlaneSignalingClientTransformExtension`) exist to
+  `@Provides` the legacy
+  `org.eclipse.edc.connector.dataplane.selector.spi.client.DataPlaneClientFactory`,
+  whose only consumer on this classpath was `transfer-data-plane-signaling`.
+  `data-plane-signaling-core` ships its own `org.eclipse.edc.signaling.port.ClientFactory`
+  and never references the legacy type. Verified by resolving the full post-swap
+  classpath of the shaded assembly — both controlplane POMs *plus* the EDC artifacts
+  the five extension modules declare, **250 jars** — and scanning every entry of every
+  jar for the legacy type: the only hits are the interface's own definition in
+  `data-plane-selector-spi`
+  and the removed artifact itself — zero `@Inject` sites, so removing it cannot raise
+  an `EdcInjectionException`. Dropped from both POMs rather than left behind, so that
+  the end-to-end transfer check in the configuration step is unambiguous about which
+  client path it exercises.
+  **Pitfall if you repeat this scan:** `unzip` is not installed in the build image, so
+  the obvious `unzip -p <jar> | grep` loop reports **zero hits for every jar** — a
+  false negative that looks exactly like a clean result. Use Python's `zipfile` (or
+  `jar tf`) instead, and always include a positive control (a jar you know contains
+  the symbol) to prove the scanner actually works.
+- Upstream now publishes `dsp-tck-connector-under-test` and `tck-extension` at
+  0.18.1 — overlapping with this repo's hand-rolled `test-extension`.
+- **How the coordinate statuses in §2 were established.** Not from a reactor build:
+  `mvn -B -fae -DskipTests dependency:resolve` stops at the first failing module and
+  leaves `policy-extension`, `controlplane-oid4vc` and `controlplane-dcp` **SKIPPED**
+  behind the `org.seamware.edc:*:0.0.1-SNAPSHOT` siblings this migration deliberately
+  leaves uncompiled (§3.3). Those three modules carry the riskiest coordinate changes
+  in the upgrade — `data-plane-signaling`, `participant-context-connector-classic-core`
+  and the `callback-http-dispatcher` drop all live there — so the reactor run proves
+  **nothing** about them, and a green-looking `dependency:resolve` must not be read as
+  having covered them. Two substitutes were used instead, and either is what a
+  re-check should run — not the reactor:
+
+  1. Per artifact, from an empty throwaway directory:
+     `mvn dependency:get -Dartifact=org.eclipse.edc:<artifactId>:0.18.1` (fetches pom
+     + jar). Run for every coordinate this upgrade adds or questions —
+     `data-plane-signaling`, `participant-context-connector-classic-core`,
+     `connector-participant-context-spi`, `data-plane-signaling-client`,
+     `transfer-data-plane-signaling`, `callback-event-dispatcher` — all **OK**.
+  2. Whole-assembly, which also proves the *transitive* closure: generate a throwaway
+     POM containing the **32 distinct `org.eclipse.edc` artifacts declared across the
+     two controlplane POMs** (carrying over the `org.eclipse.jetty.websocket`
+     exclusion the real POMs use) and run `mvn -f /tmp/cpprobe/pom.xml
+     dependency:resolve`. **Exit 0, no unresolved coordinate** — this is the gate the
+     reactor could not reach, and it is what actually backs the "resolves" column of
+     §2.4 for `cp-oid4vc` / `cp-dcp`.
+- Stray tracked file `org/eclipse/edc/iam/identitytrust/spi/DcpConstants.java` sits
+  at the repo root outside every module source root — dead code in a package that
+  no longer exists upstream.
+
+
+### 8.2.1 The `data-plane-signaling` swap is not controller-for-controller — it opens a new HTTP listener
+
+Replacing `transfer-data-plane-signaling` with `data-plane-signaling` is usually
+described as swapping one `DataFlowController` for another. It is not, and the
+difference is deployment-visible. Confirmed by inspecting both 0.18.1 jars:
+
+| | `transfer-data-plane-signaling` (dropped) | `data-plane-signaling` (added) |
+|---|---|---|
+| Classes | exactly 2: `TransferDataPlaneSignalingExtension`, `LegacyDataPlaneSignalingFlowController` | thin bundle; one runtime dependency on `data-plane-signaling-core` |
+| `ServiceExtension` entries | 1 | **3** — `DataPlaneSignalingExtension`, `DataPlaneSignalingFlowControllerExtension`, **`DataPlaneSignalingApiExtension`** |
+| Web context | none (no `PortMappingRegistry`/`WebService` inject) | registers a **new `signaling` context** |
+
+`DataPlaneSignalingApiExtension#initialize()` calls
+`portMappingRegistry.register(new PortMapping(ApiContext.SIGNALING, port, path))`
+**unconditionally** — there is no feature flag — and mounts
+`DataPlaneTransferApiController` plus the v4/v5 data-plane registration APIs on it.
+Its configuration record `SignalingApiConfiguration` carries:
+
+| Setting key | Default |
+|---|---|
+| `web.http.signaling.port` | `8182` |
+| `web.http.signaling.path` | `/api/signaling` |
+| `web.http.signaling.public.uri` | optional; `http://localhost:<port><path>` |
+
+**Consequence for this repo:** `config/tck/edc.properties` declares only the
+`default` / `management` / `protocol` / `tck` contexts (`:30,38,46,57`), so after
+this change both controlplane images start a fifth HTTP listener on **8182**, which
+nobody declared, `docker-compose.tck.yml:210-214` does not publish (it lists four
+ports) and `scripts/verify-tck-config.sh` does not check. The out-of-repo deployment
+cannot be inspected from here (§6.1 — this repository contains no chart or manifest),
+but it cannot be exposing a port that did not exist at 0.14.1 either.
+8182 does not collide with anything this repo already uses
+(8080 / 8181 / 8282 / 8687), so the default is survivable — but it must be pinned
+explicitly rather than inherited, and the operator-facing notes must say the port
+appeared. Both are now carried in the migration table (§6.2) for the configuration
+step and in §9.2 for the release notes.
+
+See also §4.4: the same extension's choice between the v4 and v5 registration
+controllers depends on `SingleParticipantContextSupplier`, which arrives with
+`participant-context-connector-classic-core`.
+
+### 8.3 `DataFlowManager` is gone — `DataFlowController` is now a single injected service
+
+Not previously recorded, found while mapping §3.2 and confirmed by `javap`:
+
+- `org.eclipse.edc.connector.controlplane.transfer.spi.flow.DataFlowManager` exists in
+  `transfer-spi` 0.14.1 and **is absent from `transfer-spi` 0.18.1** (removed in 0.16.0,
+  PR #5435, "inline DataFlowManager").
+- At 0.18.1 `TransferCoreExtension` and `TransferProcessorsImpl` take **one**
+  `DataFlowController` by injection. There is no registry and no priority any more.
+- `test-extension/.../edc/TckGuardExtension.java:50,88,151` imports `DataFlowManager`,
+  `@Inject`s it and calls `dataFlowManager.register(noopPriority, new NoopDataFlowController(monitor))`.
+  **This will not compile at 0.18.1.** `NoopDataFlowController` has to be contributed as a
+  `@Provider`-ed `DataFlowController` instead, and the `noopPriority` constant becomes
+  meaningless.
+- Because only one `DataFlowController` can be injected, the noop controller now *conflicts*
+  with whatever else provides one. Both candidates do:
+  `transfer-data-plane-signaling` 0.18.1 (`TransferDataPlaneSignalingExtension#dataFlowController()`,
+  now holding only a `LegacyDataPlaneSignalingFlowController`) and
+  `data-plane-signaling-core` (`DataPlaneSignalingFlowControllerExtension#dataFlowController()`,
+  reached through the `data-plane-signaling` aggregator POM). **Owner: Step 6**, informed by
+  Step 2's keep-or-replace call on `transfer-data-plane-signaling` (§8.2). The shape of that
+  conflict is not what it first looks like — see below.
+
+#### 8.3.1 The conflict is silent, and it reaches the production images
+
+An earlier draft of this hand-off said the duplicate provider "fails at startup" and framed
+it as a TCK-assembly problem. Both halves were wrong. Three facts, each verified against
+0.18.1 and against this repo:
+
+1. **There is no TCK-only assembly.** `test-extension` is an unconditional `<dependency>` of
+   both controlplane modules (`controlplane-oid4vc/pom.xml:65`, `controlplane-dcp/pom.xml:54`),
+   and `docker/Dockerfile.tck` is handed the *same* shaded jar as the production
+   `docker/Dockerfile` — `docker-compose.tck.yml:206` passes
+   `JAR=controlplane-oid4vc/target/context/controlplane-oid4vc.jar`. The TCK image differs
+   from the production image in its baked-in config, not in its classpath. So once Step 6
+   makes `TckGuardExtension` compile, `NoopDataFlowController` and
+   `DataPlaneSignalingFlowControllerExtension#dataFlowController()` are both on the
+   **production** classpath. Nothing about this is TCK-specific.
+2. **A `@Provider` method cannot be conditional on config.** Today the noop controller is
+   registered behind `if (testConfig.isEnabled())` (`TckGuardExtension#initialize` ->
+   `registerNoopDataFlowController()`, `TckGuardExtension.java:100,110,149`), and that runtime
+   switch is the only thing currently keeping it out of a production runtime. Provider methods
+   are discovered and invoked by the boot layer regardless of any config value, so the switch
+   disappears along with the registry.
+3. **A duplicate provider does not fail startup — it silently overwrites.** `DependencyGraph.of`
+   invokes every non-default `@Provider`; `DefaultServiceExtensionContext#registerService` then
+   logs `"A service of the type ... was already registered and has now been replaced with a ..."`
+   and does `services.put(type, service)`. There is no duplicate-provider check anywhere in
+   `core/common/boot`. The outcome is **last writer wins, decided by extension load order**,
+   with one WARNING line as the only signal. Both candidate providers are plain `@Provider`
+   (`isDefault = false`; confirmed by `javap -v` on `DataPlaneSignalingFlowControllerExtension`
+   and `TransferDataPlaneSignalingExtension` at 0.18.1, both printing an empty
+   `RuntimeVisibleAnnotations` entry).
+
+Consequence: porting the registration to a bare `@Provider` ships a production image whose
+data-plane flow controller is whichever of the two loaded last. That is a silent data-plane
+outage, not a startup error, and no gate in this plan catches it except Step 7's end-to-end
+transfer check.
+
+#### 8.3.2 What Step 6 must actually choose
+
+`@Provider(isDefault = true)` on the noop is **safe but not by itself a solution**: a default
+provider is consulted only when no non-default provider supplied the service
+(`ServiceInjectionPoint#resolve` calls the default supplier only when `!context.hasService(...)`),
+so with `data-plane-signaling` on the classpath the signaling controller wins *always* —
+including in TCK mode, where the noop becomes dead code and TCK transfers are driven by the
+real signaling flow controller with no data plane behind it. It removes the silent overwrite
+by removing the noop.
+
+So the decision is about the classpath, not the annotation:
+
+| Option | Production image | TCK image | Cost |
+|---|---|---|---|
+| **A. Split the assembly** — move the noop controller into a module that only a TCK-specific runtime depends on, and give `docker/Dockerfile.tck` its own shaded jar | signaling only | noop only, signaling module absent | a TCK controlplane module plus a compose/Dockerfile change. The honest fix: it also stops shipping `InMemoryVault` and `TestIdentityService` in the production images (see the vault-exclusion comment at `controlplane-oid4vc/pom.xml:47-50`) |
+| **B. One jar, noop as `@Provider(isDefault = true)`** | signaling wins | signaling wins too — noop unused | cheap, but the TCK then has to pass against the real signaling flow controller; diff against `docs/migration/tck-baseline-0.14.1.md` before committing to it |
+| **C. One jar, drop `data-plane-signaling` from it** | noop controller in production | works as today | ruled out — production would have no real data plane |
+
+Step 6 picks A or B and records which. Step 7's end-to-end transfer check (§8.2) is the gate
+either way, and a bare `@Provider` (no `isDefault`) is not an admissible outcome.
+
+**Runtime-gate status (Step 7 → Step 8).** Step 6 took Option B, so in TCK mode the real
+`data-plane-signaling` controller wins and the noop is dead code (`TckGuardExtension#noopDataFlowController`
+documents this). The two runtime gates Step 7's acceptance names — one consumer-supplied HTTP
+`CallbackAddress` actually receiving a POST, and one transfer reaching `STARTED` under this
+assembly — are **not** observed by Step 7's `mvn clean package`; that build gate cannot start the
+compose stack. They are **carried into Step 8**, whose `./scripts/run-tck.sh` run drives the
+signaling flow controller for every transfer scenario in the suite and diffs the result against the
+fully-green `docs/migration/tck-baseline-0.14.1.md` baseline — a strictly stronger gate than a
+single hand-run transfer. If any transfer scenario cannot complete without a data plane behind the
+signaling controller, Step 8 falls back to Option A (a TCK-only runtime that excludes
+`data-plane-signaling` so the noop is selected) per the table above, rather than filtering the
+failure out. This deferral is explicit, not an assumption that the gates pass.
+
+**Resolved in Step 8 — Option A was required.** Run under Option B, every provider-side transfer
+scenario (`TP:03-01`…`TP:03-06`) failed: the real `DataPlaneSignalingFlowController` wins as the
+single injected `DataFlowController`, and with no data plane registered its
+`transferTypesFor(...)` is empty, so the provider rejects the requested transfer type with
+`DSP: Service call failed: TransferType HttpData-PULL is not supported`. That is a regression
+against the fully-green baseline, so Step 8 took Option A as foreseen. The implementation is
+**additive and minimal**: a new `controlplane-tck` module — `controlplane-oid4vc`'s dependency
+list minus `data-plane-signaling` — produces its own shaded jar, and `docker/Dockerfile.tck` /
+`docker-compose.tck.yml` / `scripts/run-tck.sh` build and run that jar instead. With
+`data-plane-signaling` off the TCK classpath, `NoopDataFlowController` is the only
+`DataFlowController` and wins; `TP:03-*` then pass. The TCK image no longer opens the `signaling`
+web context, so port `8182` is dropped from the TCK compose edc service. Scope kept deliberately
+narrow: the production `controlplane-oid4vc` / `controlplane-dcp` assemblies are **unchanged** —
+they keep `data-plane-signaling` (the real flow controller, which they need) and they keep
+`test-extension` exactly as before (its noop stays dead code under the winning signaling
+controller, as it already was). Option A's fuller form — also dropping `test-extension` (and with
+it `InMemoryVault` / `TestIdentityService`) from the production images — is a pre-existing,
+separable concern and is left to a follow-up ticket so the conformance step changes only the TCK
+runtime.
+
+This also sharpens §8.2's open item: at 0.18.1 `transfer-data-plane-signaling` is explicitly
+the *legacy* flow controller and `data-plane-signaling(-core)` is the current one — which is
+why the BOM swapped them. The artifact still resolving is not evidence that keeping it is
+correct.
+
+---
+
+## 9. Open questions
+
+### 9.1 Answered here
+
+| Question | Answer | Where |
+|---|---|---|
+| Are `CallbackAddress` notifications still delivered without `callback-http-dispatcher`? | Yes. The HTTP transport moved into `callback-event-dispatcher` at 0.18.0 as `CallbackHttpClient implements CallbackClient`. Delete the dependency, add nothing, prove it at runtime. | §8.1 |
+| `classic` or full multi-context participant core? | `classic` (`participant-context-connector-classic-core`). | §4.4 |
+| Where does `participantContextId` live in the TMForum entity model? | Nowhere — it is not persisted. It is stamped onto mapped entities from configuration. | §4.3 |
+| Is dropping `dsp-2024` / `dsp-spi-2024` behaviour-neutral? | Yes for this connector; not for 2024/1 counterparties. | §5 |
+| Does `DataFlowResponseMessage` need renaming? | No. It is byte-identical at 0.18.1; only `DataFlowResponse` changed. | §3.2 |
+| Does a duplicate `DataFlowController` provider fail startup? | No — last non-default provider wins, by load order, with only a WARNING. The noop/signaling clash is therefore silent and reaches the production images. | §8.3.1 |
+| Is swapping `transfer-data-plane-signaling` for `data-plane-signaling` a like-for-like flow-controller change? | No. It also opens an unconditional `signaling` web context on port `8182`, path `/api/signaling`. | §8.2.1 |
+| Does declaring `participant-context-connector-classic-core` exclude the full connector core? | No — `control-plane-core` depends on the full core directly, so both are present and provide disjoint services. | §4.4 |
+| Is `data-plane-signaling-client` still needed after the swap? | No — it is the legacy counterpart of the module being dropped; `data-plane-signaling-core` ships its own client. | §8.2.1 |
+
+### 9.2 Still open — decide during the migration
+
+- **Should upstream's `tck-extension` / `dsp-tck-connector-under-test` replace the
+  hand-rolled `test-extension`?** Both are published at 0.18.1 and overlap with what
+  `test-extension` does (mock identity services, state-transition guards, a webhook
+  controller). Not decided here: the overlap is partial — this repo's guards drive
+  TMForum-backed stores and its webhook controller speaks a shape the local
+  `tck.properties` expects — so swapping is a behaviour change to the conformance
+  run itself, and it must not be made in the same step that moves the connector
+  version. Recommendation: migrate `test-extension` as-is first, re-green the TCK,
+  and only then evaluate the swap against the baseline in §10.
+- **The new `signaling` HTTP listener is unaccounted for outside this repo.**
+  `data-plane-signaling` opens a fifth web context on `8182` with no feature flag
+  (§8.2.1). In-repo it is actionable and assigned: the three `web.http.signaling.*`
+  rows in §6.2 go into `config/tck/edc.properties` and the port into
+  `docker-compose.tck.yml` during the configuration step. Out of repo it is not: the
+  controlplane images are deployed by the surrounding FIWARE Data Space Connector
+  chart, which lives outside this repository (§6.1) and therefore cannot have been
+  updated for a listener that did not exist at 0.14.1. It must therefore appear in the
+  **operator-facing release notes** as a required deployment change, next to the
+  config renames and the IdentityHub lockstep requirement — otherwise the first
+  symptom is a data plane that cannot reach the control plane's registration API.
+- **`transfer-data-plane-signaling` vs `data-plane-signaling`** — ~~needs a
+  keep-or-replace decision~~ **decided: replaced** (both controlplane POMs), together
+  with its legacy client counterpart; see §8.2.1 for what the replacement brings with
+  it. Still needs the runtime transfer check (§8.2), and
+  Step 6 then has to make **every** shipped runtime — production images included, since
+  they share one shaded jar with the TCK image — resolve to exactly one
+  `DataFlowController` (§8.3.1, §8.3.2).
+- ~~**The `dcp.scopes.*` wiring**~~ — **closed in Step 4: keep the hand-rolled
+  wiring.** It predates upstream's dynamic DCP scope configuration (0.16.0, PR
+  #5485) and its 0.18.0 `prefix.mapping` form; adopting upstream's is a behaviour
+  change, not a migration, and is deferred to a follow-up ticket. Rationale in
+  §6.2. The dead `dcp.scopes.version` leaf was removed in the same step.
+- **DDL migrations do not apply to this connector, but do apply to its neighbours.**
+  Upstream flagged several `BREAKING CHANGE` schema deltas in this range (new lease
+  model and `resource_id`/`resource_kind` columns, `agr_agreement_id`,
+  `data_address_alias`, `claims`, `private_entries`). This repo stores through
+  TMForum and ships no SQL stores, so none of it is actionable here — but any
+  co-deployed EDC runtime that *does* use the SQL stores needs those migrations.
+
+### 9.3 Not confirmed upstream
+
+- UNCONFIRMED: no upstream `MIGRATION.md` / upgrade guide exists for this range. Searched the Connector repo tree at v0.18.1 and `eclipse-edc/docs` (only release-process decision records, `developer/releases.md`). The closest thing to migration guidance is the migration section of `docs/developer/decision-records/2025-08-26-participant-context/README.md` (added by PR #5379), which covers only the participant-context DDL/ID question and recommends Flyway placeholders for the participant-context-id backfill.
+- ~~UNCONFIRMED: `callback-http-dispatcher` last published in 0.17.0.~~ **Now confirmed** by the
+  Maven Central audit in §2 (404 at 0.18.1, `maven-metadata.xml` highest version 0.17.0) and by
+  the jar evidence in §8.1.
+- UNCONFIRMED: exact DDL delta per release was not reconstructed from migration scripts; column changes above are taken from PR bodies flagged `BREAKING CHANGE` and from diffing the `*-schema.sql` files between tags v0.14.1 and v0.18.1.
+
+
+
+---
+
+## 10. TCK baseline at 0.14.1
+
+Captured in Step 1, before the build moved: [`tck-baseline-0.14.1.md`](tck-baseline-0.14.1.md).
+**65 tests, 65 passed, 0 failed** — fully green across `CAT`, `CN`, `CN_C`, `MET`,
+`TP` and `TP_C`, on DSP TCK `1.0.0-RC6` against DSP `2025-1`.
+
+Because the baseline is clean, the re-run gate after the upgrade is absolute: any
+failure at 0.18.1 is a regression introduced by this migration. There is no
+pre-existing failure to discount.
+
+Two things the baseline file records that the migration must carry forward:
+
+- **It is only green with a fix to `DelayedActionGuard`.** On the unmodified tree the
+  suite hung indefinitely (twice, at different tests) because the guard dropped a
+  queued action whenever the state machine still held the entity lease, stranding the
+  entity as `pending`. The guard now retries the lease. This is harness code the
+  `test-extension` migration step will touch — do not revert the retry while porting
+  it to the 0.18.1 `StateEntityStore` signatures, where `save` returns
+  `StoreResult<Void>` and `breakLease` becomes abstract (§3).
+- **The TCK image must not move in the same step as the connector version** (§7.3).
+  The baseline is pinned to `1.0.0-RC6`; re-pinning to `1.0.1` / `1.0.2` is a separate,
+  later change so that a TCK-version difference can never be mistaken for a
+  connector regression.
+
+---
+
+## 11. Resolution tracking
+
+Every deliverable and open question from the sections above, mapped to the step that
+resolved it. "✅ resolved" means landed on `ticket-72/work` and gated.
+
+### 11.1 Plan steps
+
+| Step | Deliverable | Status |
+|---|---|---|
+| 1 | Compatibility report + 0.14.1 TCK baseline (§10) | ✅ this document + `tck-baseline-0.14.1.md` |
+| 2 | Bump `edc.version` to 0.18.1; drop `dsp-2024` / `dsp-spi-2024`, `callback-http-dispatcher`, `identity-trust-*` coordinates; remove the DSP 2024/1 transformer registration (§2, §3.3, §5) | ✅ resolved |
+| 3 | `tmf-extension`: participant-context stamping, `ContractAgreement` `agreement-id`/`claims`, catalog protocol service, `TMFLeaseContext` deletion (§3.2, §4) | ✅ resolved |
+| 4 | Identity stack: `decentralized-claims-*` rename, `IdentityService` / `AudienceResolver` signatures, `dcp.scopes.version` removal (§3.2, §6.2) | ✅ resolved |
+| 5 | `fdsc-transfer-extension` + `policy-extension` against the 0.18.1 provisioning/policy SPI (§3.2, §3.3) | ✅ resolved |
+| 6 | `test-extension`: `DataFlowManager` removal, `NoopDataFlowController` as `@Provider`, Option B taken then superseded (§8.3) | ✅ resolved |
+| 7 | `participant-context-connector-classic-core` + signaling config; `mvn clean package` + Docker images green (§4.4, §8.2.1) | ✅ resolved |
+| 8 | DSP TCK green; Option A `controlplane-tck` assembly; TCK pinned to `1.0.1` (§7.3, §8.3.2) | ✅ resolved |
+| 9 | Documentation + release notes (this section, README, release notes) | ✅ resolved |
+
+### 11.2 Open questions from §9.2
+
+| Question | Resolution | Step |
+|---|---|---|
+| Should upstream's `tck-extension` / `dsp-tck-connector-under-test` replace `test-extension`? | **No** — kept the hand-rolled `test-extension`. The overlap is partial and swapping changes the conformance run itself; deferred to a follow-up ticket. | 6/8 |
+| The new `signaling` listener (8182) is unaccounted for outside this repo | In-repo: the TCK assembly drops `data-plane-signaling` so no listener opens (§8.3.2 Option A). Production images open it; carried into the operator-facing release notes (`RELEASE_NOTES_EDC_0_18_1.md`). | 8/9 |
+| `transfer-data-plane-signaling` vs `data-plane-signaling` | **Replaced** in the production POMs; TCK uses the `controlplane-tck` assembly that excludes it. | 2/8 |
+| The `dcp.scopes.*` wiring | **Kept hand-rolled**; dead `dcp.scopes.version` leaf removed. Adopting upstream's dynamic DCP scopes is a separate follow-up ticket. | 4 |
+| DDL migrations | Not actionable here (TMForum-backed, no SQL stores). Flagged for co-deployed SQL-backed runtimes in the release notes. | n/a |
+
+### 11.3 Operator-facing items carried into the release notes
+
+All in [`releases/notes/RELEASE_NOTES_EDC_0_18_1.md`](../../releases/notes/RELEASE_NOTES_EDC_0_18_1.md):
+IdentityHub 0.18.1 lockstep (§7.1), the new `signaling` listener on 8182 (§8.2.1),
+`edc.participant.context.id` (§4.4, §6.2), the unauthenticated DSP version endpoint
+(§5.1), the loss of DSP 2024/1 support for counterparties (§5), and the retired
+`dcp.scopes.version` key (§6.2).
+
+### 11.4 Deferred: `AGENTS.md`
+
+The Step 9 plan also calls for updating `AGENTS.md` (EDC version, renamed modules,
+the `controlplane-tck` assembly, the TCK note, and the doc-comment-convention
+correction described in the plan's working agreement). This step agent is barred
+from editing `AGENTS.md` — it is appended verbatim to every agent's system prompt
+and is cached across chained sessions, so an edit here invalidates that cache. The
+edit is therefore handed to a plan-mode agent on the plan branch; see the Step 9
+completion comment. All other Step 9 deliverables are complete.

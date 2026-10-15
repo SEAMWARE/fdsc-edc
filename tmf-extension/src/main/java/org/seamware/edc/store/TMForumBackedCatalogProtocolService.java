@@ -22,9 +22,11 @@ import java.util.Optional;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Catalog;
 import org.eclipse.edc.connector.controlplane.catalog.spi.CatalogRequestMessage;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Dataset;
+import org.eclipse.edc.connector.controlplane.catalog.spi.DatasetRequestMessage;
 import org.eclipse.edc.connector.controlplane.services.spi.catalog.CatalogProtocolService;
 import org.eclipse.edc.connector.controlplane.services.spi.protocol.ProtocolTokenValidator;
 import org.eclipse.edc.participant.spi.ParticipantAgent;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.spi.iam.TokenRepresentation;
@@ -46,7 +48,6 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
 
   private final TMFEdcMapper tmfEdcMapper;
   private final ProductCatalogApiClient productCatalogApi;
-  private final String participantId;
   private final ProtocolTokenValidator protocolTokenValidator;
   private final PolicyEngine policyEngine;
   private final Monitor monitor;
@@ -57,21 +58,18 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
    *
    * @param tmfEdcMapper mapper between TMForum and EDC entities
    * @param productCatalogApi client for the TMForum Product Catalog API
-   * @param participantId the local participant's identifier
    * @param protocolTokenValidator validator for incoming protocol tokens
    * @param policyEngine the EDC policy engine for evaluating access policies
    */
   public TMForumBackedCatalogProtocolService(
       TMFEdcMapper tmfEdcMapper,
       ProductCatalogApiClient productCatalogApi,
-      String participantId,
       ProtocolTokenValidator protocolTokenValidator,
       PolicyEngine policyEngine,
       Monitor monitor,
       ObjectMapper objectMapper) {
     this.tmfEdcMapper = tmfEdcMapper;
     this.productCatalogApi = productCatalogApi;
-    this.participantId = participantId;
     this.protocolTokenValidator = protocolTokenValidator;
     this.policyEngine = policyEngine;
     this.monitor = monitor;
@@ -86,10 +84,15 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
 
   @Override
   public @NotNull ServiceResult<Catalog> getCatalog(
-      CatalogRequestMessage catalogRequestMessage, TokenRepresentation tokenRepresentation) {
+      ParticipantContext participantContext,
+      CatalogRequestMessage catalogRequestMessage,
+      TokenRepresentation tokenRepresentation) {
     ServiceResult<ParticipantAgent> validatedToken =
         protocolTokenValidator.verify(
-            tokenRepresentation, RequestCatalogPolicyContext::new, catalogRequestMessage);
+            participantContext,
+            tokenRepresentation,
+            RequestCatalogPolicyContext::new,
+            catalogRequestMessage);
     if (validatedToken.failed()) {
       return ServiceResult.unauthorized("Request not authorized.");
     }
@@ -107,7 +110,7 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
         tmfEdcMapper.filterByAccessPolicy(offerings, policyEngine, participantAgent);
 
     Catalog.Builder catalogBuilder = Catalog.Builder.newInstance();
-    catalogBuilder.participantId(participantId);
+    catalogBuilder.participantId(participantContext.getIdentity());
 
     specs.stream()
         .map(Optional::ofNullable)
@@ -125,19 +128,37 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
 
   @Override
   public @NotNull ServiceResult<Dataset> getDataset(
-      String datasetId, TokenRepresentation tokenRepresentation, String protocol) {
+      ParticipantContext participantContext,
+      DatasetRequestMessage datasetRequestMessage,
+      TokenRepresentation tokenRepresentation) {
 
+    // The DSP layer only null-checks the bearer token before dispatching here, so verifying it is
+    // the service's job - upstream's CatalogProtocolServiceImpl.getDataset does the same.
+    ServiceResult<ParticipantAgent> validatedToken =
+        protocolTokenValidator.verify(
+            participantContext,
+            tokenRepresentation,
+            RequestCatalogPolicyContext::new,
+            datasetRequestMessage);
+    if (validatedToken.failed()) {
+      return ServiceResult.unauthorized("Request not authorized.");
+    }
+
+    String datasetId = datasetRequestMessage.getDatasetId();
     Optional<ExtendableProductSpecification> spec =
         productCatalogApi.getProductSpecByExternalId(datasetId);
     if (spec.isEmpty()) {
       return ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId));
     }
 
-    List<ExtendableProductOffering> offerings =
-        productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
+    List<ExtendableProductOffering> accessibleOfferings =
+        tmfEdcMapper.filterByAccessPolicy(
+            productCatalogApi.getProductOfferings(0, MAX_OFFERINGS),
+            policyEngine,
+            validatedToken.getContent());
 
     return tmfEdcMapper
-        .datasetFromProductSpecification(spec.get(), offerings)
+        .datasetFromProductSpecification(spec.get(), accessibleOfferings)
         .map(ServiceResult::success)
         .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
   }
