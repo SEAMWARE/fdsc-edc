@@ -33,6 +33,11 @@
 #                       (default: defined in docker-compose.tck.yml).
 #   MVN_ARGS            Additional arguments to pass to the Maven build
 #                       (e.g., MVN_ARGS="-T 2C" for parallel builds).
+#   TCK_FILTER          Run only tests whose display name contains this
+#                       substring (e.g., TCK_FILTER=TP:03).
+#
+# Container logs are written to ./tck-logs/ (all services on failure, the TCK
+# runner only on success), mirroring the CI "tck-conformance" job artifacts.
 ###############################################################################
 
 set -euo pipefail
@@ -55,6 +60,19 @@ readonly TCK_START_TIMEOUT=600
 readonly POLL_INTERVAL=5
 # Exit code returned by the kernel OOM-killer / Docker SIGKILL
 readonly SIGKILL_EXIT_CODE=137
+
+# Java version the project is built with (matches setup-java in
+# .github/workflows/test.yml and maven.compiler.target in pom.xml).
+readonly REQUIRED_JAVA_VERSION=21
+
+# Directory the collected container logs are written to (mirrors the
+# "tck-logs" artifact uploaded by the CI tck-conformance job).
+readonly LOG_DIR="${PROJECT_ROOT}/tck-logs"
+# Compose services whose logs are collected when the run fails.
+readonly LOG_SERVICES=(postgis scorpio tmforum tmf-init pap-postgres opa odrl-pap edc tck)
+# DSP TCK image tag. Exported so docker compose picks it up as a build arg;
+# the default matches DSP_TCK_VERSION in .github/workflows/test.yml.
+export DSP_TCK_VERSION="${DSP_TCK_VERSION:-1.0.1}"
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -81,6 +99,10 @@ Options:
 Environment variables:
   DSP_TCK_VERSION     Override the DSP TCK Docker image tag.
   MVN_ARGS            Additional arguments for the Maven build.
+  TCK_FILTER          Run only tests whose display name contains this value.
+
+Container logs are written to ./tck-logs/ (all services on failure, the TCK
+runner only on success), mirroring the CI "tck-conformance" job artifacts.
 
 Examples:
   # Full build and test run
@@ -106,6 +128,49 @@ log() {
 die() {
   echo "[ERROR] $*" >&2
   exit 1
+}
+
+## Return the major version of the JDK that ${1} (a JAVA_HOME) points to,
+## or nothing when that path holds no usable java binary.
+java_major_version() {
+  local java_home="$1"
+  local java_bin="${java_home}/bin/java"
+
+  [[ -x "${java_bin}" ]] || return 0
+  "${java_bin}" -version 2>&1 \
+    | sed -nE '1s/.*version "([0-9]+).*/\1/p'
+}
+
+## Point JAVA_HOME at a JDK ${REQUIRED_JAVA_VERSION} installation when the
+## current default JDK is a different major version, so local builds match CI.
+## Warns and continues when no matching JDK is installed.
+select_java() {
+  local current
+  current="$(java_major_version "${JAVA_HOME:-/usr}")"
+  if [[ -z "${current}" && -x "$(command -v java 2>/dev/null)" ]]; then
+    current="$(java -version 2>&1 | sed -nE '1s/.*version "([0-9]+).*/\1/p')"
+  fi
+
+  if [[ "${current}" == "${REQUIRED_JAVA_VERSION}" ]]; then
+    log "Using Java ${current} (JAVA_HOME=${JAVA_HOME:-<default>})."
+    return 0
+  fi
+
+  local candidate
+  for candidate in /usr/lib/jvm/java-${REQUIRED_JAVA_VERSION}-openjdk-* \
+                   /usr/lib/jvm/temurin-${REQUIRED_JAVA_VERSION}* \
+                   /usr/lib/jvm/*-${REQUIRED_JAVA_VERSION}-*; do
+    if [[ -d "${candidate}" ]] \
+      && [[ "$(java_major_version "${candidate}")" == "${REQUIRED_JAVA_VERSION}" ]]; then
+      export JAVA_HOME="${candidate}"
+      export PATH="${JAVA_HOME}/bin:${PATH}"
+      log "Switched to Java ${REQUIRED_JAVA_VERSION} (JAVA_HOME=${JAVA_HOME})."
+      return 0
+    fi
+  done
+
+  log "WARNING: Java ${REQUIRED_JAVA_VERSION} not found; building with Java ${current:-unknown}."
+  log "         CI builds with Java ${REQUIRED_JAVA_VERSION}, so results may differ."
 }
 
 ## Build the controlplane shaded JAR with Maven.
@@ -138,8 +203,18 @@ run_tck() {
   log "Starting DSP TCK conformance tests via Docker Compose..."
   log "Compose file: ${COMPOSE_FILE}"
 
-  # Build images and start all services in the background
-  docker compose -f "${COMPOSE_FILE}" up --build -d
+  # Remove leftovers from a previous run first. CI always starts from a clean
+  # slate; locally a stale network or container makes `up` fail.
+  docker compose -f "${COMPOSE_FILE}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+
+  # Build images and start all services in the background.
+  # The exit code must be checked explicitly: run_tck is called in a `||`
+  # context, which disables `set -e` for the whole function body.
+  if ! docker compose -f "${COMPOSE_FILE}" up --build -d; then
+    log "ERROR: 'docker compose up' failed - the stack did not start."
+    docker compose -f "${COMPOSE_FILE}" ps -a 2>/dev/null || true
+    return 1
+  fi
 
   # -----------------------------------------------------------------------
   # Wait for the TCK container to appear and then finish
@@ -164,8 +239,17 @@ run_tck() {
 
   log "TCK container started (id: ${tck_id:0:12}). Waiting for test run to complete..."
 
+  # Stream the TCK logs in the background so test progress is visible while
+  # the suite runs, instead of only after it finishes.
+  docker compose -f "${COMPOSE_FILE}" logs -f tck &
+  local log_pid=$!
+
   # `docker wait` blocks until the container exits, then prints the exit code
   docker wait "${tck_id}" >/dev/null 2>&1 || true
+
+  # Stop the log streamer
+  kill "${log_pid}" 2>/dev/null || true
+  wait "${log_pid}" 2>/dev/null || true
 
   local tck_exit
   tck_exit="$(docker inspect --format='{{.State.ExitCode}}' "${tck_id}" 2>/dev/null)" || tck_exit="1"
@@ -265,8 +349,38 @@ print_test_results() {
   return 0
 }
 
-## Tear down Docker Compose containers and networks.
+## Write container logs to ${LOG_DIR}, mirroring the log artifacts the CI
+## tck-conformance job uploads: every service on failure, only the TCK
+## runner on success.
+collect_logs() {
+  local failed="$1"
+
+  mkdir -p "${LOG_DIR}"
+
+  if [[ "${failed}" == "true" ]]; then
+    local service
+    for service in "${LOG_SERVICES[@]}"; do
+      docker compose -f "${COMPOSE_FILE}" logs "${service}" \
+        > "${LOG_DIR}/${service}.log" 2>&1 || true
+    done
+  else
+    docker compose -f "${COMPOSE_FILE}" logs tck \
+      > "${LOG_DIR}/tck.log" 2>&1 || true
+  fi
+
+  log "Container logs written to ${LOG_DIR}/"
+}
+
+## Tear down Docker Compose containers and networks. Idempotent: the EXIT
+## trap and the main flow may both reach it.
+CLEANUP_DONE=false
+
 cleanup() {
+  if [[ "${CLEANUP_DONE}" == "true" ]]; then
+    return 0
+  fi
+  CLEANUP_DONE=true
+
   if [[ "${KEEP_CONTAINERS}" == "true" ]]; then
     log "Keeping containers running (--keep-containers). To stop them run:"
     log "  docker compose -f ${COMPOSE_FILE} down"
@@ -302,6 +416,10 @@ done
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+# Guarantee teardown even when a later step fails unexpectedly, so a broken
+# run never leaves the stack behind.
+trap cleanup EXIT
+
 log "=== DSP TCK Conformance Test Runner ==="
 log "Project root: ${PROJECT_ROOT}"
 
@@ -309,6 +427,7 @@ log "Project root: ${PROJECT_ROOT}"
 if [[ "${SKIP_BUILD}" == "true" ]]; then
   log "Skipping Maven build (--skip-build)."
 else
+  select_java
   build_controlplane
 fi
 
@@ -319,13 +438,21 @@ verify_jar
 tck_exit_code=0
 run_tck || tck_exit_code=$?
 
-# Step 4: Display individual test results (before tearing down containers)
-print_test_results
+# Step 4: Display individual test results (before tearing down containers).
+# Must not abort the run: it returns non-zero when no TCK logs exist.
+print_test_results || true
 
-# Step 5: Cleanup
+# Step 5: Collect container logs while the containers still exist
+if [[ "${TCK_TESTS_FAILED}" == "true" || "${tck_exit_code}" -ne 0 ]]; then
+  collect_logs "true"
+else
+  collect_logs "false"
+fi
+
+# Step 6: Cleanup
 cleanup
 
-# Step 6: Report overall result
+# Step 7: Report overall result
 # Use the TCK log-based failure flag as the primary indicator, because the
 # TCK runtime may exit 0 even when tests fail.
 echo ""
