@@ -1,11 +1,14 @@
 # EDC 0.14.1 -> 0.18.1 upgrade: compatibility report
 
-Status: **research complete, migration not started.** This document is the single
-source of truth for the upgrade; `IMPLEMENTATION_PLAN.md` points here instead of
-carrying its own copy of the findings. Everything below was verified directly
-against Maven Central and by `javap` on the published 0.14.1 / 0.18.1 jars, or
-against the repository itself (file:line references). Treat it as ground truth and
-do not re-research it.
+Status: **migration complete (Step 9).** All nine plan steps have landed on
+`ticket-72/work`, the reactor builds and packages against EDC 0.18.1, and the DSP
+TCK is green at `1.0.1` against DSP `2025-1`. The per-item resolution is tracked in
+§11; the findings below stay as recorded so the reasoning behind each decision is
+preserved. This document is the single source of truth for the upgrade;
+`IMPLEMENTATION_PLAN.md` points here instead of carrying its own copy of the
+findings. Everything below was verified directly against Maven Central and by
+`javap` on the published 0.14.1 / 0.18.1 jars, or against the repository itself
+(file:line references). Treat it as ground truth and do not re-research it.
 
 Seven upstream releases are crossed: 0.15.0, 0.15.1, 0.16.0, 0.16.1, 0.17.0,
 0.18.0, 0.18.1 (there is no 0.17.1).
@@ -1223,3 +1226,52 @@ Two things the baseline file records that the migration must carry forward:
   The baseline is pinned to `1.0.0-RC6`; re-pinning to `1.0.1` / `1.0.2` is a separate,
   later change so that a TCK-version difference can never be mistaken for a
   connector regression.
+
+---
+
+## 11. Resolution tracking
+
+Every deliverable and open question from the sections above, mapped to the step that
+resolved it. "✅ resolved" means landed on `ticket-72/work` and gated.
+
+### 11.1 Plan steps
+
+| Step | Deliverable | Status |
+|---|---|---|
+| 1 | Compatibility report + 0.14.1 TCK baseline (§10) | ✅ this document + `tck-baseline-0.14.1.md` |
+| 2 | Bump `edc.version` to 0.18.1; drop `dsp-2024` / `dsp-spi-2024`, `callback-http-dispatcher`, `identity-trust-*` coordinates; remove the DSP 2024/1 transformer registration (§2, §3.3, §5) | ✅ resolved |
+| 3 | `tmf-extension`: participant-context stamping, `ContractAgreement` `agreement-id`/`claims`, catalog protocol service, `TMFLeaseContext` deletion (§3.2, §4) | ✅ resolved |
+| 4 | Identity stack: `decentralized-claims-*` rename, `IdentityService` / `AudienceResolver` signatures, `dcp.scopes.version` removal (§3.2, §6.2) | ✅ resolved |
+| 5 | `fdsc-transfer-extension` + `policy-extension` against the 0.18.1 provisioning/policy SPI (§3.2, §3.3) | ✅ resolved |
+| 6 | `test-extension`: `DataFlowManager` removal, `NoopDataFlowController` as `@Provider`, Option B taken then superseded (§8.3) | ✅ resolved |
+| 7 | `participant-context-connector-classic-core` + signaling config; `mvn clean package` + Docker images green (§4.4, §8.2.1) | ✅ resolved |
+| 8 | DSP TCK green; Option A `controlplane-tck` assembly; TCK pinned to `1.0.1` (§7.3, §8.3.2) | ✅ resolved |
+| 9 | Documentation + release notes (this section, README, release notes) | ✅ resolved |
+
+### 11.2 Open questions from §9.2
+
+| Question | Resolution | Step |
+|---|---|---|
+| Should upstream's `tck-extension` / `dsp-tck-connector-under-test` replace `test-extension`? | **No** — kept the hand-rolled `test-extension`. The overlap is partial and swapping changes the conformance run itself; deferred to a follow-up ticket. | 6/8 |
+| The new `signaling` listener (8182) is unaccounted for outside this repo | In-repo: the TCK assembly drops `data-plane-signaling` so no listener opens (§8.3.2 Option A). Production images open it; carried into the operator-facing release notes (`RELEASE_NOTES_EDC_0_18_1.md`). | 8/9 |
+| `transfer-data-plane-signaling` vs `data-plane-signaling` | **Replaced** in the production POMs; TCK uses the `controlplane-tck` assembly that excludes it. | 2/8 |
+| The `dcp.scopes.*` wiring | **Kept hand-rolled**; dead `dcp.scopes.version` leaf removed. Adopting upstream's dynamic DCP scopes is a separate follow-up ticket. | 4 |
+| DDL migrations | Not actionable here (TMForum-backed, no SQL stores). Flagged for co-deployed SQL-backed runtimes in the release notes. | n/a |
+
+### 11.3 Operator-facing items carried into the release notes
+
+All in [`releases/notes/RELEASE_NOTES_EDC_0_18_1.md`](../../releases/notes/RELEASE_NOTES_EDC_0_18_1.md):
+IdentityHub 0.18.1 lockstep (§7.1), the new `signaling` listener on 8182 (§8.2.1),
+`edc.participant.context.id` (§4.4, §6.2), the unauthenticated DSP version endpoint
+(§5.1), the loss of DSP 2024/1 support for counterparties (§5), and the retired
+`dcp.scopes.version` key (§6.2).
+
+### 11.4 Deferred: `AGENTS.md`
+
+The Step 9 plan also calls for updating `AGENTS.md` (EDC version, renamed modules,
+the `controlplane-tck` assembly, the TCK note, and the doc-comment-convention
+correction described in the plan's working agreement). This step agent is barred
+from editing `AGENTS.md` — it is appended verbatim to every agent's system prompt
+and is cached across chained sessions, so an edit here invalidates that cache. The
+edit is therefore handed to a plan-mode agent on the plan branch; see the Step 9
+completion comment. All other Step 9 deliverables are complete.

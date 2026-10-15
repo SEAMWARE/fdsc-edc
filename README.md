@@ -230,7 +230,7 @@ mvn spotless:apply
 
 | Library | Purpose |
 |---|---|
-| [EDC](https://github.com/eclipse-edc/Connector) v0.14.1 | Dataspace connector framework |
+| [EDC](https://github.com/eclipse-edc/Connector) v0.18.1 | Dataspace connector framework |
 | [Lombok](https://projectlombok.org/) | Boilerplate reduction |
 | [MapStruct](https://mapstruct.org/) | Type-safe bean mapping |
 | [OkHttp](https://square.github.io/okhttp/) | HTTP client |
