@@ -110,8 +110,8 @@ public class TckGuardExtension implements ServiceExtension {
    * data plane behind it, so Step 8 must confirm a transfer actually reaches {@code STARTED} under
    * this assembly and diff the transfer scenarios against docs/migration/tck-baseline-0.14.1.md. If
    * the signaling flow cannot complete without a data plane — or any scenario regresses — take
-   * Option A (a TCK-only runtime that excludes {@code data-plane-signaling} so this noop is actually
-   * selected) rather than assuming it unnecessary.
+   * Option A (a TCK-only runtime that excludes {@code data-plane-signaling} so this noop is
+   * actually selected) rather than assuming it unnecessary.
    */
   @Provider(isDefault = true)
   public DataFlowController noopDataFlowController() {
