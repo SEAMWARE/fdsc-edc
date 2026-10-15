@@ -51,6 +51,7 @@
         <module>policy-extension</module>
         <module>controlplane-oid4vc</module>
         <module>controlplane-dcp</module>
+        <module>controlplane-tck</module>
     </modules>
 
     <build>

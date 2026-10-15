@@ -43,7 +43,10 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 readonly COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.tck.yml"
-readonly CONTROLPLANE_MODULE="controlplane-oid4vc"
+# TCK-only assembly: controlplane-oid4vc minus data-plane-signaling, so the
+# NoopDataFlowController wins and transfers complete without a data plane
+# (docs/migration/EDC-0.18.1-UPGRADE.md 8.3.2).
+readonly CONTROLPLANE_MODULE="controlplane-tck"
 readonly SHADED_JAR="${PROJECT_ROOT}/${CONTROLPLANE_MODULE}/target/context/${CONTROLPLANE_MODULE}.jar"
 
 # Maximum time (seconds) to wait for the TCK container to start
@@ -90,7 +93,7 @@ Examples:
   ./scripts/run-tck.sh --keep-containers
 
   # Override TCK version
-  DSP_TCK_VERSION=1.0.0-RC6 ./scripts/run-tck.sh
+  DSP_TCK_VERSION=1.0.1 ./scripts/run-tck.sh
 EOF
 }
 
