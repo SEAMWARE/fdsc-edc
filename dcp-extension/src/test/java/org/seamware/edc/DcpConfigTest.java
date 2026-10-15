@@ -61,6 +61,8 @@ public class DcpConfigTest {
         "The config should have successfully been read.");
   }
 
+  // The fixtures still set the retired dcp.scopes.version key; the expectations below assert it is
+  // ignored rather than rejected, so existing deployments keep loading.
   private static Stream<Arguments> getValidConfig() throws IOException {
     List<Arguments> arguments = new ArrayList<>();
 
@@ -71,7 +73,6 @@ public class DcpConfigTest {
                 new DcpConfig.Scopes.Builder()
                     .catalog("catalog")
                     .negotiation("negotiation")
-                    .version("version")
                     .transfer("transfer")
                     .build())
             .build();
@@ -96,7 +97,6 @@ public class DcpConfigTest {
                 new DcpConfig.Scopes.Builder()
                     .catalog("catalog")
                     .negotiation("negotiation")
-                    .version("version")
                     .build())
             .build();
     arguments.add(Arguments.of("valid/dcp/3.properties", dcpConfig3));
@@ -104,12 +104,7 @@ public class DcpConfigTest {
     DcpConfig dcpConfig4 =
         DcpConfig.Builder.newInstance()
             .enabled(true)
-            .scopes(
-                new DcpConfig.Scopes.Builder()
-                    .catalog("catalog")
-                    .transfer("transfer")
-                    .version("version")
-                    .build())
+            .scopes(new DcpConfig.Scopes.Builder().catalog("catalog").transfer("transfer").build())
             .build();
     arguments.add(Arguments.of("valid/dcp/4.properties", dcpConfig4));
 
@@ -120,7 +115,6 @@ public class DcpConfigTest {
                 new DcpConfig.Scopes.Builder()
                     .negotiation("negotiation")
                     .transfer("transfer")
-                    .version("version")
                     .build())
             .build();
     arguments.add(Arguments.of("valid/dcp/5.properties", dcpConfig5));

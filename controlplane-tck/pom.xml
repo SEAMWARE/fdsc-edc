@@ -1,0 +1,280 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.seamware.edc</groupId>
+        <artifactId>fdsc-edc</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+    <artifactId>controlplane-tck</artifactId>
+
+    <!--
+      TCK-only controlplane assembly. Identical to controlplane-oid4vc except that
+      data-plane-signaling is deliberately absent, so the NoopDataFlowController from
+      test-extension is the single DataFlowController on the classpath and wins by
+      default. The production image keeps data-plane-signaling (the real flow
+      controller); this one must not, because the DSP TCK drives transfers with no
+      data plane behind the connector. See docs/migration/EDC-0.18.1-UPGRADE.md
+      section 8.3.2 (Option A). The Docker image for this jar is built by
+      docker-compose.tck.yml, not by the docker-maven-plugin, so that plugin stays
+      skipped (inherited from the parent) and the build needs no Docker access.
+    -->
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.eclipse.edc</groupId>
+                <artifactId>controlplane-base-bom</artifactId>
+                <version>${edc.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.eclipse.jetty.websocket</groupId>
+                        <artifactId>jetty-websocket</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>oid4vc-extension</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>tmf-extension</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>fdsc-transfer-extension</artifactId>
+            <version>${project.version}</version>
+            <exclusions>
+                <!-- Vault is provided by the test-extension InMemoryVault when
+                     testExtension.identity.enabled=true. Excluding here prevents
+                     the HashicorpVaultExtension from loading and failing when
+                     edc.vault.hashicorp.url is not configured. -->
+                <exclusion>
+                    <groupId>org.eclipse.edc</groupId>
+                    <artifactId>vault-hashicorp</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>policy-extension</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>test-extension</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-api-client</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+
+
+        <!-- real deps -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>dsp-2025</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>management-api-configuration</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>boot</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>connector-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>runtime-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <!-- 0.18.1 dropped both managers from control-plane-core's transitive set
+             (they are still listed in controlplane-base-bom, which is imported for
+             version management only and therefore pulls nothing). They hold the
+             contract-negotiation and transfer-process state machines and are the
+             only consumers of ContractNegotiationPendingGuard /
+             TransferProcessPendingGuard, so without them no control-plane entity
+             ever leaves its initial state. -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-contract-manager</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-transfer-manager</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <!-- single-participant ("classic") participant-context mode; seeds one
+             ParticipantContext from edc.participant.context.id -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>participant-context-connector-classic-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>data-plane-selector-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>policy-monitor-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>dsp</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>configuration-filesystem</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>api-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>api-observability</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-api-configuration</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>version-api</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>http</artifactId>
+            <version>${edc.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.eclipse.jetty.websocket</groupId>
+                    <artifactId>jetty-websocket</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>validator-data-address-http-data</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-api</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>management-api</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>data-plane-selector-api</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <!-- NOTE: data-plane-signaling is intentionally omitted here (it is present in
+             controlplane-oid4vc). Without it, the only DataFlowController on the
+             classpath is test-extension's NoopDataFlowController, which the DSP TCK
+             transfer scenarios require because there is no data plane behind the
+             connector under test. See docs/migration/EDC-0.18.1-UPGRADE.md 8.3.2. -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>data-plane-selector-control-api</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>callback-event-dispatcher</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>callback-static-endpoint</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>transform-lib</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>edr-store-receiver</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>edr-store-core</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>edr-store-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>dsp-catalog-lib</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>dsp-version-http-api</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+
+    </dependencies>
+
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <configuration>
+                    <skip>false</skip>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

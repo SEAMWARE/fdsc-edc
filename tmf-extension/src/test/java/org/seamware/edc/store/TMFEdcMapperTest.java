@@ -64,6 +64,7 @@ import org.seamware.edc.tmf.AgreementApiClient;
 import org.seamware.edc.tmf.ParticipantResolver;
 import org.seamware.edc.util.NoopMonitor;
 import org.seamware.tmforum.agreement.model.AgreementVO;
+import org.seamware.tmforum.agreement.model.CharacteristicVO;
 import org.seamware.tmforum.party.model.OrganizationVO;
 import org.seamware.tmforum.productcatalog.model.ProductOfferingTermVO;
 import org.seamware.tmforum.productcatalog.model.ProductSpecificationCharacteristicVO;
@@ -101,7 +102,13 @@ class TMFEdcMapperTest extends AbstractStoreTest {
 
     tmfEdcMapper =
         new TMFEdcMapper(
-            monitor, objectMapper, participantResolver, typeTransformerRegistry, jsonLd, clock);
+            monitor,
+            objectMapper,
+            participantResolver,
+            typeTransformerRegistry,
+            jsonLd,
+            clock,
+            TEST_PARTICIPANT_CONTEXT_ID);
   }
 
   // ---- TO AGREEMENT ----
@@ -189,6 +196,49 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         "If the expansion returns a failure, an exception should be thrown.");
   }
 
+  // ---- APPLY CLAIMS ----
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getApplyClaimsCases")
+  public void applyClaims_reports_whether_the_stored_agreement_changed(
+      String name,
+      Map<String, Object> storedClaims,
+      Map<String, Object> newClaims,
+      boolean expectedChanged,
+      Map<String, Object> expectedClaims) {
+    ExtendableAgreementVO agreementVO = getTestAgreement();
+    if (storedClaims != null) {
+      agreementVO.addCharacteristicItem(
+          new CharacteristicVO()
+              .name(TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS)
+              .value(storedClaims));
+    }
+
+    assertEquals(expectedChanged, tmfEdcMapper.applyClaims(agreementVO, newClaims), name);
+    assertEquals(
+        expectedClaims,
+        agreementVO.getCharacteristic().stream()
+            .filter(c -> TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS.equals(c.getName()))
+            .map(CharacteristicVO::getValue)
+            .findFirst()
+            .orElse(null),
+        "The stored claims should match the expectation.");
+  }
+
+  private static Stream<Arguments> getApplyClaimsCases() {
+    Map<String, Object> claims = Map.of("sub", "did:web:consumer");
+    Map<String, Object> otherClaims = Map.of("sub", "did:web:other");
+    return Stream.of(
+        Arguments.of("Claims are added when the agreement has none.", null, claims, true, claims),
+        Arguments.of(
+            "Claims are replaced when they differ.", claims, otherClaims, true, otherClaims),
+        Arguments.of("Unchanged claims are not rewritten.", claims, claims, false, claims),
+        Arguments.of("Empty claims never overwrite stored ones.", claims, Map.of(), false, claims),
+        Arguments.of("Null claims never overwrite stored ones.", claims, null, false, claims),
+        Arguments.of(
+            "Nothing is written when there is nothing to write.", null, null, false, null));
+  }
+
   // ---- TO CONTRACT AGREEMENT ----
 
   @Test
@@ -196,6 +246,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     ContractAgreement expectedAgreement =
         ContractAgreement.Builder.newInstance()
             .id(TEST_AGREEMENT_ID)
+            .agreementId(TEST_DSP_AGREEMENT_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
             .policy(getTestPolicy())
             .providerId(TEST_PROVIDER_DID)
             .consumerId(TEST_CONSUMER_DID)
@@ -210,6 +262,36 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         SORTED_MAPPER.writeValueAsString(expectedAgreement),
         SORTED_MAPPER.writeValueAsString(
             tmfEdcMapper.toContractAgreement((ExtendableAgreementVO) getTestAgreement())));
+  }
+
+  @Test
+  public void toContractAgreement_without_agreement_id_falls_back_to_the_external_id()
+      throws JsonProcessingException {
+    ExtendableAgreementVO legacyAgreement = getTestAgreement();
+    legacyAgreement.setCharacteristic(
+        legacyAgreement.getCharacteristic().stream()
+            .filter(c -> !TMFEdcMapper.AGREEMENT_CHARACTERISTIC_AGREEMENT_ID.equals(c.getName()))
+            .toList());
+
+    ContractAgreement expectedAgreement =
+        ContractAgreement.Builder.newInstance()
+            .id(TEST_AGREEMENT_ID)
+            .agreementId(TEST_AGREEMENT_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
+            .policy(getTestPolicy())
+            .providerId(TEST_PROVIDER_DID)
+            .consumerId(TEST_CONSUMER_DID)
+            .contractSigningDate(1)
+            .assetId(TEST_ASSET_ID)
+            .build();
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+
+    assertEquals(
+        SORTED_MAPPER.writeValueAsString(expectedAgreement),
+        SORTED_MAPPER.writeValueAsString(tmfEdcMapper.toContractAgreement(legacyAgreement)),
+        "Agreements written before 0.18.1 only know one id, so it has to serve as both.");
   }
 
   @Test
@@ -786,6 +868,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
       String id, String accessPolicyId, String contractPolicyId) {
     return ContractDefinition.Builder.newInstance()
         .clock(clock)
+        .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
         .accessPolicyId(accessPolicyId)
         .contractPolicyId(contractPolicyId)
         .id(id)
@@ -864,8 +947,9 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     return Asset.Builder.newInstance()
         .clock(clock)
         .id(assetId)
-        .version(assetVersion)
-        .name(name)
+        .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
+        .property(TMFEdcMapper.ASSET_PROPERTY_VERSION, assetVersion)
+        .property(TMFEdcMapper.ASSET_PROPERTY_NAME, name)
         .description(description)
         .dataAddress(dataAddress)
         .build();

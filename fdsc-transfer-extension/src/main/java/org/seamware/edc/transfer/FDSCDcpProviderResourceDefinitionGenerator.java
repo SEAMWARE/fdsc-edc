@@ -38,16 +38,21 @@ package org.seamware.edc.transfer;
 
 import static org.seamware.edc.store.TransferTypes.HTTP_DATA_PULL;
 
-import org.eclipse.edc.connector.controlplane.transfer.spi.provision.ProviderResourceDefinitionGenerator;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ResourceDefinition;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
-import org.eclipse.edc.policy.model.Policy;
+import org.eclipse.edc.connector.dataplane.spi.DataFlow;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ResourceDefinitionGenerator;
 import org.eclipse.edc.spi.monitor.Monitor;
-import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.jetbrains.annotations.Nullable;
+import org.seamware.edc.FDSCTransferControlExtension;
 
-public class FDSCDcpProviderResourceDefinitionGenerator
-    implements ProviderResourceDefinitionGenerator {
+/**
+ * Emits the DCP provisioning request for an FDSC-sourced data flow.
+ *
+ * <p>Registered as a provider generator, so it is selected on the data flow's <em>source</em>
+ * address type; the emitted {@link ProvisionResource} type then selects the provisioner. Returns
+ * {@code null} for transfer types this connector does not serve, which the generator manager drops.
+ */
+public class FDSCDcpProviderResourceDefinitionGenerator implements ResourceDefinitionGenerator {
 
   private final Monitor monitor;
 
@@ -56,25 +61,24 @@ public class FDSCDcpProviderResourceDefinitionGenerator
   }
 
   @Override
-  public @Nullable ResourceDefinition generate(
-      TransferProcess transferProcess, DataAddress assetAddress, Policy policy) {
-
-    monitor.debug(
-        "Generate resource definition for "
-            + transferProcess.getAssetId()
-            + " - "
-            + transferProcess.getCorrelationId());
-
-    return FDSCDcpProviderResourceDefinition.Builder.newInstance()
-        .assetId(transferProcess.getAssetId())
-        .id(transferProcess.getCorrelationId())
-        .transferProcessId(transferProcess.getId())
-        .build();
+  public String supportedType() {
+    return FDSCTransferControlExtension.FDSC_TYPE;
   }
 
   @Override
-  public boolean canGenerate(
-      TransferProcess transferProcess, DataAddress assetAddress, Policy policy) {
-    return transferProcess.getTransferType().equals(HTTP_DATA_PULL);
+  public @Nullable ProvisionResource generate(DataFlow dataFlow) {
+    if (!HTTP_DATA_PULL.equals(dataFlow.getTransferType().asString())) {
+      return null;
+    }
+
+    monitor.debug(
+        "Generate DCP resource definition for " + dataFlow.getAssetId() + " - " + dataFlow.getId());
+
+    return ProvisionResource.Builder.newInstance()
+        .flowId(dataFlow.getId())
+        .type(FDSCDcpProvisioner.PROVISION_TYPE)
+        .property(FDSCProvisioner.ASSET_ID_PROPERTY, dataFlow.getAssetId())
+        .property(FDSCProvisioner.AGREEMENT_ID_PROPERTY, dataFlow.getAgreementId())
+        .build();
   }
 }

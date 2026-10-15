@@ -60,7 +60,6 @@ public class CatalogProtocolServiceExtension implements ServiceExtension {
           new TMForumBackedCatalogProtocolService(
               tmfEdcMapper,
               productCatalogApi,
-              context.getParticipantId(),
               protocolTokenValidator,
               policyEngine,
               monitor,

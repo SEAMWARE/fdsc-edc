@@ -55,25 +55,23 @@ public class NoopDataFlowController implements DataFlowController {
   }
 
   @Override
-  public @NotNull StatusResult<DataFlowResponse> provision(
+  public @NotNull StatusResult<DataFlowResponse> prepare(
       TransferProcess transferProcess, Policy policy) {
-    monitor.warning("Provision process");
-    return StatusResult.success(
-        DataFlowResponse.Builder.newInstance()
-            .dataAddress(noopDataAddress())
-            .provisioning(false)
-            .build());
+    monitor.warning("Prepare process");
+    return noopFlowResponse();
   }
 
   @Override
   public @NotNull StatusResult<DataFlowResponse> start(
       TransferProcess transferProcess, Policy policy) {
     monitor.warning("Start process");
-    return StatusResult.success(
-        DataFlowResponse.Builder.newInstance()
-            .dataAddress(noopDataAddress())
-            .provisioning(false)
-            .build());
+    return noopFlowResponse();
+  }
+
+  @Override
+  public @NotNull StatusResult<DataFlowResponse> resume(TransferProcess transferProcess) {
+    monitor.warning("Resume process");
+    return noopFlowResponse();
   }
 
   @Override
@@ -89,10 +87,35 @@ public class NoopDataFlowController implements DataFlowController {
   }
 
   @Override
-  public Set<String> transferTypesFor(Asset asset) {
+  public @NotNull StatusResult<Void> started(TransferProcess transferProcess) {
+    monitor.warning("Started process");
+    return StatusResult.success();
+  }
 
+  @Override
+  public @NotNull StatusResult<Void> completed(TransferProcess transferProcess) {
+    monitor.warning("Completed process");
+    return StatusResult.success();
+  }
+
+  @Override
+  public Set<String> transferTypesFor(Asset asset) {
     monitor.warning("Types for asset");
     return Set.of(TRANSFER_TYPE_HTTP_PULL);
+  }
+
+  @Override
+  public Set<String> transferTypesFor(String assetType) {
+    monitor.warning("Types for asset type " + assetType);
+    return Set.of(TRANSFER_TYPE_HTTP_PULL);
+  }
+
+  /**
+   * Builds the dummy success response shared by {@code prepare}, {@code start} and {@code resume}.
+   */
+  private StatusResult<DataFlowResponse> noopFlowResponse() {
+    return StatusResult.success(
+        DataFlowResponse.Builder.newInstance().dataAddress(noopDataAddress()).async(false).build());
   }
 
   private DataAddress noopDataAddress() {
