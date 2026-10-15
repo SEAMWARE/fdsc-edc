@@ -20,12 +20,18 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
+import org.eclipse.edc.spi.result.StoreFailure;
+import org.eclipse.edc.spi.result.StoreResult;
 import org.junit.jupiter.api.Test;
 import org.seamware.edc.domain.ContractNegotiationState;
 import org.seamware.edc.domain.ExtendableQuoteVO;
@@ -331,5 +337,99 @@ public class TMFBackedContractNegotiationStoreLeaseTest
 
     // Document: freeLease is NOT called — leases will only expire via TTL
     verify(leaseHolder, never()).freeLease(any(), any());
+  }
+
+  // --- findByIdAndLease() while this controlplane still processes the negotiation ---
+
+  @Test
+  public void testFindByIdAndLease_waits_until_the_own_processing_has_finished() throws Exception {
+    String negotiationId = "negotiation-id";
+    TMFBackedContractNegotiationStore store = getStoreWithOwnLeaseWait(Duration.ofSeconds(10));
+    ContractNegotiation negotiation = stubLeasableNegotiation(negotiationId);
+    // lease for the processing, failing save, lease for the counter-party's message
+    doNothing()
+        .doThrow(new IllegalStateException("Save failed."))
+        .doNothing()
+        .when(leaseHolder)
+        .acquireLease(eq(negotiationId), any());
+
+    assertTrue(
+        store.findByIdAndLease(negotiationId).succeeded(),
+        "The negotiation should be leased for its processing.");
+
+    CompletableFuture<StoreResult<ContractNegotiation>> counterPartyMessage =
+        CompletableFuture.supplyAsync(() -> store.findByIdAndLease(negotiationId));
+    Thread.sleep(300);
+    assertFalse(
+        counterPartyMessage.isDone(),
+        "The message should wait while the negotiation is still processed.");
+
+    // the processing ends with the save, which releases the negotiation whatever its outcome
+    assertThrows(EdcPersistenceException.class, () -> store.save(negotiation));
+
+    StoreResult<ContractNegotiation> result = counterPartyMessage.get(5, TimeUnit.SECONDS);
+    assertTrue(
+        result.succeeded(),
+        "The message should get the negotiation once the processing has finished.");
+    assertEquals(negotiation, result.getContent(), "The correct negotiation should be returned.");
+  }
+
+  @Test
+  public void testFindByIdAndLease_gives_up_when_the_own_processing_does_not_finish() {
+    String negotiationId = "negotiation-id";
+    Duration ownLeaseWait = Duration.ofMillis(300);
+    TMFBackedContractNegotiationStore store = getStoreWithOwnLeaseWait(ownLeaseWait);
+    stubLeasableNegotiation(negotiationId);
+
+    assertTrue(
+        store.findByIdAndLease(negotiationId).succeeded(),
+        "The negotiation should be leased for its processing.");
+
+    long start = System.nanoTime();
+    StoreResult<ContractNegotiation> result = store.findByIdAndLease(negotiationId);
+    long waitedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+    assertEquals(
+        StoreFailure.Reason.ALREADY_LEASED,
+        result.reason(),
+        "A negotiation that is not released in time should still be reported as leased.");
+    assertTrue(
+        waitedMs >= ownLeaseWait.toMillis(),
+        "The message should have waited for the release before giving up.");
+  }
+
+  private TMFBackedContractNegotiationStore getStoreWithOwnLeaseWait(Duration ownLeaseWait) {
+    return new TMFBackedContractNegotiationStore(
+        mock(Monitor.class),
+        objectMapper,
+        quoteApiClient,
+        agreementApiClient,
+        productOrderApiClient,
+        productCatalogApiClient,
+        productInventoryApiClient,
+        participantResolver,
+        tmfEdcMapper,
+        TEST_PARTICIPANT_ID,
+        TEST_CONTROL_PLANE_ID,
+        criterionOperatorRegistry,
+        leaseHolder,
+        new TMFTransactionContext(mock(Monitor.class)),
+        lockManager,
+        ownLeaseWait);
+  }
+
+  private ContractNegotiation stubLeasableNegotiation(String negotiationId) {
+    when(lockManager.writeLock(any()))
+        .thenAnswer(
+            invocationOnMock -> {
+              Supplier<?> work = invocationOnMock.getArgument(0);
+              return work.get();
+            });
+    ContractNegotiation negotiation = getValidNegotiationWithId(negotiationId);
+    List<ExtendableQuoteVO> quotes = getQuotes(negotiationId, TEST_CONTROL_PLANE_ID, 1);
+    when(quoteApiClient.findByNegotiationId(eq(negotiationId))).thenReturn(quotes);
+    when(tmfEdcMapper.toContractNegotiation(eq(quotes), any(), any(), any()))
+        .thenReturn(negotiation);
+    return negotiation;
   }
 }
