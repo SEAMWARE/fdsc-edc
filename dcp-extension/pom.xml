@@ -64,11 +64,6 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>catalog-spi</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
             <artifactId>web-spi</artifactId>
             <version>${edc.version}</version>
         </dependency>
