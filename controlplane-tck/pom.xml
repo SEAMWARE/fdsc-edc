@@ -116,6 +116,23 @@
             <artifactId>control-plane-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
+        <!-- 0.18.1 dropped both managers from control-plane-core's transitive set
+             (they are still listed in controlplane-base-bom, which is imported for
+             version management only and therefore pulls nothing). They hold the
+             contract-negotiation and transfer-process state machines and are the
+             only consumers of ContractNegotiationPendingGuard /
+             TransferProcessPendingGuard, so without them no control-plane entity
+             ever leaves its initial state. -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-contract-manager</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-transfer-manager</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
         <!-- single-participant ("classic") participant-context mode; seeds one
              ParticipantContext from edc.participant.context.id -->
         <dependency>

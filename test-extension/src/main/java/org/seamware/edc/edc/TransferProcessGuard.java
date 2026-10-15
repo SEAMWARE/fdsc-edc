@@ -68,6 +68,11 @@ public class TransferProcessGuard extends DelayedActionGuard<TransferProcess>
       Set.of(
           INITIAL.code(),
           REQUESTING.code(),
+          // 0.18.1 routes the consumer through STARTUP_REQUESTED on an incoming
+          // TransferStartMessage, handled by TransferProcessorsImpl#processStartupRequested.
+          // Without it here the guard intercepts that state and replays the recorded
+          // transitionRequesting, which is illegal from STARTUP_REQUESTED and loops forever.
+          STARTUP_REQUESTED.code(),
           PROVISIONING.code(),
           DEPROVISIONING.code(),
           SUSPENDING.code(),
