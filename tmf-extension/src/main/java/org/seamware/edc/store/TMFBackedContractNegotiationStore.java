@@ -69,6 +69,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   /** Reason recorded when the state machine abandons an entity via {@link #breakLease}. */
   private static final String LEASE_BROKEN_BY_STATE_MACHINE = "Lease broken.";
+
   /**
    * How long {@link #findByIdAndLease} waits for a negotiation that this controlplane is still
    * processing. Has to stay below the read timeout of the counter-party's DSP client, otherwise the
@@ -453,7 +454,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       }
     }
   }
- 
+
   /**
    * Persists a negotiation and reports the outcome of giving up its lease, as the 0.18.1 SQL store
    * does. Lease and persistence failures both throw {@link EdcPersistenceException}; the returned
