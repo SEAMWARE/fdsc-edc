@@ -22,6 +22,7 @@ import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
 import java.util.*;
 import java.util.Collections;
 import java.util.Set;
@@ -68,6 +69,14 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   /** Reason recorded when the state machine abandons an entity via {@link #breakLease}. */
   private static final String LEASE_BROKEN_BY_STATE_MACHINE = "Lease broken.";
+  /**
+   * How long {@link #findByIdAndLease} waits for a negotiation that this controlplane is still
+   * processing. Has to stay below the read timeout of the counter-party's DSP client, otherwise the
+   * counter-party gives up before the answer arrives.
+   */
+  public static final Duration DEFAULT_OWN_LEASE_WAIT_TIME = Duration.ofSeconds(20);
+
+  private static final long OWN_LEASE_POLL_INTERVAL_MS = 100;
 
   private final Monitor monitor;
   private final ObjectMapper objectMapper;
@@ -87,6 +96,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   private final LockManager lockManager;
   private final LeaseHolder leaseHolder;
   private final TMFTransactionContext transactionContext;
+  private final Duration ownLeaseWaitTime;
   private final ConcurrentHashMap<String, Object> negotiationLocks = new ConcurrentHashMap<>();
 
   /**
@@ -148,6 +158,42 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       LeaseHolder leaseHolder,
       TMFTransactionContext transactionContext,
       LockManager lockManager) {
+    this(
+        monitor,
+        objectMapper,
+        quoteApi,
+        agreementApi,
+        productOrderApi,
+        productCatalogApi,
+        productInventoryApi,
+        participantResolver,
+        tmfEdcMapper,
+        participantId,
+        controlplane,
+        criterionOperatorRegistry,
+        leaseHolder,
+        transactionContext,
+        lockManager,
+        DEFAULT_OWN_LEASE_WAIT_TIME);
+  }
+
+  public TMFBackedContractNegotiationStore(
+      Monitor monitor,
+      ObjectMapper objectMapper,
+      QuoteApiClient quoteApi,
+      AgreementApiClient agreementApi,
+      ProductOrderApiClient productOrderApi,
+      ProductCatalogApiClient productCatalogApi,
+      ProductInventoryApiClient productInventoryApi,
+      ParticipantResolver participantResolver,
+      TMFEdcMapper tmfEdcMapper,
+      String participantId,
+      String controlplane,
+      CriterionOperatorRegistry criterionOperatorRegistry,
+      LeaseHolder leaseHolder,
+      TMFTransactionContext transactionContext,
+      LockManager lockManager,
+      Duration ownLeaseWaitTime) {
     this.monitor = monitor;
     this.objectMapper = objectMapper;
     this.quoteApi = quoteApi;
@@ -164,6 +210,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     this.transactionContext = transactionContext;
     this.lockId = UUID.randomUUID().toString();
     this.lockManager = lockManager;
+    this.ownLeaseWaitTime = ownLeaseWaitTime;
   }
 
   @Override
@@ -352,6 +399,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   @Override
   public StoreResult<ContractNegotiation> findByIdAndLease(String s) {
+    awaitOwnRelease(s);
     try {
       return lockManager.writeLock(
           () -> {
@@ -377,6 +425,35 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     }
   }
 
+  /**
+   * Waits until this controlplane has finished processing the negotiation, at most {@link
+   * #ownLeaseWaitTime}.
+   *
+   * <p>The state machine keeps a negotiation in {@link #activeNegotiations} while it sends a
+   * message to the counter-party and saves the new state. Saving to TMForum takes seconds, so the
+   * counter-party's answer (e.g. the verification after an agreement) can arrive before the save
+   * has finished. Answering it with "already leased" is a conflict, which the counter-party treats
+   * as fatal and terminates the negotiation. The negotiation is released as soon as the save
+   * finishes, so waiting for it lets the message be processed instead.
+   */
+  private void awaitOwnRelease(String negotiationId) {
+    long deadline = System.nanoTime() + ownLeaseWaitTime.toNanos();
+    if (activeNegotiations.contains(negotiationId)) {
+      monitor.debug(
+          String.format(
+              "Negotiation %s is still processed by this controlplane, waiting for it.",
+              negotiationId));
+    }
+    while (activeNegotiations.contains(negotiationId) && System.nanoTime() < deadline) {
+      try {
+        Thread.sleep(OWN_LEASE_POLL_INTERVAL_MS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+    }
+  }
+ 
   /**
    * Persists a negotiation and reports the outcome of giving up its lease, as the 0.18.1 SQL store
    * does. Lease and persistence failures both throw {@link EdcPersistenceException}; the returned
