@@ -381,6 +381,15 @@ cleanup() {
   fi
   CLEANUP_DONE=true
 
+  # Collect logs here rather than in the main flow: on SIGTERM (an outer
+  # `timeout`, or Ctrl-C) the script never reaches the main flow's later steps,
+  # and the containers are torn down below, taking their logs with them.
+  if [[ "${TCK_TESTS_FAILED}" == "true" || "${TCK_EXIT_CODE:-0}" -ne 0 ]]; then
+    collect_logs "true"
+  else
+    collect_logs "false"
+  fi
+
   if [[ "${KEEP_CONTAINERS}" == "true" ]]; then
     log "Keeping containers running (--keep-containers). To stop them run:"
     log "  docker compose -f ${COMPOSE_FILE} down"
@@ -435,24 +444,23 @@ fi
 verify_jar
 
 # Step 3: Run TCK tests
+# Seed the code cleanup() reads with a failure sentinel: if the script is killed
+# mid-run (SIGTERM from an outer `timeout`, or Ctrl-C), cleanup() still treats the
+# run as failed and collects every service's logs rather than just the TCK's.
+TCK_EXIT_CODE=1
 tck_exit_code=0
 run_tck || tck_exit_code=$?
+# Published for cleanup(), which runs from the EXIT trap and cannot see locals.
+TCK_EXIT_CODE="${tck_exit_code}"
 
 # Step 4: Display individual test results (before tearing down containers).
 # Must not abort the run: it returns non-zero when no TCK logs exist.
 print_test_results || true
 
-# Step 5: Collect container logs while the containers still exist
-if [[ "${TCK_TESTS_FAILED}" == "true" || "${tck_exit_code}" -ne 0 ]]; then
-  collect_logs "true"
-else
-  collect_logs "false"
-fi
-
-# Step 6: Cleanup
+# Step 5: Cleanup (also collects the container logs, see cleanup())
 cleanup
 
-# Step 7: Report overall result
+# Step 6: Report overall result
 # Use the TCK log-based failure flag as the primary indicator, because the
 # TCK runtime may exit 0 even when tests fail.
 echo ""

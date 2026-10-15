@@ -352,12 +352,16 @@ public class DataAssembly {
     recorder.record("ATP0306", TransferProcess::transitionStarting);
   }
 
+  // The TP_C:01 consumer is purely reactive: the TCK drives start, suspend, resume and
+  // completion from the provider side. The only point the guard intercepts is RESUMING,
+  // which 0.18.1 would otherwise process by dispatching a TransferStartMessage the TCK
+  // rejects, so the recorded step carries the transfer to STARTED directly.
   private static void recordConsumer01TransferSequences(StepRecorder<TransferProcess> recorder) {
-    recorder.record("ATPC0101", TransferProcess::transitionRequesting);
-    recorder.record("ATPC0102", TransferProcess::transitionRequesting);
-    recorder.record("ATPC0103", TransferProcess::transitionRequesting);
-    recorder.record("ATPC0104", TransferProcess::transitionRequesting);
-    recorder.record("ATPC0105", TransferProcess::transitionRequesting);
+    recorder.record("ATPC0101", TransferProcess::transitionStarted);
+    recorder.record("ATPC0102", TransferProcess::transitionStarted);
+    recorder.record("ATPC0103", TransferProcess::transitionStarted);
+    recorder.record("ATPC0104", TransferProcess::transitionStarted);
+    recorder.record("ATPC0105", TransferProcess::transitionStarted);
   }
 
   private static void recordConsumer02TransferSequences(StepRecorder<TransferProcess> recorder) {
