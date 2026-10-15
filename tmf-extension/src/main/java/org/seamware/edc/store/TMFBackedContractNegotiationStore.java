@@ -648,7 +648,6 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       throw new IllegalArgumentException("When finalizing, an order should already exist.");
     }
 
-    updateQuote(finalQuote, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
     ProductOrderUpdateVO productOrderUpdateVO = tmfEdcMapper.toUpdate(orderVO.get());
     productOrderUpdateVO.setState(ProductOrderStateTypeVO.COMPLETED);
 
@@ -714,6 +713,10 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         "revert finalized product order " + orderVO.get().getId(),
         orderVO.get().getId(),
         previousOrderState);
+    // The quote carries the negotiation state, so it has to be written last. Once a reader sees
+    // the negotiation as finalized, the agreement must already be AGREED, otherwise
+    // findContractAgreement does not return it and starting a transfer for it fails.
+    updateQuote(finalQuote, contractNegotiation, QuoteStateTypeVO.ACCEPTED);
   }
 
   private void cancelAgreements(String negotiationId) {
