@@ -33,6 +33,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.seamware.edc.domain.*;
 import org.seamware.tmforum.agreement.model.AgreementItemVO;
 import org.seamware.tmforum.productinventory.model.ProductOfferingRefVO;
@@ -1731,6 +1732,12 @@ public class TMFBackedContractNegotiationStorePersistenceTest
         createdProduct.getId(),
         productRefVOS.getLast().getId(),
         "The correct product should be referenced.");
+
+    // the negotiation must not be visible as finalized before its agreement is agreed
+    InOrder writeOrder = inOrder(agreementApiClient, productOrderApiClient, quoteApiClient);
+    writeOrder.verify(agreementApiClient).updateAgreement(eq(inProcessAgreementVO.getId()), any());
+    writeOrder.verify(productOrderApiClient).updateProductOrder(eq(existingOrder.getId()), any());
+    writeOrder.verify(quoteApiClient).updateQuote(eq(expectedQuoteId), any());
   }
 
   private static Stream<Arguments> getFinalStates() {
