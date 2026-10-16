@@ -75,20 +75,17 @@ public class DcpConfig {
         .ifPresent(scopesBuilder::negotiation);
     getNullSafeFromConfig(() -> scopesConfig.getString("transfer"))
         .ifPresent(scopesBuilder::transfer);
-    getNullSafeFromConfig(() -> scopesConfig.getString("version"))
-        .ifPresent(scopesBuilder::version);
 
     dcpConfigBuilder.scopes(scopesBuilder.build());
     return dcpConfigBuilder.build();
   }
 
-  public record Scopes(String catalog, String negotiation, String transfer, String version) {
+  public record Scopes(String catalog, String negotiation, String transfer) {
     public static class Builder {
 
       private String catalog;
       private String negotiation;
       private String transfer;
-      private String version;
 
       public Builder catalog(String catalog) {
         this.catalog = catalog;
@@ -105,11 +102,6 @@ public class DcpConfig {
         return this;
       }
 
-      public Builder version(String version) {
-        this.version = version;
-        return this;
-      }
-
       public Scopes build() {
         if (catalog == null) {
           catalog = "";
@@ -120,10 +112,7 @@ public class DcpConfig {
         if (transfer == null) {
           transfer = "";
         }
-        if (version == null) {
-          version = "";
-        }
-        return new Scopes(catalog, negotiation, transfer, version);
+        return new Scopes(catalog, negotiation, transfer);
       }
     }
   }

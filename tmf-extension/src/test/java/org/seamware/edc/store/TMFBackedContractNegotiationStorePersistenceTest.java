@@ -28,6 +28,7 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.Con
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -103,7 +104,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     verify(quoteApiClient).updateQuote(idCaptor.capture(), quoteCaptor.capture());
 
     verify(leaseHolder, times(1)).acquireLease(eq(contractNegotiation.getId()), any());
-    verify(leaseHolder, times(1)).freeLease(eq(contractNegotiation.getId()), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(contractNegotiation.getId()), any(), any());
 
     ExtendableQuoteUpdateVO extendableQuoteUpdateVO = quoteCaptor.getValue();
     assertEquals(
@@ -183,7 +184,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     verify(quoteApiClient).createQuote(quoteCaptor.capture());
 
     verify(leaseHolder, times(1)).acquireLease(eq(contractNegotiation.getId()), any());
-    verify(leaseHolder, times(1)).freeLease(eq(contractNegotiation.getId()), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(contractNegotiation.getId()), any(), any());
 
     ExtendableQuoteCreateVO extendableQuoteCreateVO = quoteCaptor.getValue();
     assertEquals(
@@ -218,7 +219,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             tmfBackedContractNegotiationStore.save(
                 getValidNegotiationWithIdInState(TEST_NEGOTIATION_ID, negotiationState)),
         "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
   }
 
   @ParameterizedTest
@@ -233,7 +234,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             tmfBackedContractNegotiationStore.save(
                 getValidNegotiationWithIdInState(TEST_NEGOTIATION_ID, negotiationState)),
         "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
   }
 
   @ParameterizedTest(name = "{0}")
@@ -258,7 +259,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                   String.format(
                       "[%s] All unexpected errors have to become EdcPersistenceExceptions.",
                       illegalState));
-          verify(leaseHolder, times(1)).freeLease(eq(negotiationId), any());
+          verify(leaseHolder, times(1)).releaseLease(eq(negotiationId), any(), any());
           assertEquals(
               IllegalArgumentException.class,
               edcPersistenceException.getCause().getClass(),
@@ -289,7 +290,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                     getValidNegotiationWithIdInState(
                         TEST_NEGOTIATION_ID, contractNegotiationState)),
             "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
     assertEquals(
         IllegalArgumentException.class,
         edcPersistenceException.getCause().getClass(),
@@ -319,7 +320,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                     getValidNegotiationWithIdInState(
                         TEST_NEGOTIATION_ID, contractNegotiationState)),
             "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
     assertEquals(
         IllegalArgumentException.class,
         edcPersistenceException.getCause().getClass(),
@@ -349,7 +350,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
                     getValidNegotiationWithIdInState(
                         TEST_NEGOTIATION_ID, contractNegotiationState)),
             "All unexpected errors have to become EdcPersistenceExceptions.");
-    verify(leaseHolder, times(1)).freeLease(eq(TEST_NEGOTIATION_ID), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(TEST_NEGOTIATION_ID), any(), any());
     assertEquals(
         RuntimeException.class,
         edcPersistenceException.getCause().getClass(),
@@ -1478,6 +1479,129 @@ public class TMFBackedContractNegotiationStorePersistenceTest
     }
   }
 
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getAgreementClaimCases")
+  public void testVerificationSave_persists_claims_attached_after_agreement_creation(
+      String name,
+      Map<String, Object> claims,
+      boolean claimsChanged,
+      int expectedAgreementLookups,
+      int expectedAgreementUpdates) {
+    useStoreOwnedByTestProvider();
+
+    when(participantResolver.getTmfId(eq(TEST_PROVIDER_ID))).thenReturn(TMF_TEST_PROVIDER_ID);
+    when(participantResolver.getTmfId(eq(TEST_CONSUMER_ID))).thenReturn(TMF_TEST_CONSUMER_ID);
+
+    ContractNegotiation contractNegotiation =
+        addAgreement(
+            getValidNegotiationWithIdOfferAndType(
+                TEST_NEGOTIATION_ID,
+                List.of(getOffer(TEST_OFFER_ID + ":asset:123")),
+                ContractNegotiation.Type.PROVIDER,
+                ContractNegotiationStates.VERIFYING,
+                TEST_CONSUMER_ID),
+            claims);
+
+    ExtendableAgreementVO storedAgreement = getTestAgreement();
+    when(agreementApiClient.findByContractId(
+            eq(contractNegotiation.getContractAgreement().getId())))
+        .thenReturn(Optional.of(storedAgreement));
+    when(tmfEdcMapper.applyClaims(eq(storedAgreement), any())).thenReturn(claimsChanged);
+
+    testSave_success(
+        contractNegotiation,
+        setActiveQuote(
+            ContractNegotiationStates.AGREED,
+            "active-id",
+            getQuotes(TEST_NEGOTIATION_ID, TEST_CONTROL_PLANE_ID, 5),
+            QuoteStateTypeVO.ACCEPTED),
+        List.of(getQuoteItem("123")),
+        "active-id",
+        false,
+        expectedQuoteUpdate("VERIFYING", QuoteStateTypeVO.ACCEPTED, List.of(getQuoteItem("123"))));
+
+    verify(agreementApiClient, times(expectedAgreementLookups)).findByContractId(any());
+    verify(agreementApiClient, times(expectedAgreementUpdates)).updateAgreement(any(), any());
+  }
+
+  private static Stream<Arguments> getAgreementClaimCases() {
+    return Stream.of(
+        Arguments.of(
+            "Claims EDC attaches at verification time reach the already created agreement.",
+            TEST_AGREEMENT_CLAIMS,
+            true,
+            1,
+            1),
+        Arguments.of(
+            "An agreement whose claims did not change is not rewritten.",
+            TEST_AGREEMENT_CLAIMS,
+            false,
+            1,
+            0),
+        Arguments.of(
+            "An agreement without claims is not looked up at all.", Map.of(), false, 0, 0));
+  }
+
+  /**
+   * Rebinds the store to {@code TEST_PROVIDER_ID} so the agreement paths resolve the provider the
+   * agreement fixtures are built for, rather than the generic participant id of the base setup.
+   */
+  private void useStoreOwnedByTestProvider() {
+    tmfBackedContractNegotiationStore =
+        new TMFBackedContractNegotiationStore(
+            mock(Monitor.class),
+            objectMapper,
+            quoteApiClient,
+            agreementApiClient,
+            productOrderApiClient,
+            productCatalogApiClient,
+            productInventoryApiClient,
+            participantResolver,
+            tmfEdcMapper,
+            TEST_PROVIDER_ID,
+            TEST_CONTROL_PLANE_ID,
+            criterionOperatorRegistry,
+            leaseHolder,
+            new TMFTransactionContext(mock(Monitor.class)),
+            lockManager);
+  }
+
+  @Test
+  public void testVerificationSave_fails_when_the_agreement_carrying_the_claims_is_missing() {
+    useStoreOwnedByTestProvider();
+
+    when(participantResolver.getTmfId(eq(TEST_PROVIDER_ID))).thenReturn(TMF_TEST_PROVIDER_ID);
+    when(participantResolver.getTmfId(eq(TEST_CONSUMER_ID))).thenReturn(TMF_TEST_CONSUMER_ID);
+
+    ContractNegotiation contractNegotiation =
+        addAgreement(
+            getValidNegotiationWithIdOfferAndType(
+                TEST_NEGOTIATION_ID,
+                List.of(getOffer(TEST_OFFER_ID + ":asset:123")),
+                ContractNegotiation.Type.PROVIDER,
+                ContractNegotiationStates.VERIFYING,
+                TEST_CONSUMER_ID),
+            TEST_AGREEMENT_CLAIMS);
+
+    when(quoteApiClient.findByNegotiationId(eq(TEST_NEGOTIATION_ID)))
+        .thenReturn(
+            setActiveQuote(
+                ContractNegotiationStates.AGREED,
+                "active-id",
+                getQuotes(TEST_NEGOTIATION_ID, TEST_CONTROL_PLANE_ID, 5),
+                QuoteStateTypeVO.ACCEPTED));
+    when(agreementApiClient.findByContractId(
+            eq(contractNegotiation.getContractAgreement().getId())))
+        .thenReturn(Optional.empty());
+
+    // Dropping the claims silently would lose them for good: no later state re-sends them.
+    assertThrows(
+        EdcPersistenceException.class,
+        () -> tmfBackedContractNegotiationStore.save(contractNegotiation));
+
+    verify(agreementApiClient, never()).updateAgreement(any(), any());
+  }
+
   private static Stream<Arguments> getVerificationStates() {
     return Stream.of(
         Arguments.of(
@@ -2299,7 +2423,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
       verify(quoteApiClient, times(1)).updateQuote(idCaptor.capture(), quoteCaptor.capture());
     }
     verify(leaseHolder, times(1)).acquireLease(eq(contractNegotiation.getId()), any());
-    verify(leaseHolder, times(1)).freeLease(eq(contractNegotiation.getId()), any());
+    verify(leaseHolder, times(1)).releaseLease(eq(contractNegotiation.getId()), any(), any());
 
     ExtendableQuoteUpdateVO extendableQuoteUpdateVO = quoteCaptor.getAllValues().getLast();
 

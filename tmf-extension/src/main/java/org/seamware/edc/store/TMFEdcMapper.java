@@ -18,6 +18,7 @@ package org.seamware.edc.store;
 
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.CONSUMER;
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.PROVIDER;
+import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
 import static org.seamware.edc.tmf.ParticipantResolver.CONSUMER_ROLE;
 import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
 
@@ -85,6 +86,16 @@ public class TMFEdcMapper {
   public static final String TRANSFER_PATH_KEY = "transferPath";
   public static final String UPSTREAM_ADDRESS_KEY = "upstreamAddress";
   public static final String UID_KEY = "http://www.w3.org/ns/odrl/2/uid";
+
+  /** Asset name property; EDC 0.18.1 removed {@code Asset.PROPERTY_NAME} and its builder setter. */
+  public static final String ASSET_PROPERTY_NAME = EDC_NAMESPACE + "name";
+
+  /**
+   * Asset version property; EDC 0.18.1 removed {@code Asset.PROPERTY_VERSION} and its builder
+   * setter.
+   */
+  public static final String ASSET_PROPERTY_VERSION = EDC_NAMESPACE + "version";
+
   public static final String USAGE_CHARACTERISTIC_ASSET_ID = "asset-id";
   public static final String USAGE_CHARACTERISTIC_CORRELATION_ID = "correlation-id";
   public static final String USAGE_CHARACTERISTIC_PROTOCOL = "protocol";
@@ -92,7 +103,6 @@ public class TMFEdcMapper {
   public static final String USAGE_CHARACTERISTIC_TRANSFER_TYPE = "transfer-type";
   public static final String USAGE_CHARACTERISTIC_TYPE = "type";
   public static final String USAGE_CHARACTERISTIC_CONTRACT_ID = "contract-id";
-  public static final String USAGE_CHARACTERISTIC_RESOURCE_MANIFEST = "resource-manifest";
   public static final String USAGE_CHARACTERISTIC_DATAPLANE_ID = "dataplane-id";
   public static final String USAGE_CHARACTERISTIC_CONTENT_DATA_ADDRESS = "content-data-address";
   public static final String USAGE_TYPE_DSP_TRANSFER = "dspTransfer";
@@ -102,6 +112,16 @@ public class TMFEdcMapper {
   public static final String AGREEMENT_CHARACTERISTIC_CONSUMER_ID = "consumer-id";
   public static final String AGREEMENT_CHARACTERISTIC_ASSET_ID = "asset-id";
   public static final String AGREEMENT_CHARACTERISTIC_POLICY = "policy";
+  public static final String AGREEMENT_CHARACTERISTIC_CLAIMS = "claims";
+
+  private static final TypeReference<Map<String, Object>> CLAIMS_TYPE = new TypeReference<>() {};
+
+  /**
+   * DSP-visible agreement id, distinct from the EDC row id since 0.18.1. Mirrors the separate
+   * {@code agr_agreement_id} column of the upstream SQL store; the external id stays the row id.
+   */
+  public static final String AGREEMENT_CHARACTERISTIC_AGREEMENT_ID = "agreement-id";
+
   public static final String AGREEMENT_TYPE_DSP = "dspContract";
 
   public static final String QUOTE_ITEM_ADD_ACTION = "add";
@@ -114,6 +134,7 @@ public class TMFEdcMapper {
   private final TypeTransformerRegistry typeTransformerRegistry;
   private final JsonLd jsonLd;
   private final Clock clock;
+  private final String participantContextId;
 
   public TMFEdcMapper(
       Monitor monitor,
@@ -121,13 +142,15 @@ public class TMFEdcMapper {
       ParticipantResolver participantResolver,
       TypeTransformerRegistry typeTransformerRegistry,
       JsonLd jsonLd,
-      Clock clock) {
+      Clock clock,
+      String participantContextId) {
     this.monitor = monitor;
     this.objectMapper = objectMapper;
     this.participantResolver = participantResolver;
     this.typeTransformerRegistry = typeTransformerRegistry;
     this.jsonLd = jsonLd;
     this.clock = clock;
+    this.participantContextId = participantContextId;
     this.tmfObjectMapper = new TMFObjectMapperImpl();
   }
 
@@ -164,12 +187,84 @@ public class TMFEdcMapper {
                 AGREEMENT_CHARACTERISTIC_CONSUMER_ID, contractAgreement.getConsumerId()))
         .addCharacteristicItem(
             toAgreementCharacteristic(
-                AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()));
+                AGREEMENT_CHARACTERISTIC_SIGNING_DATE, contractAgreement.getContractSigningDate()))
+        .addCharacteristicItem(
+            toAgreementCharacteristic(
+                AGREEMENT_CHARACTERISTIC_AGREEMENT_ID, contractAgreement.getAgreementId()));
+
+    // Since 0.17.0 the agent's claims live on the agreement so that transfer-time policy
+    // evaluation can reconstruct the agent without re-resolving a token.
+    Map<String, Object> claims = contractAgreement.getClaims();
+    if (claims != null && !claims.isEmpty()) {
+      agreementVO.addCharacteristicItem(
+          toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, claims));
+    }
     return agreementVO;
+  }
+
+  /** Claims round-trip through TMForum as a plain JSON object, so Jackson hands back a map. */
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> toClaims(CharacteristicVO characteristic) {
+    if (characteristic.getValue() instanceof Map<?, ?> claims) {
+      return (Map<String, Object>) claims;
+    }
+    monitor.warning(
+        String.format(
+            "Ignoring agreement characteristic %s: expected a map, got %s.",
+            AGREEMENT_CHARACTERISTIC_CLAIMS, characteristic.getValue()));
+    return Map.of();
   }
 
   private CharacteristicVO toAgreementCharacteristic(String key, Object value) {
     return new CharacteristicVO().name(key).value(value);
+  }
+
+  private String readAgreementId(ExtendableAgreementVO agreementVO) {
+    return agreementVO.getCharacteristic().stream()
+        .filter(c -> AGREEMENT_CHARACTERISTIC_AGREEMENT_ID.equals(c.getName()))
+        .map(CharacteristicVO::getValue)
+        .filter(String.class::isInstance)
+        .map(String.class::cast)
+        .findFirst()
+        .orElseGet(agreementVO::getExternalId);
+  }
+
+  /**
+   * Writes {@code claims} onto an already stored agreement, reporting whether anything changed. The
+   * provider only learns the counter-party claims when the verification message arrives, which is
+   * after the agreement row was created by {@link #toAgreement}.
+   */
+  public boolean applyClaims(ExtendableAgreementVO agreementVO, Map<String, Object> claims) {
+    if (claims == null || claims.isEmpty()) {
+      return false;
+    }
+    // The incoming claims are built by EDC, the stored ones came back through Jackson from
+    // TMForum, so equal claim sets differ in boxing (Integer vs Long for exp/iat) and in
+    // collection type. Compare - and store - the normalised form, or the short-circuit below
+    // never fires and every save PATCHes the agreement again.
+    Map<String, Object> normalizedClaims = normalizeClaims(claims);
+    Optional<CharacteristicVO> stored =
+        agreementVO.getCharacteristic().stream()
+            .filter(c -> AGREEMENT_CHARACTERISTIC_CLAIMS.equals(c.getName()))
+            .findFirst();
+    if (stored.isPresent()) {
+      if (normalizedClaims.equals(normalizeClaims(stored.get().getValue()))) {
+        return false;
+      }
+      stored.get().setValue(normalizedClaims);
+      return true;
+    }
+    agreementVO.addCharacteristicItem(
+        toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, normalizedClaims));
+    return true;
+  }
+
+  /** Maps any claim representation onto the one Jackson produces for a stored agreement. */
+  private Map<String, Object> normalizeClaims(Object claims) {
+    if (!(claims instanceof Map<?, ?>)) {
+      return Map.of();
+    }
+    return objectMapper.convertValue(claims, CLAIMS_TYPE);
   }
 
   public ContractAgreement toContractAgreement(ExtendableAgreementVO agreementVO) {
@@ -189,9 +284,16 @@ public class TMFEdcMapper {
                     agreementBuilder.assetId((String) c.getValue());
                 case AGREEMENT_CHARACTERISTIC_POLICY ->
                     agreementBuilder.policy(fromOdrl(c.getValue()));
+                case AGREEMENT_CHARACTERISTIC_CLAIMS -> agreementBuilder.claims(toClaims(c));
               }
             });
-    agreementBuilder.id(agreementVO.getExternalId());
+    // The external id is the EDC row id, as findContractAgreement resolves by it. The DSP-visible
+    // agreement id is a different value since 0.18.1 and travels in its own characteristic;
+    // agreements written before that - including the TCK seed data - only know the one id.
+    agreementBuilder
+        .id(agreementVO.getExternalId())
+        .agreementId(readAgreementId(agreementVO))
+        .participantContextId(participantContextId);
     return agreementBuilder.build();
   }
 
@@ -380,7 +482,9 @@ public class TMFEdcMapper {
       String participantId) {
 
     ContractNegotiation.Builder contractNegotiationBuilder =
-        ContractNegotiation.Builder.newInstance().clock(clock);
+        ContractNegotiation.Builder.newInstance()
+            .clock(clock)
+            .participantContextId(participantContextId);
 
     if (quoteVOs.isEmpty()) {
       monitor.warning("Tried to map an empty list to a contract negotiation.");
@@ -640,8 +744,9 @@ public class TMFEdcMapper {
         Asset.Builder.newInstance()
             .clock(clock)
             .id(productSpecification.getExternalId())
-            .version(productSpecification.getVersion())
-            .name(productSpecification.getName())
+            .participantContextId(participantContextId)
+            .property(ASSET_PROPERTY_VERSION, productSpecification.getVersion())
+            .property(ASSET_PROPERTY_NAME, productSpecification.getName())
             .description(productSpecification.getDescription())
             .dataAddress(dataAddressBuilder.build())
             .build());
@@ -799,7 +904,10 @@ public class TMFEdcMapper {
       return Optional.empty();
     }
     ContractDefinition.Builder contractDefinitionBuilder =
-        ContractDefinition.Builder.newInstance().clock(clock).id(productOfferingVO.getExternalId());
+        ContractDefinition.Builder.newInstance()
+            .clock(clock)
+            .id(productOfferingVO.getExternalId())
+            .participantContextId(participantContextId);
 
     Optional<ExtendableProductOfferingTerm> optionalTerm =
         getContractDefinitionTerm(productOfferingVO);
@@ -962,12 +1070,6 @@ public class TMFEdcMapper {
       usageVO.addRatedProductUsageItem(
           new RatedProductUsageVO()
               .productRef(new org.seamware.tmforum.usage.model.ProductRefVO().id(productId)));
-    }
-
-    if (transferProcess.getResourceManifest() != null) {
-      usageVO.addUsageCharacteristicItem(
-          toUsageCharacteristic(
-              USAGE_CHARACTERISTIC_RESOURCE_MANIFEST, transferProcess.getResourceManifest()));
     }
 
     return usageVO;

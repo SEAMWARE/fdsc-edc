@@ -68,6 +68,18 @@ public class TransferProcessGuard extends DelayedActionGuard<TransferProcess>
       Set.of(
           INITIAL.code(),
           REQUESTING.code(),
+          // 0.18.1 routes the consumer through STARTUP_REQUESTED on an incoming
+          // TransferStartMessage, handled by TransferProcessorsImpl#processStartupRequested,
+          // which reaches STARTED without dispatching anything back. Left out here the
+          // guard intercepts it and replays a recorded step that is illegal from that
+          // state, so the action fails, pending is cleared, the state machine re-evaluates
+          // and the run loops forever.
+          //
+          // RESUMING is deliberately NOT listed: processResuming dispatches a
+          // TransferStartMessage back to the counter-party, which the TCK does not accept
+          // for a provider-driven resume (TP_C:01-04). It stays guard-controlled so the
+          // recorded step can reach STARTED without that dispatch.
+          STARTUP_REQUESTED.code(),
           PROVISIONING.code(),
           DEPROVISIONING.code(),
           SUSPENDING.code(),

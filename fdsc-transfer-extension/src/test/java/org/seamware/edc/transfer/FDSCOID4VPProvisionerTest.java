@@ -43,8 +43,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.DeprovisionedResource;
-import org.eclipse.edc.connector.controlplane.transfer.spi.types.ProvisionResponse;
+import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
+import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
+import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
+import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
 import org.eclipse.edc.jsonld.TitaniumJsonLd;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.model.Policy;
@@ -67,6 +70,8 @@ import org.seamware.pap.model.ServiceCreateVO;
 public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
   private static final String TEST_POLICY_PATH = "policy-path";
+  private static final String TEST_PROVIDER_ID = "provider";
+  private static final String TEST_CONSUMER_ID = "consumer";
 
   private ApisixAdminClient apisixAdminClient;
   private CredentialsConfigServiceClient credentialsConfigServiceClient;
@@ -74,6 +79,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
   private ProductCatalogApiClient productCatalogApiClient;
   private TransferMapper transferMapper;
   private TMFEdcMapper tmfEdcMapper;
+  private ContractNegotiationStore contractNegotiationStore;
   private JsonLd jsonLd;
 
   private FDSCOID4VPProvisioner provisioner;
@@ -86,6 +92,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
     productCatalogApiClient = mock(ProductCatalogApiClient.class);
     transferMapper = mock(TransferMapper.class);
     tmfEdcMapper = mock(TMFEdcMapper.class);
+    contractNegotiationStore = mock(ContractNegotiationStore.class);
     jsonLd = new TitaniumJsonLd(mock(Monitor.class));
 
     provisioner =
@@ -95,16 +102,31 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
             credentialsConfigServiceClient,
             odrlPapClient,
             productCatalogApiClient,
+            contractNegotiationStore,
             transferMapper,
             new ObjectMapper(),
             tmfEdcMapper,
             jsonLd);
+
+    givenAgreementPolicy(getTestPolicy());
+  }
+
+  /** Stubs the agreement store so the provisioner resolves the usage policy of the flow. */
+  private void givenAgreementPolicy(Policy policy) {
+    when(contractNegotiationStore.findContractAgreement(eq(TEST_AGREEMENT_ID)))
+        .thenReturn(
+            ContractAgreement.Builder.newInstance()
+                .id(TEST_AGREEMENT_ID)
+                .providerId(TEST_PROVIDER_ID)
+                .consumerId(TEST_CONSUMER_ID)
+                .assetId(TEST_ASSET_ID)
+                .policy(policy)
+                .build());
   }
 
   @Test
   public void testProvision_success() throws Exception {
     ServiceCreateVO expectedService = new ServiceCreateVO().id(TEST_TRANSFER_PROCESS_ID);
-    Policy testPolicy = getTestPolicy();
     Route serviceRoute = getRoute("service");
     Route wellKnownRoute = getRoute("well-known");
 
@@ -113,7 +135,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
     when(odrlPapClient.createService(eq(expectedService)))
         .thenReturn(new PolicyPathVO().policyPath(TEST_POLICY_PATH));
-    when(tmfEdcMapper.fromEdcPolicy(eq(testPolicy)))
+    when(tmfEdcMapper.fromEdcPolicy(any()))
         .thenAnswer(
             invocation -> {
               Policy policy = invocation.getArgument(0);
@@ -130,8 +152,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
         .thenReturn(serviceRoute);
     when(transferMapper.toWellknownRoute(any())).thenReturn(wellKnownRoute);
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), testPolicy).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
     assertTrue(result.succeeded(), "Provisioning should have succeeded.");
 
     ArgumentCaptor<Map<String, Object>> policyCaptor = ArgumentCaptor.forClass(Map.class);
@@ -148,8 +169,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
   public void testProvision_error_no_spec() throws Exception {
     when(productCatalogApiClient.getProductOfferingByExternalId(any()))
         .thenReturn(Optional.empty());
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(), "Without a corresponding spec, provisioning should fail permanently.");
@@ -159,8 +179,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
   public void testProvision_error_no_upstream_key() throws Exception {
     when(productCatalogApiClient.getProductSpecByExternalId(any()))
         .thenReturn(Optional.of(getProductSpec(TEST_ASSET_ID, List.of())));
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(),
@@ -175,8 +194,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
     when(odrlPapClient.createService(any()))
         .thenThrow(new HttpClientException("Failed to create service."));
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.failed(),
@@ -194,8 +212,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
     when(odrlPapClient.createService(any()))
         .thenThrow(new HttpClientException("Failed to create service.", 400));
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(),
@@ -205,14 +222,13 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
   @Test
   public void testProvision_error_route_mapping_service() throws Exception {
     ServiceCreateVO expectedService = new ServiceCreateVO().id(TEST_TRANSFER_PROCESS_ID);
-    Policy testPolicy = getTestPolicy();
 
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
         .thenReturn(
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
     when(odrlPapClient.createService(eq(expectedService)))
         .thenReturn(new PolicyPathVO().policyPath(TEST_POLICY_PATH));
-    when(tmfEdcMapper.fromEdcPolicy(eq(testPolicy)))
+    when(tmfEdcMapper.fromEdcPolicy(any()))
         .thenAnswer(
             invocation -> {
               Policy policy = invocation.getArgument(0);
@@ -228,8 +244,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
     when(transferMapper.toOid4VpServiceRoute(any(), eq(TEST_UPSTREAM), eq(TEST_POLICY_PATH)))
         .thenThrow(new RuntimeException("Failed to map."));
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(),
@@ -239,14 +254,13 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
   @Test
   public void testProvision_error_route_mapping_well_known() throws Exception {
     ServiceCreateVO expectedService = new ServiceCreateVO().id(TEST_TRANSFER_PROCESS_ID);
-    Policy testPolicy = getTestPolicy();
 
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
         .thenReturn(
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
     when(odrlPapClient.createService(eq(expectedService)))
         .thenReturn(new PolicyPathVO().policyPath(TEST_POLICY_PATH));
-    when(tmfEdcMapper.fromEdcPolicy(eq(testPolicy)))
+    when(tmfEdcMapper.fromEdcPolicy(any()))
         .thenAnswer(
             invocation -> {
               Policy policy = invocation.getArgument(0);
@@ -263,8 +277,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
         .thenReturn(getRoute());
     when(transferMapper.toWellknownRoute(any())).thenThrow(new RuntimeException("Failed to map."));
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.fatalError(),
@@ -274,14 +287,13 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
   @Test
   public void testProvision_error_route_creation() throws Exception {
     ServiceCreateVO expectedService = new ServiceCreateVO().id(TEST_TRANSFER_PROCESS_ID);
-    Policy testPolicy = getTestPolicy();
 
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
         .thenReturn(
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
     when(odrlPapClient.createService(eq(expectedService)))
         .thenReturn(new PolicyPathVO().policyPath(TEST_POLICY_PATH));
-    when(tmfEdcMapper.fromEdcPolicy(eq(testPolicy)))
+    when(tmfEdcMapper.fromEdcPolicy(any()))
         .thenAnswer(
             invocation -> {
               Policy policy = invocation.getArgument(0);
@@ -300,8 +312,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
     doThrow(new HttpClientException("Apisix unreachable")).when(apisixAdminClient).addRoute(any());
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
     assertTrue(
         result.failed(), "When failing to create route, provisioning should fail but be retried.");
@@ -320,11 +331,20 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
         .thenReturn(new PolicyPathVO().policyPath(TEST_POLICY_PATH));
     when(tmfEdcMapper.fromEdcPolicy(any())).thenThrow(new RuntimeException("Mapping failed."));
 
-    StatusResult<ProvisionResponse> result =
-        provisioner.provision(getResourceDefinition(), getTestPolicy()).get();
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
     assertTrue(
         result.fatalError(),
         "When the policy cannot be mapped, provisioning should fail permanently.");
+  }
+
+  @Test
+  public void testProvision_error_no_agreement() throws Exception {
+    when(contractNegotiationStore.findContractAgreement(eq(TEST_AGREEMENT_ID))).thenReturn(null);
+
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
+
+    assertTrue(
+        result.fatalError(), "Without the agreement policy, provisioning should fail permanently.");
   }
 
   @Test
@@ -333,10 +353,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
     when(transferMapper.toWellKnownRouteId(any())).thenReturn("well-known");
     when(transferMapper.toServiceRouteId(any())).thenReturn("service");
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
 
     assertTrue(result.succeeded(), "The resource should be deprovisioned.");
 
@@ -354,10 +371,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
     doThrow(new HttpClientException("Not found", 404)).when(odrlPapClient).deleteService(any());
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
 
     assertTrue(result.succeeded(), "The resource should be deprovisioned.");
 
@@ -375,10 +389,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
     doThrow(new HttpClientException("Not found", 404)).when(apisixAdminClient).deleteRoute(any());
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
 
     assertTrue(result.succeeded(), "The resource should be deprovisioned.");
 
@@ -398,10 +409,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
         .when(credentialsConfigServiceClient)
         .deleteService(any());
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
 
     assertTrue(result.succeeded(), "The resource should be deprovisioned.");
 
@@ -417,10 +425,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
     when(transferMapper.toWellKnownRouteId(any())).thenReturn("well-known");
     when(transferMapper.toServiceRouteId(any())).thenThrow(new RuntimeException("Mapping error"));
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(
         result.fatalError(), "When no route id can be retrieved, deprovisioning should fail. ");
   }
@@ -431,10 +436,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
     when(transferMapper.toWellKnownRouteId(any())).thenThrow(new RuntimeException("Mapping error"));
     when(transferMapper.toServiceRouteId(any())).thenReturn("service");
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(
         result.fatalError(), "When no route id can be retrieved, deprovisioning should fail. ");
   }
@@ -447,10 +449,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
     doThrow(new HttpClientException("Error")).when(odrlPapClient).deleteService(any());
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(
         result.failed(),
         "When failing to delete the service, provisioning should fail but be retried.");
@@ -467,10 +466,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
     doThrow(new HttpClientException("Error")).when(apisixAdminClient).deleteRoute(any());
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(
         result.failed(),
         "When failing to delete the route, provisioning should fail but be retried.");
@@ -489,10 +485,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
         .when(credentialsConfigServiceClient)
         .deleteService(any());
 
-    StatusResult<DeprovisionedResource> result =
-        provisioner
-            .deprovision(getProvisionedResource(TEST_TRANSFER_PROCESS_ID), getTestPolicy())
-            .get();
+    StatusResult<DeprovisionedResource> result = provisioner.deprovision(provisionResource()).get();
     assertTrue(
         result.failed(),
         "When failing to delete the route, provisioning should fail but be retried.");
@@ -501,11 +494,7 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
         "When failing to delete the route, provisioning should fail but be retried.");
   }
 
-  private static FDSCOID4VPProviderResourceDefinition getResourceDefinition() {
-    return FDSCOID4VPProviderResourceDefinition.Builder.newInstance()
-        .assetId(TEST_ASSET_ID)
-        .id(TEST_RESOURCE_DEFINITION_ID)
-        .transferProcessId(TEST_TRANSFER_PROCESS_ID)
-        .build();
+  private static ProvisionResource provisionResource() {
+    return getProvisionResource(FDSCOID4VPProvisioner.PROVISION_TYPE);
   }
 }

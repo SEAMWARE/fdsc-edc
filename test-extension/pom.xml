@@ -70,6 +70,16 @@
             <version>${edc.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>connector-participant-context-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>participant-context-single-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp-jvm</artifactId>
             <version>${version.com.squareup.okhttp3-jvm}</version>
@@ -119,15 +129,33 @@
 
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-spi-2024</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
             <artifactId>dsp-spi-2025</artifactId>
             <version>${edc.version}</version>
             <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-engine</artifactId>
+            <version>${version.org.junit}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+            <version>${version.org.junit}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-params</artifactId>
+            <version>${version.org.junit}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${version.org.mockito}</version>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>

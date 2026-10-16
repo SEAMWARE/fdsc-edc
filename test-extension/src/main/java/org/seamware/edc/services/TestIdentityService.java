@@ -57,7 +57,8 @@ public class TestIdentityService implements org.eclipse.edc.spi.iam.IdentityServ
   }
 
   @Override
-  public Result<TokenRepresentation> obtainClientCredentials(TokenParameters tokenParameters) {
+  public Result<TokenRepresentation> obtainClientCredentials(
+      String participantContextId, TokenParameters tokenParameters) {
     monitor.debug("Obtain test credential.");
 
     return Result.success(
@@ -68,7 +69,9 @@ public class TestIdentityService implements org.eclipse.edc.spi.iam.IdentityServ
 
   @Override
   public Result<ClaimToken> verifyJwtToken(
-      TokenRepresentation tokenRepresentation, VerificationContext verificationContext) {
+      String participantContextId,
+      TokenRepresentation tokenRepresentation,
+      VerificationContext verificationContext) {
 
     try {
       monitor.info("The token: " + tokenRepresentation.getToken());

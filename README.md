@@ -49,7 +49,8 @@ fdsc-edc/
 ├── fdsc-transfer-extension/  Data transfer provisioning
 ├── test-extension/           Test utilities & TCK support
 ├── controlplane-oid4vc/      Assembled controlplane (OID4VP)
-└── controlplane-dcp/         Assembled controlplane (DCP)
+├── controlplane-dcp/         Assembled controlplane (DCP)
+└── controlplane-tck/         Assembled controlplane for the DSP TCK (OID4VP minus data-plane-signaling)
 ```
 
 ### Modules
@@ -138,7 +139,7 @@ The simplest way to run TCK conformance tests is with the provided script:
 You can also override the TCK image version or pass extra Maven arguments:
 
 ```bash
-DSP_TCK_VERSION=1.0.0-RC6 ./scripts/run-tck.sh
+DSP_TCK_VERSION=1.0.1 ./scripts/run-tck.sh
 MVN_ARGS="-T 2C" ./scripts/run-tck.sh
 ```
 
@@ -147,8 +148,8 @@ MVN_ARGS="-T 2C" ./scripts/run-tck.sh
 If you prefer more control, you can run the steps individually:
 
 ```bash
-# 1. Build the controlplane shaded JAR
-mvn clean package -pl controlplane-oid4vc -am -DskipTests
+# 1. Build the TCK controlplane shaded JAR (controlplane-oid4vc minus data-plane-signaling)
+mvn clean package -pl controlplane-tck -am -DskipTests
 
 # 2. Start the EDC controlplane and TCK runner
 docker compose -f docker-compose.tck.yml up --build --abort-on-container-exit --exit-code-from tck
@@ -229,7 +230,7 @@ mvn spotless:apply
 
 | Library | Purpose |
 |---|---|
-| [EDC](https://github.com/eclipse-edc/Connector) v0.14.1 | Dataspace connector framework |
+| [EDC](https://github.com/eclipse-edc/Connector) v0.18.1 | Dataspace connector framework |
 | [Lombok](https://projectlombok.org/) | Boilerplate reduction |
 | [MapStruct](https://mapstruct.org/) | Type-safe bean mapping |
 | [OkHttp](https://square.github.io/okhttp/) | HTTP client |

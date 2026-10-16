@@ -39,15 +39,12 @@ package org.seamware.edc.edc;
 import static org.seamware.edc.edc.DataAssembly.*;
 
 import java.util.logging.Logger;
-import org.eclipse.edc.connector.controlplane.asset.spi.index.AssetIndex;
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationEvent;
 import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.ContractNegotiationPendingGuard;
 import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
-import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractDefinitionStore;
-import org.eclipse.edc.connector.controlplane.policy.spi.store.PolicyDefinitionStore;
 import org.eclipse.edc.connector.controlplane.transfer.spi.TransferProcessPendingGuard;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessEvent;
-import org.eclipse.edc.connector.controlplane.transfer.spi.flow.DataFlowManager;
+import org.eclipse.edc.connector.controlplane.transfer.spi.flow.DataFlowController;
 import org.eclipse.edc.connector.controlplane.transfer.spi.observe.TransferProcessObservable;
 import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
@@ -64,9 +61,6 @@ public class TckGuardExtension implements ServiceExtension {
   private static final Logger LOG = Logger.getLogger(TckGuardExtension.class.getName());
   private static final String NAME = "DSP TCK Guard";
 
-  /** Configuration property that controls whether the TMForum storage backend is enabled. */
-  private static final String TMF_ENABLED_PROPERTY = "tmfExtension.enabled";
-
   private volatile ContractNegotiationGuard negotiationGuard;
 
   private volatile TransferProcessGuard transferProcessGuard;
@@ -79,13 +73,6 @@ public class TckGuardExtension implements ServiceExtension {
 
   @Inject private EventRouter router;
 
-  @Inject private AssetIndex assetIndex;
-
-  @Inject private ContractDefinitionStore contractDefinitionStore;
-
-  @Inject private PolicyDefinitionStore policyDefinitionStore;
-
-  @Inject private DataFlowManager dataFlowManager;
   @Inject private Monitor monitor;
   @Inject private TransferProcessObservable transferProcessObservable;
 
@@ -98,68 +85,49 @@ public class TckGuardExtension implements ServiceExtension {
   public void initialize(ServiceExtensionContext context) {
     TestConfig testConfig = TestConfig.fromConfig(context.getConfig());
     if (testConfig.isEnabled()) {
-      boolean tmfEnabled =
-          Boolean.parseBoolean(context.getConfig().getString(TMF_ENABLED_PROPERTY, "false"));
-      if (tmfEnabled) {
-        LOG.info(
-            "TMForum extension is enabled — skipping in-memory test data initialization. "
-                + "Assets, policies, contract definitions, and agreements are provided by TMForum.");
-      } else {
-        //      initializeTestData(context.getParticipantId());
-      }
-      registerNoopDataFlowController();
+      // The TCK runs against the TMForum storage backend (tmfExtension.enabled=true), which
+      // supplies assets, policies, contract definitions and agreements — see
+      // config/tck/edc.properties and scripts/init-tmforum.sh. No in-memory seeding is wired.
       registerProviderRequestedStateFix();
     }
   }
 
   /**
-   * Populates the EDC in-memory stores with test assets, policies, contract definitions, and
-   * pre-signed agreements required by the DSP TCK test scenarios. This method is only called when
-   * the TMForum extension is disabled (i.e., EDC uses in-memory stores).
+   * Contributes the no-op {@link NoopDataFlowController} as a default {@link DataFlowController}.
    *
-   * @param participantId the connector's participant ID from the runtime configuration
+   * <p>0.16.0 removed {@code DataFlowManager}: a runtime now wires exactly one {@link
+   * DataFlowController}, resolved by injection, and a default provider is consulted only when no
+   * non-default one supplied the service. This is Option B of docs/migration/EDC-0.18.1-UPGRADE.md
+   * §8.3.2: {@code test-extension} ships in the same shaded jar as the production images, and both
+   * controlplane modules declare {@code data-plane-signaling} (controlplane-oid4vc/pom.xml:199,
+   * controlplane-dcp/pom.xml:189), whose flow controller is a non-default provider. So in the
+   * shipped assembly — including TCK mode — the signaling controller always wins and this noop is
+   * never selected; it only takes effect in a hypothetical runtime that excludes every signaling
+   * module. {@code isDefault = true} is what keeps it from silently overwriting the real controller
+   * by load order.
+   *
+   * <p>Consequence for Step 8: TCK transfers run through the real signaling flow controller with no
+   * data plane behind it, so Step 8 must confirm a transfer actually reaches {@code STARTED} under
+   * this assembly and diff the transfer scenarios against docs/migration/tck-baseline-0.14.1.md. If
+   * the signaling flow cannot complete without a data plane — or any scenario regresses — take
+   * Option A (a TCK-only runtime that excludes {@code data-plane-signaling} so this noop is
+   * actually selected) rather than assuming it unnecessary.
    */
-  private void initializeTestData(String participantId) {
-    LOG.info("Initializing TCK test data for participant: " + participantId);
-
-    // Create the permissive policy used by all test contract definitions
-    policyDefinitionStore.create(DataAssembly.createPolicyDefinition());
-    LOG.info("Created TCK policy definition: " + DataAssembly.POLICY_ID);
-
-    // Create the contract definition that matches all test assets
-    contractDefinitionStore.save(DataAssembly.createContractDefinition());
-    LOG.info("Created TCK contract definition: " + DataAssembly.CONTRACT_DEFINITION_ID);
-
-    // Create all test assets for catalog and negotiation scenarios
-    var assets = DataAssembly.createAllAssets();
-    assets.forEach(assetIndex::create);
-    LOG.info("Created " + assets.size() + " TCK test assets");
-
-    // Create finalized contract negotiations with agreements for transfer process tests
-    var agreements = DataAssembly.createAllAgreements(participantId);
-    agreements.forEach(store::save);
-    LOG.info("Created " + agreements.size() + " TCK contract agreements");
-  }
-
-  /**
-   * Registers a no-op {@link NoopDataFlowController} with high priority so that transfer processes
-   * can proceed through all state transitions without a real data plane. This is required for DSP
-   * TCK conformance testing where protocol message flow matters but actual data transfer does not.
-   */
-  private void registerNoopDataFlowController() {
-    var noopPriority = 100;
-    dataFlowManager.register(noopPriority, new NoopDataFlowController(monitor));
-    LOG.info("Registered NoopDataFlowController for TCK mode (priority=" + noopPriority + ")");
+  @Provider(isDefault = true)
+  public DataFlowController noopDataFlowController() {
+    return new NoopDataFlowController(monitor);
   }
 
   /**
    * Registers a listener that transitions provider transfers from INITIAL to REQUESTED state. The
    * DSP 2025-1 protocol requires provider transfers to be in REQUESTED state after acknowledging a
-   * TransferRequestMessage, but EDC 0.14.1 creates them in INITIAL. This listener fixes the state
-   * before the transfer is persisted and returned in the DSP response.
+   * TransferRequestMessage, but EDC 0.18.1 still creates them in INITIAL. This listener fixes the
+   * state while the transfer is being created and returned in the DSP response, re-persisting it
+   * through {@code transferProcessStore} so the stored row and the acknowledgement agree.
    */
   private void registerProviderRequestedStateFix() {
-    transferProcessObservable.registerListener(new ProviderRequestedStateFixListener(monitor));
+    transferProcessObservable.registerListener(
+        new ProviderRequestedStateFixListener(monitor, transferProcessStore));
     LOG.info("Registered ProviderRequestedStateFixListener for DSP 2025-1 compliance");
   }
 

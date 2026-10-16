@@ -46,7 +46,7 @@ import java.util.Date;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import org.eclipse.edc.iam.identitytrust.transform.to.JwtToVerifiableCredentialTransformer;
+import org.eclipse.edc.iam.decentralizedclaims.transform.to.JwtToVerifiableCredentialTransformer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.*;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.transform.spi.TransformerContext;

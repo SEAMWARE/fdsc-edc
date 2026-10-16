@@ -33,6 +33,7 @@ import org.seamware.edc.tmf.ProductCatalogApiClient;
 public class TMFBackedPolicyDefinitionStoreTest {
 
   private static final String TEST_ID = "test-id";
+  private static final String TEST_PARTICIPANT_CONTEXT_ID = "test-participant-context";
 
   private ProductCatalogApiClient productCatalogApiClient;
   private TMFBackedPolicyDefinitionStore tmfBackedPolicyDefinitionStore;
@@ -42,7 +43,8 @@ public class TMFBackedPolicyDefinitionStoreTest {
     productCatalogApiClient = mock(ProductCatalogApiClient.class);
 
     tmfBackedPolicyDefinitionStore =
-        new TMFBackedPolicyDefinitionStore(mock(Monitor.class), productCatalogApiClient);
+        new TMFBackedPolicyDefinitionStore(
+            mock(Monitor.class), productCatalogApiClient, TEST_PARTICIPANT_CONTEXT_ID);
   }
 
   @Test
@@ -50,7 +52,11 @@ public class TMFBackedPolicyDefinitionStoreTest {
 
     Policy testPolicy = getTestPolicy();
     PolicyDefinition expectedDefinition =
-        PolicyDefinition.Builder.newInstance().policy(testPolicy).id(TEST_ID).build();
+        PolicyDefinition.Builder.newInstance()
+            .policy(testPolicy)
+            .id(TEST_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
+            .build();
 
     when(productCatalogApiClient.getByPolicyId(eq(TEST_ID))).thenReturn(Optional.of(testPolicy));
 

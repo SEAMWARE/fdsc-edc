@@ -49,6 +49,8 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractO
 import org.eclipse.edc.connector.controlplane.services.spi.contractnegotiation.ContractNegotiationService;
 import org.eclipse.edc.connector.controlplane.services.spi.transferprocess.TransferProcessService;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferRequest;
+import org.eclipse.edc.participantcontext.single.spi.SingleParticipantContextSupplier;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.policy.model.Action;
 import org.eclipse.edc.policy.model.Permission;
 import org.eclipse.edc.policy.model.Policy;
@@ -66,14 +68,24 @@ public class TckWebhookController {
   private final Monitor monitor;
   private final ContractNegotiationService negotiationService;
   private final TransferProcessService transferProcessService;
+  private final SingleParticipantContextSupplier participantContextSupplier;
 
   public TckWebhookController(
       Monitor monitor,
       ContractNegotiationService negotiationService,
-      TransferProcessService transferProcessService) {
+      TransferProcessService transferProcessService,
+      SingleParticipantContextSupplier participantContextSupplier) {
     this.monitor = monitor;
     this.negotiationService = negotiationService;
     this.transferProcessService = transferProcessService;
+    this.participantContextSupplier = participantContextSupplier;
+  }
+
+  /** Resolves the single participant context the TCK consumer runtime is configured with. */
+  private ParticipantContext participantContext() {
+    return participantContextSupplier
+        .get()
+        .orElseThrow(failure -> new EdcException(failure.getFailureDetail()));
   }
 
   @POST
@@ -100,7 +112,7 @@ public class TckWebhookController {
         "Starting contract negotiation for [provider, address, offer]: [%s, %s, %s]"
             .formatted(request.providerId(), request.connectorAddress(), request.offerId()));
 
-    negotiationService.initiateNegotiation(contractRequest);
+    negotiationService.initiateNegotiation(participantContext(), contractRequest);
   }
 
   private Policy defaultPolicy(String providerId) {
@@ -136,7 +148,7 @@ public class TckWebhookController {
                 request.agreementId(),
                 request.format()));
     transferProcessService
-        .initiateTransfer(transferRequest)
+        .initiateTransfer(participantContext(), transferRequest)
         .orElseThrow(f -> new EdcException(f.getFailureDetail()));
   }
 }

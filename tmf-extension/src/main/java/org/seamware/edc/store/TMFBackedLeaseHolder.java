@@ -20,6 +20,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Stream;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.seamware.edc.domain.ContractNegotiationState;
 import org.seamware.edc.domain.ExtendableQuoteUpdateVO;
@@ -88,7 +89,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
       if (currentState.isLeased()
           && !lockId.equals(currentState.getLeasedBy())
           && isLeaseNotExpired(currentState)) {
-        throw new IllegalStateException(
+        throw new LeaseContentionException(
             String.format(
                 "Negotiation %s is already leased by %s until %d",
                 negotiationId, currentState.getLeasedBy(), currentState.getLeaseExpiry()));
@@ -108,7 +109,7 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
       // Read-after-write verification to detect race conditions
       ContractNegotiationState writtenState = written.getContractNegotiationState();
       if (writtenState != null && !lockId.equals(writtenState.getLeasedBy())) {
-        throw new IllegalStateException(
+        throw new LeaseContentionException(
             String.format(
                 "Lost lease race on %s: expected %s, got %s",
                 negotiationId, lockId, writtenState.getLeasedBy()));
@@ -155,23 +156,45 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
   }
 
   @Override
-  public void freeLease(String negotiationId, String reason) {
-    List<ExtendableQuoteVO> quotes =
-        quoteApi.findByNegotiationIdAndStates(negotiationId, ACTIVE_QUOTE_STATES);
-    quotes.stream()
-        .filter(q -> q.getContractNegotiationState() != null)
-        .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane))
-        .filter(q -> q.getContractNegotiationState().isLeased())
-        .forEach(
-            q -> {
-              ContractNegotiationState updatedState =
-                  copyStateWithLease(q.getContractNegotiationState(), false, null, 0);
+  public LeaseRelease releaseLease(String negotiationId, String lockId, String reason) {
+    List<ExtendableQuoteVO> leasedQuotes =
+        ownedQuotes(negotiationId).filter(q -> q.getContractNegotiationState().isLeased()).toList();
 
-              ExtendableQuoteUpdateVO updateVO = createLeaseOnlyUpdate(updatedState);
-              quoteApi.updateQuote(q.getId(), updateVO);
-            });
+    if (leasedQuotes.isEmpty()) {
+      return LeaseRelease.NOT_LEASED;
+    }
 
+    // acquireLease writes the quotes of a negotiation one at a time, so a failure mid-acquire can
+    // leave them split between holders. Free the ones this lockId owns regardless of that split -
+    // otherwise our own lease lingers for the full TTL - and still report the contention.
+    // Expired records are cleared along with our own, so an abandoned lease does not linger.
+    leasedQuotes.stream()
+        .filter(q -> !isHeldByOther(q.getContractNegotiationState(), lockId))
+        .forEach(this::freeQuoteLease);
+
+    if (leasedQuotes.stream()
+        .anyMatch(q -> isHeldByOther(q.getContractNegotiationState(), lockId))) {
+      return LeaseRelease.HELD_BY_OTHER;
+    }
     monitor.info(String.format("Freed lease on %s because: %s", negotiationId, reason));
+    return LeaseRelease.RELEASED;
+  }
+
+  private void freeQuoteLease(ExtendableQuoteVO quote) {
+    ContractNegotiationState updatedState =
+        copyStateWithLease(quote.getContractNegotiationState(), false, null, 0);
+    quoteApi.updateQuote(quote.getId(), createLeaseOnlyUpdate(updatedState));
+  }
+
+  private boolean isHeldByOther(ContractNegotiationState state, String lockId) {
+    return !lockId.equals(state.getLeasedBy()) && isLeaseNotExpired(state);
+  }
+
+  /** Active quotes of this negotiation that carry a state owned by this controlplane. */
+  private Stream<ExtendableQuoteVO> ownedQuotes(String negotiationId) {
+    return quoteApi.findByNegotiationIdAndStates(negotiationId, ACTIVE_QUOTE_STATES).stream()
+        .filter(q -> q.getContractNegotiationState() != null)
+        .filter(q -> q.getContractNegotiationState().getControlplane().equals(controlplane));
   }
 
   private boolean isLeaseNotExpired(ContractNegotiationState state) {

@@ -59,16 +59,15 @@ public class TransferMapper {
     this.transferConfig = transferConfig;
   }
 
-  public String toServiceRouteId(FDSCProvisionedResource provisionedResource) {
-    return String.format(SERVICE_ROUTE_ID, provisionedResource.getTransferProcessId());
+  public String toServiceRouteId(String transferProcessId) {
+    return String.format(SERVICE_ROUTE_ID, transferProcessId);
   }
 
-  public String toWellKnownRouteId(FDSCProvisionedResource provisionedResource) {
-    return String.format(WELL_KNOWN_ROUTE_ID, provisionedResource.getTransferProcessId());
+  public String toWellKnownRouteId(String transferProcessId) {
+    return String.format(WELL_KNOWN_ROUTE_ID, transferProcessId);
   }
 
-  public Route toDcpServiceRoute(
-      FDSCDcpProviderResourceDefinition resourceDefinition, String upstreamAddress) {
+  public Route toDcpServiceRoute(String transferProcessId, String upstreamAddress) {
 
     // configure the route to the service
     Upstream upstream =
@@ -77,10 +76,7 @@ public class TransferMapper {
     // remove the process id from the path before forwarding to the upstream
     ProxyRewritePlugin proxyRewritePlugin =
         new ProxyRewritePlugin()
-            .setRegexUri(
-                List.of(
-                    String.format(REWRITE_TEMPLATE, resourceDefinition.getTransferProcessId()),
-                    "/$1"));
+            .setRegexUri(List.of(String.format(REWRITE_TEMPLATE, transferProcessId), "/$1"));
 
     String discoveryAddress =
         transferConfig.getDcp().oidConfig().host()
@@ -89,10 +85,10 @@ public class TransferMapper {
     OpenidConnectPlugin openidConnectPlugin =
         new OpenidConnectPlugin()
             .setBearerOnly(true)
-            .setClientId(resourceDefinition.getTransferProcessId())
+            .setClientId(transferProcessId)
             .setClientSecret("unused")
             .setDiscovery(discoveryAddress)
-            .setRequiredScopes(List.of(resourceDefinition.getTransferProcessId()))
+            .setRequiredScopes(List.of(transferProcessId))
             .setUseJwks(true);
     // Only set proxy_opts when an actual proxy address is configured. An empty
     // string makes lua-resty-openidc treat it as the literal proxy URL and reject
@@ -106,10 +102,10 @@ public class TransferMapper {
                     Map.of("https_proxy", proxyAddress, "no_proxy", "*.cluster.local")));
 
     return new Route()
-        .setId(String.format(SERVICE_ROUTE_ID, resourceDefinition.getTransferProcessId()))
+        .setId(String.format(SERVICE_ROUTE_ID, transferProcessId))
         .setHost(transferConfig.getTransferHost())
         .setUpstream(upstream)
-        .setUri("/" + resourceDefinition.getTransferProcessId() + "/*")
+        .setUri("/" + transferProcessId + "/*")
         .setPlugins(
             Map.of(
                 openidConnectPlugin.getPluginName(), openidConnectPlugin,
@@ -117,9 +113,7 @@ public class TransferMapper {
   }
 
   public Route toOid4VpServiceRoute(
-      FDSCOID4VPProviderResourceDefinition resourceDefinition,
-      String upstreamAddress,
-      String policyAddress) {
+      String transferProcessId, String upstreamAddress, String policyAddress) {
 
     // configure the route to the service
     Upstream upstream =
@@ -136,21 +130,18 @@ public class TransferMapper {
     // remove the process id from the path before forwarding to the upstream
     ProxyRewritePlugin proxyRewritePlugin =
         new ProxyRewritePlugin()
-            .setRegexUri(
-                List.of(
-                    String.format(REWRITE_TEMPLATE, resourceDefinition.getTransferProcessId()),
-                    "/$1"));
+            .setRegexUri(List.of(String.format(REWRITE_TEMPLATE, transferProcessId), "/$1"));
 
     OpenidConnectPlugin openidConnectPlugin =
         new OpenidConnectPlugin()
             .setBearerOnly(true)
-            .setClientId(resourceDefinition.getTransferProcessId())
+            .setClientId(transferProcessId)
             .setClientSecret("unused")
             .setDiscovery(
                 String.format(
                     DISCOVERY_ENDPOINT_TEMPLATE,
                     transferConfig.getOid4Vc().verifierHost(),
-                    resourceDefinition.getTransferProcessId()))
+                    transferProcessId))
             .setSslVerify(false)
             .setUseJwks(true);
     // Only set proxy_opts when an actual proxy address is configured. An empty
@@ -165,10 +156,10 @@ public class TransferMapper {
                     Map.of("https_proxy", proxyAddress, "no_proxy", "*.cluster.local")));
 
     return new Route()
-        .setId(String.format(SERVICE_ROUTE_ID, resourceDefinition.getTransferProcessId()))
+        .setId(String.format(SERVICE_ROUTE_ID, transferProcessId))
         .setHost(transferConfig.getTransferHost())
         .setUpstream(upstream)
-        .setUri("/" + resourceDefinition.getTransferProcessId() + "/*")
+        .setUri("/" + transferProcessId + "/*")
         .setPlugins(
             Map.of(
                 openidConnectPlugin.getPluginName(), openidConnectPlugin,
@@ -176,7 +167,7 @@ public class TransferMapper {
                 proxyRewritePlugin.getPluginName(), proxyRewritePlugin));
   }
 
-  public Route toWellknownRoute(FDSCOID4VPProviderResourceDefinition resourceDefinition) {
+  public Route toWellknownRoute(String transferProcessId) {
 
     Upstream upstream =
         new Upstream()
@@ -185,15 +176,13 @@ public class TransferMapper {
 
     ProxyRewritePlugin proxyRewritePlugin =
         new ProxyRewritePlugin()
-            .setUri(
-                String.format(
-                    WELL_KNOWN_ENDPOINT_TEMPLATE, resourceDefinition.getTransferProcessId()));
+            .setUri(String.format(WELL_KNOWN_ENDPOINT_TEMPLATE, transferProcessId));
 
     return new Route()
-        .setId(String.format(WELL_KNOWN_ROUTE_ID, resourceDefinition.getTransferProcessId()))
+        .setId(String.format(WELL_KNOWN_ROUTE_ID, transferProcessId))
         .setHost(transferConfig.getTransferHost())
         .setUpstream(upstream)
-        .setUri("/" + resourceDefinition.getTransferProcessId() + WELL_KOWN_OPEN_ID_CONFIGURATION)
+        .setUri("/" + transferProcessId + WELL_KOWN_OPEN_ID_CONFIGURATION)
         .setPlugins(Map.of(proxyRewritePlugin.getPluginName(), proxyRewritePlugin));
   }
 }
