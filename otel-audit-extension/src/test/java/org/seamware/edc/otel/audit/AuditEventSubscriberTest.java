@@ -41,7 +41,7 @@ import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotia
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationTerminated;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractOffer;
-import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessProvisioningRequested;
+import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessRequested;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessStarted;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessTerminated;
 import org.eclipse.edc.policy.model.Policy;
@@ -146,7 +146,7 @@ public class AuditEventSubscriberTest {
   void transferTerminationIsAuditedAsWarningWithReason() {
     subscriber.on(
         envelope(
-            TransferProcessProvisioningRequested.Builder.newInstance()
+            TransferProcessRequested.Builder.newInstance()
                 .transferProcessId("tp-1")
                 .assetId("asset-1")
                 .contractId("agreement-1")
@@ -163,16 +163,14 @@ public class AuditEventSubscriberTest {
                 .build()));
 
     var records = exporter.getFinishedLogRecordItems();
-    assertEquals(
-        "PROVISIONING_REQUESTED", attr(records.get(0), AuditEventSubscriber.ATTR_STATE_NEW));
+    assertEquals("REQUESTED", attr(records.get(0), AuditEventSubscriber.ATTR_STATE_NEW));
 
     var terminated = records.get(1);
     assertEquals(Severity.WARN, terminated.getSeverity());
     assertEquals("Audit: TransferProcessTerminated", terminated.getBodyValue().asString());
     assertEquals("transfer_process", attr(terminated, AuditEventSubscriber.ATTR_DOMAIN));
     assertEquals("tp-1", attr(terminated, AuditEventSubscriber.ATTR_TRANSFER_ID));
-    assertEquals(
-        "PROVISIONING_REQUESTED", attr(terminated, AuditEventSubscriber.ATTR_STATE_PREVIOUS));
+    assertEquals("REQUESTED", attr(terminated, AuditEventSubscriber.ATTR_STATE_PREVIOUS));
     assertEquals("TERMINATED", attr(terminated, AuditEventSubscriber.ATTR_STATE_NEW));
     assertEquals("asset-1", attr(terminated, AuditEventSubscriber.ATTR_ASSET_ID));
     assertEquals("agreement-1", attr(terminated, AuditEventSubscriber.ATTR_CONTRACT_ID));
