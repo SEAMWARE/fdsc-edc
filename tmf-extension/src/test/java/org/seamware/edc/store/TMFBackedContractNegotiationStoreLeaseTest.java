@@ -25,12 +25,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiation;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.ContractNegotiationStates;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
+import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.result.StoreFailure;
 import org.eclipse.edc.spi.result.StoreResult;
 import org.junit.jupiter.api.Test;
@@ -512,6 +514,73 @@ public class TMFBackedContractNegotiationStoreLeaseTest
 
     // Document: releaseLease is NOT called — leases will only expire via TTL
     verify(leaseHolder, never()).releaseLease(any(), any(), any());
+  }
+
+  // --- nextNotLeased() reading a negotiation before a save of it has finished ---
+
+  @Test
+  public void testNextNotLeased_skips_a_negotiation_that_left_the_listed_state() {
+    String negotiationId = "neg-0";
+    TMFBackedContractNegotiationStore store = getStoreWithOwnLeaseWait(Duration.ofMillis(300));
+    stubListedNegotiation(
+        negotiationId,
+        // listed while the save of the next state is still on its way
+        getNegotiationInState(negotiationId, ContractNegotiationStates.VERIFYING),
+        // what TMForum holds once that save has finished
+        getNegotiationInState(negotiationId, ContractNegotiationStates.VERIFIED));
+
+    List<ContractNegotiation> result =
+        store.nextNotLeased(
+            10, Criterion.criterion("state", "=", ContractNegotiationStates.VERIFYING.code()));
+
+    assertTrue(result.isEmpty(), "A negotiation that left the listed state should not be leased.");
+    verify(leaseHolder).releaseLease(eq(negotiationId), any(), any());
+    assertTrue(
+        store.findByIdAndLease(negotiationId).succeeded(),
+        "The negotiation should not be left marked as processed by this controlplane.");
+  }
+
+  @Test
+  public void testNextNotLeased_returns_the_negotiation_as_read_after_leasing_it() {
+    String negotiationId = "neg-0";
+    ContractNegotiation current =
+        getNegotiationInState(negotiationId, ContractNegotiationStates.VERIFYING);
+    stubListedNegotiation(
+        negotiationId,
+        getNegotiationInState(negotiationId, ContractNegotiationStates.VERIFYING),
+        current);
+
+    List<ContractNegotiation> result =
+        tmfBackedContractNegotiationStore.nextNotLeased(
+            10, Criterion.criterion("state", "=", ContractNegotiationStates.VERIFYING.code()));
+
+    assertEquals(
+        List.of(current), result, "The negotiation read after leasing should be returned.");
+    verify(leaseHolder, never()).releaseLease(any(), any(), any());
+  }
+
+  /** The listing maps the quotes to {@code listed}, every later read to {@code current}. */
+  private void stubListedNegotiation(
+      String negotiationId, ContractNegotiation listed, ContractNegotiation current) {
+    when(lockManager.writeLock(any()))
+        .thenAnswer(
+            invocationOnMock -> {
+              Supplier<?> work = invocationOnMock.getArgument(0);
+              return work.get();
+            });
+    stubQuotes(getQuotes(negotiationId, TEST_CONTROL_PLANE_ID, 1));
+    when(tmfEdcMapper.toContractNegotiation(any(), any(), any(), any()))
+        .thenReturn(listed, current);
+    // only the state criterion is used here
+    doReturn((Predicate<ContractNegotiation>) cn -> cn.getState() == listed.getState())
+        .when(criterionOperatorRegistry)
+        .toPredicate(any());
+  }
+
+  private static ContractNegotiation getNegotiationInState(
+      String negotiationId, ContractNegotiationStates state) {
+    return getValidNegotiationWithIdOfferAndType(
+        negotiationId, List.of(), ContractNegotiation.Type.CONSUMER, state);
   }
 
   // --- findByIdAndLease() while this controlplane still processes the negotiation ---
