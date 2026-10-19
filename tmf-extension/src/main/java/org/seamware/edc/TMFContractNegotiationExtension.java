@@ -24,6 +24,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import jakarta.json.Json;
 import jakarta.json.JsonBuilderFactory;
+import java.net.URISyntaxException;
+import java.net.URL;
 import java.time.Clock;
 import java.util.Map;
 import okhttp3.OkHttpClient;
@@ -80,6 +82,12 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   public static final String SCHEMA_BASE_URI_PROP = "schemaBaseUri";
   private static final String NAME = "TMFExtension";
 
+  /** JSON-LD context of DSP 2024/1, still referenced by policies stored in TMForum. */
+  public static final String DSPACE_2024_1_CONTEXT = "https://w3id.org/dspace/2024/1/context.json";
+
+  /** Local copy of {@link #DSPACE_2024_1_CONTEXT}, as EDC 0.14 shipped it. */
+  static final String DSPACE_2024_1_CONTEXT_RESOURCE = "jsonld/dspace-2024-1-context.jsonld";
+
   @Inject private OkHttpClient okHttpClient;
   @Inject private DataspaceProfileContextRegistry dataspaceProfileContextRegistry;
   @Inject private Monitor monitor;
@@ -129,6 +137,31 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
     return tmfConfig;
   }
 
+  /**
+   * Serves the DSP 2024/1 context from the local copy.
+   *
+   * <p>EDC cached it until DSP 2024/1 support was removed. Policies of offerings stored in TMForum
+   * still reference it, and without a cached copy JSON-LD fetches it remotely. Where that fails,
+   * e.g. without internet access or with a trust store limited to the data space's CA, the policies
+   * cannot be expanded and their offerings silently drop out of the catalog.
+   */
+  static void registerDspace2024Context(JsonLd jsonLd) {
+    URL resource =
+        TMFContractNegotiationExtension.class
+            .getClassLoader()
+            .getResource(DSPACE_2024_1_CONTEXT_RESOURCE);
+    if (resource == null) {
+      throw new EdcException(
+          String.format("The JSON-LD context %s is not packaged.", DSPACE_2024_1_CONTEXT_RESOURCE));
+    }
+    try {
+      jsonLd.registerCachedDocument(DSPACE_2024_1_CONTEXT, resource.toURI());
+    } catch (URISyntaxException e) {
+      throw new EdcException(
+          String.format("Was not able to load the JSON-LD context %s.", DSPACE_2024_1_CONTEXT), e);
+    }
+  }
+
   /** Resolves the runtime's participant context, or null when no supplier is registered. */
   private ParticipantContext participantContext() {
     if (participantContextSupplier == null) {
@@ -151,6 +184,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
       monitor.info("TMF extension is not enabled.");
       return;
     }
+    registerDspace2024Context(jsonLd);
     JsonBuilderFactory jsonBuilderFactory = Json.createBuilderFactory(Map.of());
     ParticipantIdMapper participantIdMapper =
         new ParticipantIdMapper() {

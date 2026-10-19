@@ -109,6 +109,20 @@
             <artifactId>control-plane-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
+        <!-- the contract-negotiation and transfer-process state machines. control-plane-core
+             no longer brings them in since 0.18, and the imported controlplane-base-bom only
+             manages versions, so without them no negotiation or transfer leaves its initial
+             state. -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-contract-manager</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-transfer-manager</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
         <!-- single-participant ("classic") participant-context mode; seeds one
              ParticipantContext from edc.participant.context.id -->
         <dependency>
