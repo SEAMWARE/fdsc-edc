@@ -71,6 +71,12 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   private static final String LEASE_BROKEN_BY_STATE_MACHINE = "Lease broken.";
 
   /**
+   * Reason recorded when {@link #nextNotLeased} gives back a lease because the negotiation has left
+   * the state it was listed in.
+   */
+  private static final String LEASE_RELEASED_AS_OUTDATED = "Changed since it was listed.";
+
+  /**
    * How long {@link #findByIdAndLease} waits for a negotiation that this controlplane is still
    * processing. Has to stay below the read timeout of the counter-party's DSP client, otherwise the
    * counter-party gives up before the answer arrives.
@@ -332,10 +338,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   private List<ContractNegotiation> toNegotiations(
       Map<String, List<ExtendableQuoteVO>> quotesMap, List<Criterion> criteria) {
-    Predicate<ContractNegotiation> filterPredicate =
-        criteria.stream()
-            .map(criterionOperatorRegistry::<ContractNegotiation>toPredicate)
-            .reduce(x -> true, Predicate::and);
+    Predicate<ContractNegotiation> filterPredicate = toPredicate(criteria);
     return quotesMap.entrySet().stream()
         .map(
             entry -> {
@@ -356,11 +359,18 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         .toList();
   }
 
+  private Predicate<ContractNegotiation> toPredicate(List<Criterion> criteria) {
+    return criteria.stream()
+        .map(criterionOperatorRegistry::<ContractNegotiation>toPredicate)
+        .reduce(x -> true, Predicate::and);
+  }
+
   @Override
   public @NotNull List<ContractNegotiation> nextNotLeased(int max, Criterion... criteria) {
     try {
       return lockManager.writeLock(
           () -> {
+            Predicate<ContractNegotiation> matchesCriteria = toPredicate(Arrays.asList(criteria));
             var allNegotiations = getNegotiations(Arrays.asList(criteria));
             if (!allNegotiations.isEmpty()) {
               monitor.warning(
@@ -389,12 +399,62 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                         return false;
                       }
                     })
+                .map(cn -> reloadIfStillMatching(cn.getId(), matchesCriteria))
+                .flatMap(Optional::stream)
                 .limit(max)
                 .toList();
           });
     } catch (Exception e) {
       monitor.warning("Failed to get", e);
       throw new EdcPersistenceException(e);
+    }
+  }
+
+  /**
+   * Re-reads a negotiation that {@link #nextNotLeased} has just leased, and keeps it only if it
+   * still matches the criteria it was listed by.
+   *
+   * <p>The list is read from TMForum before the leases are taken, and {@link #save} does not hold
+   * the lock manager's lock. A save that finishes in between has already left {@link
+   * #activeNegotiations}, while the listed entity still carries the state it had before. Leasing
+   * that entity makes the state machine process a state the negotiation has already left, e.g. send
+   * a verification a second time, which the counter-party rejects and terminates on.
+   */
+  private Optional<ContractNegotiation> reloadIfStillMatching(
+      String negotiationId, Predicate<ContractNegotiation> matchesCriteria) {
+    ContractNegotiation current = null;
+    try {
+      current = findById(negotiationId);
+    } catch (RuntimeException e) {
+      monitor.warning(
+          String.format("Was not able to read %s again after leasing it.", negotiationId), e);
+    }
+    if (current != null && matchesCriteria.test(current)) {
+      return Optional.of(current);
+    }
+    monitor.debug(
+        String.format(
+            "Negotiation %s changed since it was listed, giving its lease back.", negotiationId));
+    releaseOutdatedLease(negotiationId);
+    return Optional.empty();
+  }
+
+  /**
+   * Gives back the lease {@link #nextNotLeased} took for a negotiation it does not hand out. Never
+   * throws: a failed release only leaves the lease to expire by timeout.
+   */
+  private void releaseOutdatedLease(String negotiationId) {
+    synchronized (lockFor(negotiationId)) {
+      try {
+        leaseHolder.releaseLease(negotiationId, lockId, LEASE_RELEASED_AS_OUTDATED);
+      } catch (RuntimeException e) {
+        monitor.warning(
+            String.format(
+                "Failed to release the lease for %s; it now expires by timeout.", negotiationId),
+            e);
+      } finally {
+        activeNegotiations.remove(negotiationId);
+      }
     }
   }
 
