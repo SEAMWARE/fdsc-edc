@@ -94,11 +94,6 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>sts-core</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
             <artifactId>vault-hashicorp</artifactId>
             <version>${edc.version}</version>
         </dependency>
