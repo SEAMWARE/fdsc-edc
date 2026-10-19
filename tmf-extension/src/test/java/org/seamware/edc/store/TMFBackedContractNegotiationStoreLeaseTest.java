@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -616,6 +617,49 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         result.succeeded(),
         "The message should get the negotiation once the processing has finished.");
     assertEquals(negotiation, result.getContent(), "The correct negotiation should be returned.");
+  }
+
+  @Test
+  public void testFindByIdAndLease_waits_when_the_own_processing_starts_after_the_wait()
+      throws Exception {
+    String negotiationId = "negotiation-id";
+    TMFBackedContractNegotiationStore store = getStoreWithOwnLeaseWait(Duration.ofSeconds(10));
+    ContractNegotiation negotiation = stubLeasableNegotiation(negotiationId);
+    // lease for the processing, failing save, lease for the counter-party's message
+    doNothing()
+        .doThrow(new IllegalStateException("Save failed."))
+        .doNothing()
+        .when(leaseHolder)
+        .acquireLease(eq(negotiationId), any());
+    // the negotiation is picked up for processing right before the message gets the lock
+    AtomicBoolean processingStarted = new AtomicBoolean(false);
+    doAnswer(
+            invocationOnMock -> {
+              if (processingStarted.compareAndSet(false, true)) {
+                assertTrue(
+                    store.findByIdAndLease(negotiationId).succeeded(),
+                    "The negotiation should be leased for its processing.");
+              }
+              Supplier<?> work = invocationOnMock.getArgument(0);
+              return work.get();
+            })
+        .when(lockManager)
+        .writeLock(any());
+
+    CompletableFuture<StoreResult<ContractNegotiation>> counterPartyMessage =
+        CompletableFuture.supplyAsync(() -> store.findByIdAndLease(negotiationId));
+    Thread.sleep(300);
+    assertFalse(
+        counterPartyMessage.isDone(),
+        "The message should wait while the negotiation is still processed.");
+
+    // the processing ends with the save, which releases the negotiation whatever its outcome
+    assertThrows(EdcPersistenceException.class, () -> store.save(negotiation));
+
+    StoreResult<ContractNegotiation> result = counterPartyMessage.get(5, TimeUnit.SECONDS);
+    assertTrue(
+        result.succeeded(),
+        "The message should get the negotiation once the processing has finished.");
   }
 
   @Test
