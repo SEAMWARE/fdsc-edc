@@ -204,6 +204,15 @@ public abstract class TMFBackedContractNegotiationStoreTest extends AbstractStor
 
               return quotes.subList(fromIndex, toIndex);
             });
+    // the single negotiation lookup reads the same quotes
+    when(quoteApiClient.findByNegotiationId(anyString()))
+        .thenAnswer(
+            invocation -> {
+              String negotiationId = invocation.getArgument(0);
+              return quotes.stream()
+                  .filter(quote -> negotiationId.equals(quote.getExternalId()))
+                  .toList();
+            });
   }
 
   protected static ContractNegotiation getValidNegotiationWithIdOfferAndType(
