@@ -52,6 +52,13 @@
             <artifactId>decentralized-claims-transform</artifactId>
             <version>${edc.version}</version>
         </dependency>
+        <!-- provides the RevocationServiceRegistry required by DcpCoreExtension;
+             decentralized-claims-core no longer brings it in transitively -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>verifiable-credentials</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>transform-spi</artifactId>
