@@ -460,26 +460,14 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   @Override
   public StoreResult<ContractNegotiation> findByIdAndLease(String s) {
-    awaitOwnRelease(s);
+    long deadline = System.nanoTime() + ownLeaseWaitTime.toNanos();
     try {
-      return lockManager.writeLock(
-          () -> {
-            monitor.info("Find by Id and Lease " + s);
-            if (activeNegotiations.contains(s)) {
-              return StoreResult.alreadyLeased(String.format("%s is already leased.", s));
-            }
-            ContractNegotiation contractNegotiation = findById(s);
-            if (contractNegotiation == null) {
-              return StoreResult.notFound(String.format("Negotiation %s does not exist.", s));
-            }
-            try {
-              leaseHolder.acquireLease(s, lockId);
-              activeNegotiations.add(s);
-              return StoreResult.success(contractNegotiation);
-            } catch (LeaseContentionException e) {
-              return StoreResult.alreadyLeased(String.format("%s is already leased.", s));
-            }
-          });
+      Optional<StoreResult<ContractNegotiation>> result = Optional.empty();
+      while (result.isEmpty()) {
+        awaitOwnRelease(s, deadline);
+        result = lockManager.writeLock(() -> leaseUnlessProcessed(s, deadline));
+      }
+      return result.get();
     } catch (Exception e) {
       monitor.warning("Failed to find", e);
       return StoreResult.generalError(failureMessage(e));
@@ -487,8 +475,34 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   /**
-   * Waits until this controlplane has finished processing the negotiation, at most {@link
-   * #ownLeaseWaitTime}.
+   * Leases the negotiation for {@link #findByIdAndLease}, under the lock manager's lock. Empty when
+   * this controlplane is processing the negotiation and the deadline still allows to wait for it:
+   * the state machine can pick it up between {@link #awaitOwnRelease} and this lock.
+   */
+  private Optional<StoreResult<ContractNegotiation>> leaseUnlessProcessed(String s, long deadline) {
+    monitor.info("Find by Id and Lease " + s);
+    if (activeNegotiations.contains(s)) {
+      if (System.nanoTime() < deadline && !Thread.currentThread().isInterrupted()) {
+        return Optional.empty();
+      }
+      return Optional.of(StoreResult.alreadyLeased(String.format("%s is already leased.", s)));
+    }
+    ContractNegotiation contractNegotiation = findById(s);
+    if (contractNegotiation == null) {
+      return Optional.of(StoreResult.notFound(String.format("Negotiation %s does not exist.", s)));
+    }
+    try {
+      leaseHolder.acquireLease(s, lockId);
+      activeNegotiations.add(s);
+      return Optional.of(StoreResult.success(contractNegotiation));
+    } catch (LeaseContentionException e) {
+      return Optional.of(StoreResult.alreadyLeased(String.format("%s is already leased.", s)));
+    }
+  }
+
+  /**
+   * Waits until this controlplane has finished processing the negotiation, at most until {@code
+   * deadline} ({@link System#nanoTime()}).
    *
    * <p>The state machine keeps a negotiation in {@link #activeNegotiations} while it sends a
    * message to the counter-party and saves the new state. Saving to TMForum takes seconds, so the
@@ -497,8 +511,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
    * as fatal and terminates the negotiation. The negotiation is released as soon as the save
    * finishes, so waiting for it lets the message be processed instead.
    */
-  private void awaitOwnRelease(String negotiationId) {
-    long deadline = System.nanoTime() + ownLeaseWaitTime.toNanos();
+  private void awaitOwnRelease(String negotiationId, long deadline) {
     if (activeNegotiations.contains(negotiationId)) {
       monitor.debug(
           String.format(
