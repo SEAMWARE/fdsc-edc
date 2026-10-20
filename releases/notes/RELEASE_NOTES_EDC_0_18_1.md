@@ -113,6 +113,10 @@ out-of-repo configuration might.
   service. A new `controlplane-tck` assembly (production OID4VC minus
   `data-plane-signaling`) is used for the DSP TCK so the test-only
   `NoopDataFlowController` is selected; production images are unchanged.
+- Provisioning runs in the data plane, which reports only the data address of the
+  provisioned resource to the control plane; the EDR it creates when the flow starts
+  is not sent to the consumer. The FDSC provisioners therefore create the EDR
+  themselves and return it as the data address of the provisioned resource.
 - The DSP TCK runner is pinned to `1.0.1` (the version EDC 0.18.1 itself pins).
 
 ## Conformance
