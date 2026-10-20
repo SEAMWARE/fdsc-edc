@@ -197,22 +197,35 @@ public class TMFEdcMapper {
     Map<String, Object> claims = contractAgreement.getClaims();
     if (claims != null && !claims.isEmpty()) {
       agreementVO.addCharacteristicItem(
-          toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, claims));
+          toAgreementCharacteristic(
+              AGREEMENT_CHARACTERISTIC_CLAIMS, toClaimsValue(normalizeClaims(claims))));
     }
     return agreementVO;
   }
 
-  /** Claims round-trip through TMForum as a plain JSON object, so Jackson hands back a map. */
-  @SuppressWarnings("unchecked")
-  private Map<String, Object> toClaims(CharacteristicVO characteristic) {
-    if (characteristic.getValue() instanceof Map<?, ?> claims) {
-      return (Map<String, Object>) claims;
+  /**
+   * Claims are stored as a JSON string. They carry whatever the counter-party presented, e.g. a
+   * serialized verifiable credential, and TMForum cannot read back every nested object it stores: a
+   * key named {@code additionalProperties} breaks its NGSI-LD mapping, and the agreement then
+   * answers every request with an error.
+   */
+  private String toClaimsValue(Map<String, Object> claims) {
+    try {
+      return objectMapper.writeValueAsString(claims);
+    } catch (JsonProcessingException e) {
+      throw new IllegalArgumentException("Was not able to serialize the agreement claims.", e);
     }
-    monitor.warning(
-        String.format(
-            "Ignoring agreement characteristic %s: expected a map, got %s.",
-            AGREEMENT_CHARACTERISTIC_CLAIMS, characteristic.getValue()));
-    return Map.of();
+  }
+
+  private Map<String, Object> toClaims(CharacteristicVO characteristic) {
+    Map<String, Object> claims = normalizeClaims(characteristic.getValue());
+    if (claims.isEmpty() && characteristic.getValue() != null) {
+      monitor.warning(
+          String.format(
+              "Ignoring agreement characteristic %s: expected claims, got %s.",
+              AGREEMENT_CHARACTERISTIC_CLAIMS, characteristic.getValue()));
+    }
+    return claims;
   }
 
   private CharacteristicVO toAgreementCharacteristic(String key, Object value) {
@@ -251,16 +264,28 @@ public class TMFEdcMapper {
       if (normalizedClaims.equals(normalizeClaims(stored.get().getValue()))) {
         return false;
       }
-      stored.get().setValue(normalizedClaims);
+      stored.get().setValue(toClaimsValue(normalizedClaims));
       return true;
     }
     agreementVO.addCharacteristicItem(
-        toAgreementCharacteristic(AGREEMENT_CHARACTERISTIC_CLAIMS, normalizedClaims));
+        toAgreementCharacteristic(
+            AGREEMENT_CHARACTERISTIC_CLAIMS, toClaimsValue(normalizedClaims)));
     return true;
   }
 
-  /** Maps any claim representation onto the one Jackson produces for a stored agreement. */
+  /**
+   * Maps any claim representation onto the one Jackson produces: claims built by EDC, the JSON
+   * string they are stored as, and the plain object agreements written before that came back as.
+   */
   private Map<String, Object> normalizeClaims(Object claims) {
+    if (claims instanceof String serialized) {
+      try {
+        return objectMapper.readValue(serialized, CLAIMS_TYPE);
+      } catch (JsonProcessingException e) {
+        monitor.warning("Was not able to read the stored agreement claims.", e);
+        return Map.of();
+      }
+    }
     if (!(claims instanceof Map<?, ?>)) {
       return Map.of();
     }

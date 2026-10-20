@@ -52,7 +52,9 @@ import org.eclipse.edc.jsonld.TitaniumJsonLd;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.response.ResponseStatus;
 import org.eclipse.edc.spi.response.StatusResult;
+import org.eclipse.edc.spi.result.Result;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -106,7 +108,9 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
             transferMapper,
             new ObjectMapper(),
             tmfEdcMapper,
-            jsonLd);
+            jsonLd,
+            dataPlaneStore,
+            endpointDataReferenceService);
 
     givenAgreementPolicy(getTestPolicy());
   }
@@ -154,6 +158,10 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
     StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
     assertTrue(result.succeeded(), "Provisioning should have succeeded.");
+    assertEquals(
+        TEST_EDR,
+        result.getContent().getDataAddress(),
+        "The provisioned resource should carry the EDR of the flow.");
 
     ArgumentCaptor<Map<String, Object>> policyCaptor = ArgumentCaptor.forClass(Map.class);
     ArgumentCaptor<String> serviceIdCaptor = ArgumentCaptor.forClass(String.class);
@@ -163,6 +171,41 @@ public class FDSCOID4VPProvisionerTest extends AbstractProvisionerTest {
 
     verify(apisixAdminClient, times(1)).addRoute(eq(serviceRoute));
     verify(apisixAdminClient, times(1)).addRoute(eq(wellKnownRoute));
+  }
+
+  @Test
+  public void testProvision_error_no_data_flow() throws Exception {
+    when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
+        .thenReturn(
+            Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
+    when(dataPlaneStore.findById(any())).thenReturn(null);
+
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
+
+    assertEquals(
+        ResponseStatus.ERROR_RETRY,
+        result.getFailure().status(),
+        "Without the data flow, provisioning should be retried.");
+    verify(odrlPapClient, never()).createService(any());
+    verify(apisixAdminClient, never()).addRoute(any());
+  }
+
+  @Test
+  public void testProvision_error_edr_creation() throws Exception {
+    when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
+        .thenReturn(
+            Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
+    when(endpointDataReferenceService.createEndpointDataReference(any()))
+        .thenReturn(Result.failure("Unable to build the endpoint."));
+
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
+
+    assertEquals(
+        ResponseStatus.ERROR_RETRY,
+        result.getFailure().status(),
+        "Without an EDR, provisioning should be retried.");
+    verify(odrlPapClient, never()).createService(any());
+    verify(apisixAdminClient, never()).addRoute(any());
   }
 
   @Test

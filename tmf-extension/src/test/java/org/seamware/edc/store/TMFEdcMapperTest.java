@@ -215,14 +215,114 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     }
 
     assertEquals(expectedChanged, tmfEdcMapper.applyClaims(agreementVO, newClaims), name);
+    Object storedValue = storedClaimsValue(agreementVO);
+    if (expectedChanged) {
+      assertInstanceOf(String.class, storedValue, "Written claims should be a JSON string.");
+    }
     assertEquals(
-        expectedClaims,
-        agreementVO.getCharacteristic().stream()
-            .filter(c -> TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS.equals(c.getName()))
-            .map(CharacteristicVO::getValue)
-            .findFirst()
-            .orElse(null),
-        "The stored claims should match the expectation.");
+        expectedClaims, readClaims(storedValue), "The stored claims should match the expectation.");
+  }
+
+  @Test
+  public void applyClaims_does_not_rewrite_unchanged_claims_stored_as_json() throws Exception {
+    Map<String, Object> claims = Map.of("sub", "did:web:consumer");
+    ExtendableAgreementVO agreementVO = getTestAgreement();
+    agreementVO.addCharacteristicItem(
+        new CharacteristicVO()
+            .name(TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS)
+            .value(objectMapper.writeValueAsString(claims)));
+
+    assertFalse(
+        tmfEdcMapper.applyClaims(agreementVO, claims),
+        "Claims equal to the stored JSON should not be rewritten.");
+  }
+
+  // ---- CLAIMS ROUND TRIP ----
+
+  /** Claims as a counter-party presents them, including a key TMForum cannot store as an object. */
+  private static Map<String, Object> getPresentedClaims() {
+    return Map.of(
+        "vc",
+        Map.of(
+            "issuer", Map.of("id", "did:web:issuer", "additionalProperties", Map.of()),
+            "credentialSubject", Map.of("id", TEST_CONSUMER_DID, "membershipType", "FullMember")),
+        "exp",
+        1792487678);
+  }
+
+  @Test
+  public void toAgreement_stores_the_claims_as_a_json_string() throws Exception {
+    when(participantResolver.getTmfId(eq(TEST_CONSUMER_DID))).thenReturn(TEST_CONSUMER_TMF_ID);
+    when(participantResolver.getTmfId(eq(TEST_PROVIDER_DID))).thenReturn(TEST_PROVIDER_TMF_ID);
+    when(typeTransformerRegistry.transform(any(), eq(JsonObject.class)))
+        .thenReturn(Result.success(getEmptyOdrlContract()));
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    ContractAgreement contractAgreement =
+        ContractAgreement.Builder.newInstance()
+            .id(TEST_AGREEMENT_ID)
+            .agreementId(TEST_DSP_AGREEMENT_ID)
+            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
+            .assetId(TEST_ASSET_ID)
+            .consumerId(TEST_CONSUMER_DID)
+            .providerId(TEST_PROVIDER_DID)
+            .contractSigningDate(1)
+            .policy(getTestPolicy())
+            .claims(getPresentedClaims())
+            .build();
+
+    Object storedValue =
+        storedClaimsValue(tmfEdcMapper.toAgreement(TEST_NEGOTIATION_ID, contractAgreement));
+
+    assertInstanceOf(String.class, storedValue, "Claims should be stored as a JSON string.");
+    assertEquals(
+        getPresentedClaims(),
+        readClaims(storedValue),
+        "The stored claims should contain the presented claims.");
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("getStoredClaims")
+  public void toContractAgreement_reads_the_stored_claims(String name, Object storedValue) {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+    ExtendableAgreementVO agreementVO = getTestAgreement();
+    agreementVO.addCharacteristicItem(
+        new CharacteristicVO()
+            .name(TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS)
+            .value(storedValue));
+
+    assertEquals(
+        getPresentedClaims(), tmfEdcMapper.toContractAgreement(agreementVO).getClaims(), name);
+  }
+
+  private static Stream<Arguments> getStoredClaims() throws Exception {
+    return Stream.of(
+        Arguments.of(
+            "Claims stored as a JSON string are read.",
+            new ObjectMapper().writeValueAsString(getPresentedClaims())),
+        Arguments.of(
+            "Claims stored as an object by earlier versions are still read.",
+            getPresentedClaims()));
+  }
+
+  private static Object storedClaimsValue(ExtendableAgreementVO agreementVO) {
+    return agreementVO.getCharacteristic().stream()
+        .filter(c -> TMFEdcMapper.AGREEMENT_CHARACTERISTIC_CLAIMS.equals(c.getName()))
+        .map(CharacteristicVO::getValue)
+        .findFirst()
+        .orElse(null);
+  }
+
+  private Object readClaims(Object storedValue) {
+    if (storedValue instanceof String serialized) {
+      try {
+        return objectMapper.readValue(serialized, new TypeReference<Map<String, Object>>() {});
+      } catch (JsonProcessingException e) {
+        throw new IllegalStateException(e);
+      }
+    }
+    return storedValue;
   }
 
   private static Stream<Arguments> getApplyClaimsCases() {
