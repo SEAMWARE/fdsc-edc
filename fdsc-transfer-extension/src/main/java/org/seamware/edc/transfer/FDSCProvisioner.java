@@ -40,10 +40,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
+import org.eclipse.edc.connector.dataplane.spi.DataFlow;
+import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
 import org.eclipse.edc.connector.dataplane.spi.provision.Deprovisioner;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.Provisioner;
+import org.eclipse.edc.connector.dataplane.spi.store.DataPlaneStore;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.result.Result;
+import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.seamware.edc.HttpClientException;
 import org.seamware.edc.apisix.ApisixAdminClient;
 import org.seamware.edc.domain.ExtendableProductSpecification;
@@ -82,18 +87,40 @@ public abstract class FDSCProvisioner implements Provisioner, Deprovisioner {
   protected final ProductCatalogApiClient productCatalogApiClient;
   protected final TransferMapper transferMapper;
   protected final ObjectMapper objectMapper;
+  protected final DataPlaneStore dataPlaneStore;
+  protected final EndpointDataReferenceService endpointDataReferenceService;
 
   protected FDSCProvisioner(
       Monitor monitor,
       ApisixAdminClient apisixAdminClient,
       ProductCatalogApiClient productCatalogApiClient,
       TransferMapper transferMapper,
-      ObjectMapper objectMapper) {
+      ObjectMapper objectMapper,
+      DataPlaneStore dataPlaneStore,
+      EndpointDataReferenceService endpointDataReferenceService) {
     this.monitor = monitor;
     this.apisixAdminClient = apisixAdminClient;
     this.productCatalogApiClient = productCatalogApiClient;
     this.transferMapper = transferMapper;
     this.objectMapper = objectMapper;
+    this.dataPlaneStore = dataPlaneStore;
+    this.endpointDataReferenceService = endpointDataReferenceService;
+  }
+
+  /**
+   * Creates the EDR for the data flow the resource belongs to.
+   *
+   * <p>When a flow is provisioned, the data plane reports only the data address of the provisioned
+   * resource to the control plane, which sends it to the consumer in the TransferStartMessage. The
+   * EDR the data plane creates once the flow starts is not sent anywhere, so the provisioned
+   * resource has to carry it.
+   */
+  protected Result<DataAddress> endpointDataReference(ProvisionResource provisionResource) {
+    DataFlow dataFlow = dataPlaneStore.findById(provisionResource.getFlowId());
+    if (dataFlow == null) {
+      return Result.failure("No data flow found for " + provisionResource.getFlowId());
+    }
+    return endpointDataReferenceService.createEndpointDataReference(dataFlow);
   }
 
   /** Reads a string property stashed on the resource by the generator; empty when absent. */

@@ -59,6 +59,7 @@ import org.eclipse.edc.connector.dataplane.spi.provision.Deprovisioner;
 import org.eclipse.edc.connector.dataplane.spi.provision.Provisioner;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionerManager;
 import org.eclipse.edc.connector.dataplane.spi.provision.ResourceDefinitionGeneratorManager;
+import org.eclipse.edc.connector.dataplane.spi.store.DataPlaneStore;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provider;
@@ -104,6 +105,8 @@ public class FDSCTransferControlExtension implements ServiceExtension {
   @Inject public ResourceDefinitionGeneratorManager resourceDefinitionGeneratorManager;
 
   @Inject public DataPlaneInstanceStore dataPlaneInstanceStore;
+
+  @Inject public DataPlaneStore dataPlaneStore;
 
   @Inject private EndpointDataReferenceServiceRegistry endpointDataReferenceServiceRegistry;
 
@@ -193,13 +196,19 @@ public class FDSCTransferControlExtension implements ServiceExtension {
     resourceDefinitionGeneratorManager.registerProviderGenerator(
         fdscProviderResourceDefinitionGenerator);
 
+    EndpointDataReferenceService endpointDataReferenceService =
+        new FDSCDcpEndpointDataReferenceService(
+            transferConfig, vault, tmfConfig.getParticipantId(), clock);
+
     FDSCDcpProvisioner fdscDcpProvisioner =
         new FDSCDcpProvisioner(
             monitor,
             apisixAdminClient(context),
             productCatalogApiClient,
             transferMapper(context),
-            objectMapper);
+            objectMapper,
+            dataPlaneStore,
+            endpointDataReferenceService);
     registerProvisioner(fdscDcpProvisioner);
     monitor.info("Registered DCP Provisioner.");
     dataPlaneInstanceStore.save(
@@ -210,9 +219,6 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             .allowedSourceType(FDSC_TYPE)
             .allowedTransferType(TransferTypes.HTTP_DATA_PULL)
             .build());
-    EndpointDataReferenceService endpointDataReferenceService =
-        new FDSCDcpEndpointDataReferenceService(
-            transferConfig, vault, tmfConfig.getParticipantId(), clock);
 
     endpointDataReferenceServiceRegistry.register(
         TransferTypes.TYPE_HTTP_DATA, endpointDataReferenceService);
@@ -227,6 +233,9 @@ public class FDSCTransferControlExtension implements ServiceExtension {
 
     jsonLd.registerContext("http://www.w3.org/ns/odrl.jsonld", CONTEXT_SCOPE);
 
+    EndpointDataReferenceService endpointDataReferenceService =
+        new FDSCOid4VpEndpointDataReferenceService(transferConfig);
+
     FDSCOID4VPProvisioner FDSCOID4VPProvisioner =
         new FDSCOID4VPProvisioner(
             monitor,
@@ -238,7 +247,9 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             transferMapper(context),
             objectMapper,
             tmfEdcMapper,
-            jsonLd);
+            jsonLd,
+            dataPlaneStore,
+            endpointDataReferenceService);
     registerProvisioner(FDSCOID4VPProvisioner);
 
     dataPlaneInstanceStore.save(
@@ -249,9 +260,6 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             .allowedSourceType(FDSC_TYPE)
             .allowedTransferType(TransferTypes.HTTP_DATA_PULL)
             .build());
-
-    EndpointDataReferenceService endpointDataReferenceService =
-        new FDSCOid4VpEndpointDataReferenceService(transferConfig);
 
     endpointDataReferenceServiceRegistry.register(
         TransferTypes.TYPE_HTTP_DATA, endpointDataReferenceService);
