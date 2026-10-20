@@ -49,7 +49,9 @@ import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.response.ResponseStatus;
 import org.eclipse.edc.spi.response.StatusResult;
+import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -83,7 +85,9 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
             apisixAdminClient,
             productCatalogApiClient,
             transferMapper,
-            new ObjectMapper());
+            new ObjectMapper(),
+            dataPlaneStore,
+            endpointDataReferenceService);
   }
 
   @Test
@@ -98,9 +102,46 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
 
     StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource).get();
     assertTrue(result.succeeded(), "The resource should have been provisioned.");
+    assertEquals(
+        TEST_EDR,
+        result.getContent().getDataAddress(),
+        "The provisioned resource should carry the EDR of the flow.");
     ArgumentCaptor<Route> routeCaptor = ArgumentCaptor.forClass(Route.class);
     verify(apisixAdminClient, times(1)).addRoute(routeCaptor.capture());
     assertEquals(routeCaptor.getValue(), testRoute);
+  }
+
+  @Test
+  public void testProvision_error_no_data_flow() throws Exception {
+    when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
+        .thenReturn(
+            Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
+    when(dataPlaneStore.findById(any())).thenReturn(null);
+
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
+
+    assertEquals(
+        ResponseStatus.ERROR_RETRY,
+        result.getFailure().status(),
+        "Without the data flow, provisioning should be retried.");
+    verify(apisixAdminClient, never()).addRoute(any());
+  }
+
+  @Test
+  public void testProvision_error_edr_creation() throws Exception {
+    when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
+        .thenReturn(
+            Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
+    when(endpointDataReferenceService.createEndpointDataReference(any()))
+        .thenReturn(Result.failure("No signing key available."));
+
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
+
+    assertEquals(
+        ResponseStatus.ERROR_RETRY,
+        result.getFailure().status(),
+        "Without an EDR, provisioning should be retried.");
+    verify(apisixAdminClient, never()).addRoute(any());
   }
 
   @Test

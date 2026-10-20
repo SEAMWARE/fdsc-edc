@@ -86,12 +86,15 @@ public class DCPExtension implements ServiceExtension {
 
   private ScopeExtractorRegistry scopeExtractorRegistry;
 
+  private boolean enabled;
+
   @Override
   public void initialize(ServiceExtensionContext context) {
 
     DcpConfig dcpConfig = DcpConfig.fromConfig(context.getConfig());
+    enabled = dcpConfig.isEnabled();
 
-    if (dcpConfig.isEnabled()) {
+    if (enabled) {
       // register signature suite
       var suite = new Jws2020SignatureSuite(typeManager.getMapper(JSON_LD));
       signatureSuiteRegistry.register(VcConstants.JWS_2020_SIGNATURE_SUITE, suite);
@@ -115,10 +118,6 @@ public class DCPExtension implements ServiceExtension {
             RequestTransferProcessPolicyContext.class,
             new DefaultScopeMappingFunction(monitor, scopes.transfer())::apply);
       }
-      typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
-      typeTransformerRegistry.register(
-          new FixedJwtToVerifiableCredentialTransformer(context.getMonitor()));
-
       // ODRL-PAP based policy evaluation is handled by OdrlPapPolicyExtension
       // (policy-extension module). Enable via odrlPap.policy.enabled=true.
 
@@ -135,6 +134,19 @@ public class DCPExtension implements ServiceExtension {
           Permission.class,
           "dayOfWeek",
           new DayOfWeekEvaluator<>(monitor, clock));
+    }
+  }
+
+  /**
+   * Registers the transformers that replace EDC's own. A transformer registry keeps the last
+   * transformer registered for a type pair, and EDC registers its own while the extensions
+   * initialize, so they are only registered once every extension has done so.
+   */
+  @Override
+  public void prepare() {
+    if (enabled) {
+      typeTransformerRegistry.register(new JsonValueToGenericTypeTransformer(typeManager, JSON_LD));
+      typeTransformerRegistry.register(new FixedJwtToVerifiableCredentialTransformer(monitor));
     }
   }
 

@@ -191,16 +191,20 @@
             <artifactId>data-plane-selector-api</artifactId>
             <version>${edc.version}</version>
         </dependency>
-        <!-- Replaces transfer-data-plane-signaling, the legacy flow controller, from
-             0.18.x onwards. data-plane-signaling-client is dropped with it: that
-             artifact is the legacy client half of the same pair and its only
-             consumer was transfer-data-plane-signaling, while data-plane-signaling
-             brings its own ClientFactory. Note this also opens a new "signaling" web
-             context (web.http.signaling.*, default port 8182); see
-             docs/migration/EDC-0.18.1-UPGRADE.md section 8.2.1. -->
+        <!-- The legacy flow controller and its client. The FDSC transfer runs in the data
+             plane embedded in this controlplane, which the legacy client calls in-process.
+             data-plane-signaling replaces both from 0.18.x onwards, but it only reaches data
+             planes over HTTP and requires one for every transfer, consumer side included,
+             so no transfer could start with it. Both provide the single DataFlowController:
+             only one of them can be on the classpath. -->
         <dependency>
             <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-signaling</artifactId>
+            <artifactId>transfer-data-plane-signaling</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>data-plane-signaling-client</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>

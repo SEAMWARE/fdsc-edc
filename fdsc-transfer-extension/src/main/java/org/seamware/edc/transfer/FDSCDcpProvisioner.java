@@ -40,12 +40,16 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
 import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
+import org.eclipse.edc.connector.dataplane.spi.store.DataPlaneStore;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.response.ResponseStatus;
 import org.eclipse.edc.spi.response.StatusResult;
+import org.eclipse.edc.spi.result.Result;
+import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.HttpClientException;
 import org.seamware.edc.apisix.ApisixAdminClient;
@@ -64,8 +68,17 @@ public class FDSCDcpProvisioner extends FDSCProvisioner {
       ApisixAdminClient apisixAdminClient,
       ProductCatalogApiClient productCatalogApiClient,
       TransferMapper transferMapper,
-      ObjectMapper objectMapper) {
-    super(monitor, apisixAdminClient, productCatalogApiClient, transferMapper, copy(objectMapper));
+      ObjectMapper objectMapper,
+      DataPlaneStore dataPlaneStore,
+      EndpointDataReferenceService endpointDataReferenceService) {
+    super(
+        monitor,
+        apisixAdminClient,
+        productCatalogApiClient,
+        transferMapper,
+        copy(objectMapper),
+        dataPlaneStore,
+        endpointDataReferenceService);
   }
 
   private static ObjectMapper copy(ObjectMapper objectMapper) {
@@ -112,13 +125,23 @@ public class FDSCDcpProvisioner extends FDSCProvisioner {
                   "Without an configured upstreamAddress, the service cannot be provisioned.");
             }
 
+            Result<DataAddress> endpointDataReference = endpointDataReference(provisionResource);
+            if (endpointDataReference.failed()) {
+              return StatusResult.failure(
+                  ResponseStatus.ERROR_RETRY,
+                  "Unable to create the endpoint data reference: "
+                      + endpointDataReference.getFailureDetail());
+            }
+
             Route serviceRoute =
                 transferMapper.toDcpServiceRoute(
                     provisionResource.getFlowId(), upstreamAddress.get());
             apisixAdminClient.addRoute(serviceRoute);
 
             return StatusResult.success(
-                ProvisionedResource.Builder.from(provisionResource).build());
+                ProvisionedResource.Builder.from(provisionResource)
+                    .dataAddress(endpointDataReference.getContent())
+                    .build());
           } catch (BadGatewayException e) {
             monitor.warning("Was not able to provision, cannot reach remote server.", e);
             return StatusResult.failure(ResponseStatus.ERROR_RETRY);

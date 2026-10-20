@@ -23,26 +23,15 @@ Connector on the same release tags (note: IdentityHub has no 0.16.1; the Connect
 0.16.1 is a standalone backport). No IdentityHub coordinate lives in this
 repository, so this is an external deployment coordination item.
 
-### 2. New `signaling` HTTP listener on the production images (port 8182)
+### 2. Transfers keep using the legacy data plane signaling
 
-The production assemblies now use `data-plane-signaling`, which **unconditionally**
-registers a fifth HTTP listener. There is no feature flag. Pin and expose it
-explicitly in your deployment:
-
-| Setting key | Default | Notes |
-|---|---|---|
-| `web.http.signaling.port` | `8182` | New listener; does not collide with the connector's other ports (8080/8181/8282/8687). |
-| `web.http.signaling.path` | `/api/signaling` | |
-| `web.http.signaling.public.uri` | `http://localhost:<port><path>` | Set only when the data plane reaches the control plane across a container/pod boundary, where `localhost` is wrong. |
-
-The surrounding FIWARE Data Space Connector deployment chart (outside this
-repository) must publish this port and, if the connector is fronted by a PEP,
-route it. Symptom if missed: the data plane cannot reach the control plane's
-registration API.
-
-> The TCK runtime image (`controlplane-tck`) deliberately excludes
-> `data-plane-signaling` and therefore does **not** open this listener. The change
-> applies to the production `controlplane-oid4vc` / `controlplane-dcp` images only.
+The production images keep `transfer-data-plane-signaling` and
+`data-plane-signaling-client`, deprecated upstream, instead of
+`data-plane-signaling`. The FDSC transfer runs in the data plane embedded in the
+controlplane, which the legacy client calls in-process. `data-plane-signaling` only
+reaches data planes over HTTP and requires one for every transfer, consumer side
+included, so no transfer could start with it. No `web.http.signaling.*` listener is
+opened, and nothing has to be published for it.
 
 ### 3. New participant-context id configuration
 
@@ -89,7 +78,6 @@ request. Confirm interop against real counterparties.
 | Key | Change | Action |
 |---|---|---|
 | `edc.participant.context.id` | new (0.15.0) | add, pinned to `edc.participant.id` |
-| `web.http.signaling.{port,path,public.uri}` | new listener on the production images | add and publish (see above) |
 | `dcp.scopes.version` | **retired** — the `RequestVersionPolicyContext` it bound to was removed upstream | delete from deployments; it is now ignored, not rejected, so existing configs keep loading |
 | `edc.iam.issuer.id` → `edc.participant.did` | upstream rename (0.17.0); old key still honoured | relevant only to external DCP deployments that set it |
 | `edc.dsp.well-known-path.enabled` | **removed** upstream (0.17.0) | external configs must drop it |
@@ -125,6 +113,10 @@ out-of-repo configuration might.
   service. A new `controlplane-tck` assembly (production OID4VC minus
   `data-plane-signaling`) is used for the DSP TCK so the test-only
   `NoopDataFlowController` is selected; production images are unchanged.
+- Provisioning runs in the data plane, which reports only the data address of the
+  provisioned resource to the control plane; the EDR it creates when the flow starts
+  is not sent to the consumer. The FDSC provisioners therefore create the EDR
+  themselves and return it as the data address of the provisioned resource.
 - The DSP TCK runner is pinned to `1.0.1` (the version EDC 0.18.1 itself pins).
 
 ## Conformance

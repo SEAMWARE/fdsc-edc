@@ -50,14 +50,18 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import org.eclipse.edc.connector.controlplane.contract.spi.negotiation.store.ContractNegotiationStore;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
+import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
 import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
+import org.eclipse.edc.connector.dataplane.spi.store.DataPlaneStore;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.response.ResponseStatus;
 import org.eclipse.edc.spi.response.StatusResult;
+import org.eclipse.edc.spi.result.Result;
+import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.seamware.credentials.model.MetaDataQueryVO;
 import org.seamware.credentials.model.ServiceVO;
 import org.seamware.edc.HttpClientException;
@@ -101,8 +105,17 @@ public class FDSCOID4VPProvisioner extends FDSCProvisioner {
       TransferMapper transferMapper,
       ObjectMapper objectMapper,
       TMFEdcMapper tmfEdcMapper,
-      JsonLd jsonLd) {
-    super(monitor, apisixAdminClient, productCatalogApiClient, transferMapper, copy(objectMapper));
+      JsonLd jsonLd,
+      DataPlaneStore dataPlaneStore,
+      EndpointDataReferenceService endpointDataReferenceService) {
+    super(
+        monitor,
+        apisixAdminClient,
+        productCatalogApiClient,
+        transferMapper,
+        copy(objectMapper),
+        dataPlaneStore,
+        endpointDataReferenceService);
     this.credentialsConfigServiceClient = credentialsConfigServiceClient;
     this.odrlPapClient = odrlPapClient;
     this.contractNegotiationStore = contractNegotiationStore;
@@ -169,6 +182,14 @@ public class FDSCOID4VPProvisioner extends FDSCProvisioner {
                   "Without an configured upstreamAddress, the service cannot be provisioned.");
             }
 
+            Result<DataAddress> endpointDataReference = endpointDataReference(provisionResource);
+            if (endpointDataReference.failed()) {
+              return StatusResult.failure(
+                  ResponseStatus.ERROR_RETRY,
+                  "Unable to create the endpoint data reference: "
+                      + endpointDataReference.getFailureDetail());
+            }
+
             PolicyPathVO policyPathVO =
                 odrlPapClient.createService(new ServiceCreateVO().id(serviceId));
 
@@ -221,7 +242,9 @@ public class FDSCOID4VPProvisioner extends FDSCProvisioner {
                     });
 
             return StatusResult.success(
-                ProvisionedResource.Builder.from(provisionResource).build());
+                ProvisionedResource.Builder.from(provisionResource)
+                    .dataAddress(endpointDataReference.getContent())
+                    .build());
 
           } catch (HttpClientException e) {
             // Best-effort cleanup of any partial state left in the PAP so the

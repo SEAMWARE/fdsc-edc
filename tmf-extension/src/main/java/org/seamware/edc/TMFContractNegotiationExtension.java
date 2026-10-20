@@ -185,6 +185,35 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
       return;
     }
     registerDspace2024Context(jsonLd);
+    SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
+    context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
+    context.registerService(ObjectMapper.class, objectMapper());
+    context.registerService(QuoteApiClient.class, quoteApi(context, config));
+    context.registerService(AgreementApiClient.class, agreementApi(config));
+    context.registerService(ProductOrderApiClient.class, productOrderApi(config));
+    context.registerService(ProductCatalogApiClient.class, productCatalogApi(config));
+    context.registerService(ProductInventoryApiClient.class, productInventoryApi(config));
+    context.registerService(ParticipantResolver.class, participantResolver(config));
+    context.registerService(TransactionContext.class, tmfTransactionContext());
+    context.registerService(
+        ContractNegotiationStore.class, contractNegotiationStore(context, config));
+    context.registerService(ContractDefinitionStore.class, contractDefinitionStore(config));
+    context.registerService(PolicyDefinitionStore.class, policyDefinitionStore(config));
+    context.registerService(AssetIndex.class, assetIndex(config));
+    context.registerService(DataAddressResolver.class, dataAddressResolver(config));
+  }
+
+  /**
+   * Registers the type-preserving transformers. A transformer registry keeps the last transformer
+   * registered for a type pair, and EDC registers its own policy transformers, for the DSP context
+   * among others, while the extensions initialize. Registered any earlier, these would be replaced
+   * and typed policy values would reach the counter-party as strings.
+   */
+  @Override
+  public void prepare() {
+    if (tmfConfig == null || !tmfConfig.isEnabled()) {
+      return;
+    }
     JsonBuilderFactory jsonBuilderFactory = Json.createBuilderFactory(Map.of());
     ParticipantIdMapper participantIdMapper =
         new ParticipantIdMapper() {
@@ -214,23 +243,6 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
         DSP_TRANSFORMER_CONTEXT_V_2025_1,
         typePreservingPolicyTransformer,
         typePreservingConstraintTransformer);
-
-    SchemaBaseUriHolder.configure(config.getSchemaBaseUri());
-    context.registerService(TMFEdcMapper.class, tmfEdcMapper(config));
-    context.registerService(ObjectMapper.class, objectMapper());
-    context.registerService(QuoteApiClient.class, quoteApi(context, config));
-    context.registerService(AgreementApiClient.class, agreementApi(config));
-    context.registerService(ProductOrderApiClient.class, productOrderApi(config));
-    context.registerService(ProductCatalogApiClient.class, productCatalogApi(config));
-    context.registerService(ProductInventoryApiClient.class, productInventoryApi(config));
-    context.registerService(ParticipantResolver.class, participantResolver(config));
-    context.registerService(TransactionContext.class, tmfTransactionContext());
-    context.registerService(
-        ContractNegotiationStore.class, contractNegotiationStore(context, config));
-    context.registerService(ContractDefinitionStore.class, contractDefinitionStore(config));
-    context.registerService(PolicyDefinitionStore.class, policyDefinitionStore(config));
-    context.registerService(AssetIndex.class, assetIndex(config));
-    context.registerService(DataAddressResolver.class, dataAddressResolver(config));
   }
 
   public TMFEdcMapper tmfEdcMapper(TMFConfig config) {

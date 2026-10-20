@@ -43,6 +43,7 @@ import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.system.configuration.ConfigFactory;
 import org.eclipse.edc.spi.types.TypeManager;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
+import org.eclipse.edc.transform.transformer.edc.to.JsonValueToGenericTypeTransformer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -94,6 +95,26 @@ public class DCPExtensionTest {
     initializeWith(Map.of(ENABLED_KEY, "false"));
 
     verifyNoInteractions(policyEngine, signatureSuiteRegistry, typeTransformerRegistry);
+  }
+
+  @Test
+  public void enabledExtensionRegistersItsTransformersWhenPrepared() {
+    initializeWith(enabledConfig());
+    verify(typeTransformerRegistry, never()).register(any());
+
+    extension.prepare();
+
+    verify(typeTransformerRegistry).register(any(JsonValueToGenericTypeTransformer.class));
+    verify(typeTransformerRegistry).register(any(FixedJwtToVerifiableCredentialTransformer.class));
+  }
+
+  @Test
+  public void disabledExtensionPreparesNothing() {
+    initializeWith(Map.of(ENABLED_KEY, "false"));
+
+    extension.prepare();
+
+    verifyNoInteractions(typeTransformerRegistry);
   }
 
   @Test
