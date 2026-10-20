@@ -36,12 +36,21 @@ package org.seamware.edc.transfer;
  * #L%
  */
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
 import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.eclipse.edc.connector.dataplane.spi.DataFlow;
+import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
+import org.eclipse.edc.connector.dataplane.spi.store.DataPlaneStore;
 import org.eclipse.edc.policy.model.*;
+import org.eclipse.edc.spi.result.Result;
+import org.eclipse.edc.spi.types.domain.DataAddress;
+import org.junit.jupiter.api.BeforeEach;
 import org.seamware.edc.apisix.Route;
 import org.seamware.edc.domain.ExtendableProductSpecification;
 import org.seamware.tmforum.productcatalog.model.CharacteristicValueSpecificationVO;
@@ -55,6 +64,22 @@ public class AbstractProvisionerTest {
   protected static final String TEST_TRANSFER_PROCESS_ID = "test-transfer";
   protected static final String TEST_ROUTE_ID = "test-route";
   protected static final String TEST_UPSTREAM = "http://my.upstream.svc.local";
+  protected static final DataAddress TEST_EDR =
+      DataAddress.Builder.newInstance().type("test-edr").build();
+
+  protected DataPlaneStore dataPlaneStore;
+  protected EndpointDataReferenceService endpointDataReferenceService;
+
+  /** Lets the provisioner find the data flow under test and create its EDR. */
+  @BeforeEach
+  public void setupEndpointDataReference() {
+    DataFlow dataFlow = DataFlow.Builder.newInstance().id(TEST_TRANSFER_PROCESS_ID).build();
+    dataPlaneStore = mock(DataPlaneStore.class);
+    endpointDataReferenceService = mock(EndpointDataReferenceService.class);
+    when(dataPlaneStore.findById(TEST_TRANSFER_PROCESS_ID)).thenReturn(dataFlow);
+    when(endpointDataReferenceService.createEndpointDataReference(dataFlow))
+        .thenReturn(Result.success(TEST_EDR));
+  }
 
   /** The data-plane resource a generator would hand to the provisioner under test. */
   protected static ProvisionResource getProvisionResource(String type) {
