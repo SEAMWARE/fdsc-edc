@@ -62,6 +62,8 @@ public class AuditEventSubscriber implements EventSubscriber {
   static final String ATTR_ASSET_ID = "asset.id";
   static final String ATTR_CONTRACT_ID = "contract.id";
   static final String ATTR_AGREEMENT_ID = "contract.agreement.id";
+  static final String ATTR_OFFER_ID = "contract.offer.id";
+  static final String ATTR_CONTEXT_ID = "participant.context.id";
   static final String ATTR_PROVIDER = "participant.provider";
   static final String ATTR_CONSUMER = "participant.consumer";
   static final String ATTR_SIGNING_DATE = "contract.signing.date";
@@ -74,7 +76,6 @@ public class AuditEventSubscriber implements EventSubscriber {
   static final String ATTR_EVENT_ID = "event.id";
   static final String ATTR_STATE_PREVIOUS = "audit.state.previous";
   static final String ATTR_STATE_NEW = "audit.state.new";
-  static final String ATTR_OFFER_ID = "offer.id";
 
   static final String BODY_PREFIX = "Audit: ";
   static final String UNKNOWN_TRANSFER_TYPE = "UNKNOWN";
@@ -122,6 +123,7 @@ public class AuditEventSubscriber implements EventSubscriber {
     putIfPresent(attributes, ATTR_COUNTERPARTY_ID, event.getCounterPartyId());
     putIfPresent(attributes, ATTR_COUNTERPARTY_ADDRESS, event.getCounterPartyAddress());
     putIfPresent(attributes, ATTR_PROTOCOL, event.getProtocol());
+    putIfPresent(attributes, ATTR_CONTEXT_ID, event.getParticipantContextId());
     var lastOffer = event.getLastContractOffer();
     if (lastOffer != null) {
       putIfPresent(attributes, ATTR_OFFER_ID, lastOffer.getId());
@@ -130,9 +132,9 @@ public class AuditEventSubscriber implements EventSubscriber {
     if (event instanceof ContractNegotiationFinalized finalized
         && finalized.getContractAgreement() != null) {
       var agreement = finalized.getContractAgreement();
-      // EDC 0.14 has a single agreement id, used for both attributes
+      // contract.id is the local agreement id, contract.agreement.id the one shared in DSP
       putIfPresent(attributes, ATTR_CONTRACT_ID, agreement.getId());
-      putIfPresent(attributes, ATTR_AGREEMENT_ID, agreement.getId());
+      putIfPresent(attributes, ATTR_AGREEMENT_ID, agreement.getAgreementId());
       putIfPresent(attributes, ATTR_PROVIDER, agreement.getProviderId());
       putIfPresent(attributes, ATTR_CONSUMER, agreement.getConsumerId());
       putIfPresent(attributes, ATTR_ASSET_ID, agreement.getAssetId());
@@ -151,6 +153,8 @@ public class AuditEventSubscriber implements EventSubscriber {
     putIfPresent(attributes, ATTR_TRANSFER_ID, entityId);
     putIfPresent(attributes, ATTR_ASSET_ID, event.getAssetId());
     putIfPresent(attributes, ATTR_CONTRACT_ID, event.getContractId());
+    putIfPresent(attributes, ATTR_PROTOCOL, event.getProtocol());
+    putIfPresent(attributes, ATTR_CONTEXT_ID, event.getParticipantContextId());
     attributes.put(
         ATTR_TRANSFER_TYPE, event.getType() != null ? event.getType() : UNKNOWN_TRANSFER_TYPE);
     if (event instanceof TransferProcessStarted started) {

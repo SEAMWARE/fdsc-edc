@@ -119,8 +119,8 @@ other state.
 ### Attributes
 
 Attribute names match the audit logs of `participant-edc-connector`, so the same queries work for
-both connectors in a shared backend. The `audit.*`, `event.id` and `offer.id` attributes are added
-by fdsc-edc.
+both connectors in a shared backend. The `audit.*` and `event.id` attributes are added by
+fdsc-edc. Attributes whose value is not carried by the EDC event are omitted, never emitted empty.
 
 | Attribute | Present on | Value |
 |-----------|-----------|-------|
@@ -132,10 +132,12 @@ by fdsc-edc.
 | `negotiation.id` | negotiation | Contract negotiation id |
 | `participant.counterparty.id` | negotiation | Counterparty participant id |
 | `participant.counterparty.address` | negotiation | Counterparty DSP address |
-| `protocol` | negotiation | DSP protocol version |
-| `offer.id` | negotiation | Id of the last contract offer |
+| `protocol` | negotiation, transfer | DSP protocol version |
+| `participant.context.id` | negotiation, transfer | EDC participant context of the entity. Not emitted on catalog records (section 4) |
+| `contract.offer.id` | negotiation | Id of the last contract offer |
 | `asset.id` | negotiation, transfer | Asset id |
-| `contract.id`, `contract.agreement.id` | negotiation `FINALIZED`, transfer | Agreement id (EDC 0.14.1 has one id, used for both attributes) |
+| `contract.id` | negotiation `FINALIZED`, transfer | Local agreement id, as stored by this connector |
+| `contract.agreement.id` | negotiation `FINALIZED` | Agreement id shared by both connectors in DSP. Use it, not `contract.id`, to correlate records of the provider and the consumer |
 | `participant.provider`, `participant.consumer` | negotiation `FINALIZED` | Agreement parties |
 | `contract.signing.date` | negotiation `FINALIZED` | Agreement signing date (epoch seconds) |
 | `transfer.id` | transfer | Transfer process id |
@@ -216,6 +218,9 @@ Body: `Audit: <Domain><Action>`, e.g. `Audit: AssetCreated`, `Audit: ContractDef
 | `catalog.definition.id` | EDC contract definition id (the `externalId` of the ProductOffering) |
 | `tmf.product_specification.id` | Contract definition only: the ProductSpecification it points to |
 | `catalog.policy.id`, `catalog.access.policy.id` | Contract definition only: ODRL `uid` of the contract and access policies |
+
+Catalog records carry no `participant.context.id`: TMF620 notifications have no request context,
+and a value taken from the configuration would be an assumption rather than a fact.
 
 A single TMForum change can produce more than one notification. For example, retiring an entity
 sends both an `AttributeValueChangeEvent` and a `StateChangeEvent`, so it gives two records.

@@ -101,8 +101,10 @@ public class AuditEventSubscriberTest {
     assertEquals(
         "http://provider/protocol", attr(agreed, AuditEventSubscriber.ATTR_COUNTERPARTY_ADDRESS));
     assertEquals("dataspace-protocol-http", attr(agreed, AuditEventSubscriber.ATTR_PROTOCOL));
-    assertEquals("offer-1", attr(agreed, AuditEventSubscriber.ATTR_OFFER_ID));
+    assertEquals("offer-1", attr(agreed, "contract.offer.id"));
+    assertNull(attr(agreed, "offer.id"));
     assertEquals("asset-1", attr(agreed, AuditEventSubscriber.ATTR_ASSET_ID));
+    assertEquals("ctx-1", attr(agreed, "participant.context.id"));
   }
 
   @Test
@@ -110,6 +112,7 @@ public class AuditEventSubscriberTest {
     var agreement =
         ContractAgreement.Builder.newInstance()
             .id("agreement-1")
+            .agreementId("dsp-agreement-1")
             .providerId("provider")
             .consumerId("consumer")
             .assetId("asset-1")
@@ -122,7 +125,7 @@ public class AuditEventSubscriberTest {
 
     var finalized = exporter.getFinishedLogRecordItems().get(0);
     assertEquals("agreement-1", attr(finalized, AuditEventSubscriber.ATTR_CONTRACT_ID));
-    assertEquals("agreement-1", attr(finalized, AuditEventSubscriber.ATTR_AGREEMENT_ID));
+    assertEquals("dsp-agreement-1", attr(finalized, AuditEventSubscriber.ATTR_AGREEMENT_ID));
     assertEquals("provider", attr(finalized, AuditEventSubscriber.ATTR_PROVIDER));
     assertEquals("consumer", attr(finalized, AuditEventSubscriber.ATTR_CONSUMER));
     assertEquals("asset-1", attr(finalized, AuditEventSubscriber.ATTR_ASSET_ID));
@@ -159,6 +162,8 @@ public class AuditEventSubscriberTest {
                 .assetId("asset-1")
                 .contractId("agreement-1")
                 .type("PROVIDER")
+                .protocol("dataspace-protocol-http")
+                .participantContextId("ctx-1")
                 .reason("boom")
                 .build()));
 
@@ -176,6 +181,11 @@ public class AuditEventSubscriberTest {
     assertEquals("agreement-1", attr(terminated, AuditEventSubscriber.ATTR_CONTRACT_ID));
     assertEquals("PROVIDER", attr(terminated, AuditEventSubscriber.ATTR_TRANSFER_TYPE));
     assertEquals("boom", attr(terminated, AuditEventSubscriber.ATTR_TRANSFER_REASON));
+    assertEquals("dataspace-protocol-http", attr(terminated, AuditEventSubscriber.ATTR_PROTOCOL));
+    assertEquals("ctx-1", attr(terminated, "participant.context.id"));
+    // attributes not carried by the event are omitted, not emitted empty
+    assertNull(attr(records.get(0), AuditEventSubscriber.ATTR_PROTOCOL));
+    assertNull(attr(records.get(0), "participant.context.id"));
   }
 
   @Test
@@ -218,7 +228,8 @@ public class AuditEventSubscriberTest {
         .contractNegotiationId("cn-1")
         .counterPartyId("provider")
         .counterPartyAddress("http://provider/protocol")
-        .protocol("dataspace-protocol-http");
+        .protocol("dataspace-protocol-http")
+        .participantContextId("ctx-1");
     if (offer != null) {
       builder.contractOffers(List.of(offer));
     }
