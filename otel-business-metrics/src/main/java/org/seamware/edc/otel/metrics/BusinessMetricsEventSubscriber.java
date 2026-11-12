@@ -35,6 +35,7 @@ import org.eclipse.edc.spi.event.EventSubscriber;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.seamware.edc.otel.EntityLifecycleTracker;
 import org.seamware.edc.otel.LifecycleStates;
+import org.seamware.edc.otel.ParticipantRole;
 
 /**
  * Translates contract negotiation and transfer process events into OpenTelemetry business metrics.
@@ -45,15 +46,18 @@ import org.seamware.edc.otel.LifecycleStates;
  */
 public class BusinessMetricsEventSubscriber implements EventSubscriber {
 
-  static final String METRIC_NEGOTIATION_TRANSITIONS = "contract_negotiation.transitions";
-  static final String METRIC_NEGOTIATION_DURATION = "contract_negotiation.duration";
-  static final String METRIC_TRANSFER_TRANSITIONS = "transfer_process.transitions";
-  static final String METRIC_TRANSFER_DURATION = "transfer_process.duration";
-  static final String METRIC_TRANSFER_INTERRUPTIONS = "transfer_process.interruptions";
+  static final String METRIC_NEGOTIATION_TRANSITIONS = "edc.controlplane.negotiation.transitions";
+  static final String METRIC_NEGOTIATION_DURATION = "edc.controlplane.negotiation.duration";
+  static final String METRIC_TRANSFER_TRANSITIONS = "edc.controlplane.transfer.transitions";
+  static final String METRIC_TRANSFER_DURATION = "edc.controlplane.transfer.duration";
+  static final String METRIC_TRANSFER_INTERRUPTIONS = "edc.controlplane.transfer.interruptions";
 
-  static final AttributeKey<String> ATTR_STATE = AttributeKey.stringKey("state");
-  static final AttributeKey<String> ATTR_TRANSFER_TYPE = AttributeKey.stringKey("type");
-  static final AttributeKey<String> ATTR_REASON = AttributeKey.stringKey("reason");
+  static final AttributeKey<String> ATTR_NEGOTIATION_STATE =
+      AttributeKey.stringKey("negotiation.state");
+  static final AttributeKey<String> ATTR_TRANSFER_STATE = AttributeKey.stringKey("transfer.state");
+  // same names and sources as the audit log attributes
+  static final AttributeKey<String> ATTR_ROLE = AttributeKey.stringKey("participant.role");
+  static final AttributeKey<String> ATTR_REASON = AttributeKey.stringKey("transfer.reason");
 
   static final String REASON_UNSPECIFIED = "unspecified";
   static final String REASON_OTHER = "other";
@@ -122,7 +126,7 @@ public class BusinessMetricsEventSubscriber implements EventSubscriber {
     var transition =
         negotiationTracker.track(event.getContractNegotiationId(), state, envelope.getAt());
 
-    var attributes = Attributes.of(ATTR_STATE, state);
+    var attributes = Attributes.of(ATTR_NEGOTIATION_STATE, state);
     negotiationTransitions.add(1, attributes);
     recordDuration(
         negotiationDuration,
@@ -136,14 +140,15 @@ public class BusinessMetricsEventSubscriber implements EventSubscriber {
     var state = LifecycleStates.toState(event.name(), LifecycleStates.TRANSFER_EVENT_PREFIX);
     var transition = transferTracker.track(event.getTransferProcessId(), state, envelope.getAt());
 
-    transferTransitions.add(1, withType(Attributes.builder().put(ATTR_STATE, state), event));
-    // the final state is always DEPROVISIONED, so only the transfer type is worth splitting by
+    transferTransitions.add(
+        1, withRole(Attributes.builder().put(ATTR_TRANSFER_STATE, state), event));
+    // the final state is always DEPROVISIONED, so only the role is worth splitting by
     recordDuration(
         transferDuration,
         transition,
         LifecycleStates.TRANSFER_INITIAL_STATES,
         envelope.getAt(),
-        withType(Attributes.builder(), event));
+        withRole(Attributes.builder(), event));
 
     String reason;
     if (event instanceof TransferProcessTerminated terminated) {
@@ -154,8 +159,10 @@ public class BusinessMetricsEventSubscriber implements EventSubscriber {
       return;
     }
     var builder =
-        Attributes.builder().put(ATTR_STATE, state).put(ATTR_REASON, normalizeReason(reason));
-    transferInterruptions.add(1, withType(builder, event));
+        Attributes.builder()
+            .put(ATTR_TRANSFER_STATE, state)
+            .put(ATTR_REASON, normalizeReason(reason));
+    transferInterruptions.add(1, withRole(builder, event));
   }
 
   private static void recordDuration(
@@ -196,9 +203,10 @@ public class BusinessMetricsEventSubscriber implements EventSubscriber {
     return REASON_OTHER;
   }
 
-  private static Attributes withType(AttributesBuilder builder, TransferProcessEvent event) {
-    if (event.getType() != null) {
-      builder.put(ATTR_TRANSFER_TYPE, event.getType());
+  private static Attributes withRole(AttributesBuilder builder, TransferProcessEvent event) {
+    var role = ParticipantRole.fromProcessType(event.getType());
+    if (role != null) {
+      builder.put(ATTR_ROLE, role);
     }
     return builder.build();
   }

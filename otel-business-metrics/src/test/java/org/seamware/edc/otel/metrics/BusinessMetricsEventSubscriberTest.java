@@ -26,9 +26,10 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.seamware.edc.otel.metrics.BusinessMetricsEventSubscriber.ATTR_NEGOTIATION_STATE;
 import static org.seamware.edc.otel.metrics.BusinessMetricsEventSubscriber.ATTR_REASON;
-import static org.seamware.edc.otel.metrics.BusinessMetricsEventSubscriber.ATTR_STATE;
-import static org.seamware.edc.otel.metrics.BusinessMetricsEventSubscriber.ATTR_TRANSFER_TYPE;
+import static org.seamware.edc.otel.metrics.BusinessMetricsEventSubscriber.ATTR_ROLE;
+import static org.seamware.edc.otel.metrics.BusinessMetricsEventSubscriber.ATTR_TRANSFER_STATE;
 
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.LongCounter;
@@ -87,17 +88,18 @@ public class BusinessMetricsEventSubscriberTest {
     subscriber.on(envelope(negotiation("cn-1", finalized()), START + 2_500));
 
     var transitions = BusinessMetricsEventSubscriber.METRIC_NEGOTIATION_TRANSITIONS;
-    assertEquals(1, counter(transitions, Attributes.of(ATTR_STATE, "INITIATED")));
-    assertEquals(1, counter(transitions, Attributes.of(ATTR_STATE, "REQUESTED")));
-    assertEquals(1, counter(transitions, Attributes.of(ATTR_STATE, "FINALIZED")));
+    assertEquals(1, counter(transitions, Attributes.of(ATTR_NEGOTIATION_STATE, "INITIATED")));
+    assertEquals(1, counter(transitions, Attributes.of(ATTR_NEGOTIATION_STATE, "REQUESTED")));
+    assertEquals(1, counter(transitions, Attributes.of(ATTR_NEGOTIATION_STATE, "FINALIZED")));
 
     var duration =
         histogram(
                 BusinessMetricsEventSubscriber.METRIC_NEGOTIATION_DURATION,
-                Attributes.of(ATTR_STATE, "FINALIZED"))
+                Attributes.of(ATTR_NEGOTIATION_STATE, "FINALIZED"))
             .orElseThrow();
     assertEquals(1, duration.getCount());
     assertEquals(2.5, duration.getSum(), 1e-9);
+    assertTrue(metric("contract_negotiation.transitions").isEmpty());
   }
 
   @Test
@@ -110,13 +112,13 @@ public class BusinessMetricsEventSubscriberTest {
     assertTrue(
         histogram(
                 BusinessMetricsEventSubscriber.METRIC_NEGOTIATION_DURATION,
-                Attributes.of(ATTR_STATE, "FINALIZED"))
+                Attributes.of(ATTR_NEGOTIATION_STATE, "FINALIZED"))
             .isEmpty());
     assertEquals(
         1,
         counter(
             BusinessMetricsEventSubscriber.METRIC_NEGOTIATION_TRANSITIONS,
-            Attributes.of(ATTR_STATE, "FINALIZED")));
+            Attributes.of(ATTR_NEGOTIATION_STATE, "FINALIZED")));
   }
 
   @Test
@@ -142,12 +144,12 @@ public class BusinessMetricsEventSubscriberTest {
         1,
         counter(
             BusinessMetricsEventSubscriber.METRIC_TRANSFER_TRANSITIONS,
-            Attributes.of(ATTR_STATE, "DEPROVISIONED", ATTR_TRANSFER_TYPE, "PROVIDER")));
+            Attributes.of(ATTR_TRANSFER_STATE, "DEPROVISIONED", ATTR_ROLE, "provider")));
 
     var duration =
         histogram(
                 BusinessMetricsEventSubscriber.METRIC_TRANSFER_DURATION,
-                Attributes.of(ATTR_TRANSFER_TYPE, "PROVIDER"))
+                Attributes.of(ATTR_ROLE, "provider"))
             .orElseThrow();
     assertEquals(1, duration.getCount());
     assertEquals(5.0, duration.getSum(), 1e-9);
@@ -180,6 +182,24 @@ public class BusinessMetricsEventSubscriberTest {
   }
 
   @Test
+  void transferMetricsAreSplitByRole() {
+    subscriber.on(
+        envelope(
+            transfer("tp-1", TransferProcessInitiated.Builder.newInstance(), "CONSUMER"), START));
+    subscriber.on(
+        envelope(
+            transfer("tp-2", TransferProcessInitiated.Builder.newInstance(), "UNKNOWN"), START));
+
+    var transitions = BusinessMetricsEventSubscriber.METRIC_TRANSFER_TRANSITIONS;
+    assertEquals(
+        1,
+        counter(
+            transitions, Attributes.of(ATTR_TRANSFER_STATE, "INITIATED", ATTR_ROLE, "consumer")));
+    // an unknown process type gives no role attribute rather than a made-up value
+    assertEquals(1, counter(transitions, Attributes.of(ATTR_TRANSFER_STATE, "INITIATED")));
+  }
+
+  @Test
   void meterFailuresDoNotPropagate() {
     var meter = mock(Meter.class, RETURNS_DEEP_STUBS);
     var failingCounter = mock(LongCounter.class);
@@ -197,7 +217,7 @@ public class BusinessMetricsEventSubscriberTest {
   }
 
   private static Attributes interruption(String state, String reason) {
-    return Attributes.of(ATTR_STATE, state, ATTR_TRANSFER_TYPE, "PROVIDER", ATTR_REASON, reason);
+    return Attributes.of(ATTR_TRANSFER_STATE, state, ATTR_ROLE, "provider", ATTR_REASON, reason);
   }
 
   private long counter(String name, Attributes attributes) {
@@ -248,11 +268,16 @@ public class BusinessMetricsEventSubscriberTest {
 
   private static <B extends TransferProcessEvent.Builder<?, B>> TransferProcessEvent transfer(
       String id, B builder) {
+    return transfer(id, builder, "PROVIDER");
+  }
+
+  private static <B extends TransferProcessEvent.Builder<?, B>> TransferProcessEvent transfer(
+      String id, B builder, String processType) {
     return builder
         .transferProcessId(id)
         .assetId("asset-1")
         .contractId("agreement-1")
-        .type("PROVIDER")
+        .type(processType)
         .build();
   }
 

@@ -265,17 +265,17 @@ OpenTelemetry SDK periodic reader.
 |-----|---------|-------------|
 | `edc.otel.metrics.business.enabled` (env `EDC_OTEL_METRICS_BUSINESS_ENABLED`) | `true` | Turns business metrics on or off |
 | `edc.otel.metrics.business.state-cache.size` | `10000` | Maximum number of in-flight entities tracked per domain to compute durations |
-| `edc.otel.metrics.business.reason.max-distinct` | `50` | Maximum number of distinct `reason` values before new ones are grouped as `other` |
+| `edc.otel.metrics.business.reason.max-distinct` | `50` | Maximum number of distinct `transfer.reason` values before new ones are grouped as `other` |
 
 ### Metrics
 
 | Metric | Type | Unit | Attributes | Meaning |
 |--------|------|------|------------|---------|
-| `contract_negotiation.transitions` | counter | `{transition}` | `state` | One per negotiation state change |
-| `contract_negotiation.duration` | histogram | `s` | `state` (`FINALIZED` / `TERMINATED`) | From the first state (`INITIATED`, `REQUESTED` or `OFFERED`) to the final state |
-| `transfer_process.transitions` | counter | `{transition}` | `state`, `type` | One per transfer state change |
-| `transfer_process.duration` | histogram | `s` | `type` | From `INITIATED` to `DEPROVISIONED` |
-| `transfer_process.interruptions` | counter | `{transition}` | `state` (`TERMINATED` / `SUSPENDED`), `reason`, `type` | Terminations and suspensions, by reason |
+| `edc.controlplane.negotiation.transitions` | counter | `{transition}` | `negotiation.state` | One per negotiation state change |
+| `edc.controlplane.negotiation.duration` | histogram | `s` | `negotiation.state` (`FINALIZED` / `TERMINATED`) | From the first state (`INITIATED`, `REQUESTED` or `OFFERED`) to the final state |
+| `edc.controlplane.transfer.transitions` | counter | `{transition}` | `transfer.state`, `participant.role` | One per transfer state change |
+| `edc.controlplane.transfer.duration` | histogram | `s` | `participant.role` | From `INITIATED` to `DEPROVISIONED` |
+| `edc.controlplane.transfer.interruptions` | counter | `{transition}` | `transfer.state` (`TERMINATED` / `SUSPENDED`), `transfer.reason`, `participant.role` | Terminations and suspensions, by reason |
 
 Histogram buckets (seconds): `0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600`.
 
@@ -284,11 +284,16 @@ Notes:
 - A duration is only recorded when the same process saw the entity from its first state.
   Negotiations and transfers that were already in progress when the connector (re)started are
   counted in `transitions` but not in `duration`.
-- `reason` is cut to 128 characters. An empty reason becomes `unspecified`. After
-  `reason.max-distinct` different values, new reasons are reported as `other`. This keeps the
-  number of series under control, because EDC reasons are free text and often contain ids.
+- `participant.role` is the role of this connector, `provider` or `consumer`, taken from the EDC
+  process type as in the audit logs. It is omitted when the type is unknown.
+- `transfer.reason` comes from the same EDC field as the `transfer.reason` audit attribute, but
+  its value is normalized here: it is cut to 128 characters, an empty reason becomes
+  `unspecified`, and after `reason.max-distinct` different values new reasons are reported as
+  `other`. This keeps the number of series under control, because EDC reasons are free text and
+  often contain ids. Use the audit logs for the exact reason.
 - Backends such as Prometheus may rename the metrics (for example
-  `contract_negotiation_transitions_total`, `transfer_process_duration_seconds_bucket`).
+  `edc_controlplane_negotiation_transitions_total`,
+  `edc_controlplane_transfer_duration_seconds_bucket`).
 
 ## 6. Verifying that it works
 
@@ -364,7 +369,7 @@ code on failure.
    catalog audit, check the `callback …` line and the 6 `subscribed` / `already exists` lines. No
    `could not subscribe … retrying` line should keep repeating.
 2. Collector: records with `service.name` = your `OTEL_SERVICE_NAME` and body `Audit: …` arrive
-   after a negotiation, and metrics `contract_negotiation.*` / `transfer_process.*` arrive within
+   after a negotiation, and metrics `edc.controlplane.negotiation.*` / `edc.controlplane.transfer.*` arrive within
    about a minute.
 3. Catalog: change an offering in the Marketplace (or with a `PATCH` on TMForum). An
    `Audit: ContractDefinitionUpdated` record should arrive within seconds.
