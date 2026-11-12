@@ -123,8 +123,8 @@ one OTLP log record. The body is `Audit: <EventType>` (for example
 `Audit: ContractNegotiationFinalized`). Severity is `WARN` for `TERMINATED` and `INFO` for every
 other state.
 
-All audit records, catalog audit included (section 4), use the instrumentation scope `edc-audit`,
-the same as participant-edc-connector. The business metrics (section 5) use `edc-otel`.
+All audit records, catalog audit included (section 4), use the instrumentation scope `edc-audit`.
+The business metrics (section 5) use `edc-otel`.
 
 ### Settings
 
@@ -136,9 +136,8 @@ the same as participant-edc-connector. The business metrics (section 5) use `edc
 
 ### Attributes
 
-Attribute names match the audit logs of `participant-edc-connector`, so the same queries work for
-both connectors in a shared backend. The `audit.*` and `event.id` attributes are added by
-fdsc-edc. Attributes whose value is not carried by the EDC event are omitted, never emitted empty.
+The `audit.*` and `event.id` attributes are added by fdsc-edc. Attributes whose value is not
+carried by the EDC event are omitted, never emitted empty.
 
 | Attribute | Present on | Value |
 |-----------|-----------|-------|
