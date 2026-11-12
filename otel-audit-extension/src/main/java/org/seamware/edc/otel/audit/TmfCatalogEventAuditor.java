@@ -19,6 +19,7 @@ package org.seamware.edc.otel.audit;
 import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_DOMAIN;
 import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_EVENT_ID;
 import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_EVENT_TYPE;
+import static org.seamware.edc.otel.audit.AuditEventSubscriber.ATTR_PARTICIPANT_ID;
 import static org.seamware.edc.otel.audit.AuditEventSubscriber.BODY_PREFIX;
 
 import io.opentelemetry.api.common.Attributes;
@@ -108,12 +109,17 @@ public class TmfCatalogEventAuditor {
   private final Monitor monitor;
   private final Clock clock;
   private final Map<String, Boolean> seenEvents;
+  private final String participantId;
 
+  /**
+   * @param participantId id of this connector ({@code edc.participant.id}), may be {@code null}
+   */
   public TmfCatalogEventAuditor(
-      Logger otelLogger, Monitor monitor, Clock clock, int dedupCacheSize) {
+      Logger otelLogger, Monitor monitor, Clock clock, int dedupCacheSize, String participantId) {
     this.otelLogger = otelLogger;
     this.monitor = monitor;
     this.clock = clock;
+    this.participantId = participantId;
     this.seenEvents =
         Collections.synchronizedMap(
             new LinkedHashMap<String, Boolean>(16, 0.75f, true) {
@@ -166,6 +172,7 @@ public class TmfCatalogEventAuditor {
             .put(ATTR_TMF_ID, tmfId);
     putIfPresent(attributes, DOMAIN_ID_ATTRIBUTES.get(kind.domain()), externalId);
     putIfPresent(attributes, ATTR_EVENT_ID, asString(notification.get("eventId")));
+    putIfPresent(attributes, ATTR_PARTICIPANT_ID, participantId);
     putIfPresent(attributes, ATTR_LIFECYCLE_STATUS, asString(entity.get("lifecycleStatus")));
     if (DOMAIN_CONTRACT_DEFINITION.equals(kind.domain())) {
       putIfPresent(

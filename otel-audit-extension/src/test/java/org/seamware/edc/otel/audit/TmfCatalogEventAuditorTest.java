@@ -17,6 +17,7 @@
 package org.seamware.edc.otel.audit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
 
 import io.opentelemetry.api.common.AttributeKey;
@@ -50,7 +51,11 @@ public class TmfCatalogEventAuditorTest {
             .build();
     auditor =
         new TmfCatalogEventAuditor(
-            loggerProvider.get("test"), mock(Monitor.class), Clock.systemUTC(), 100);
+            loggerProvider.get("test"),
+            mock(Monitor.class),
+            Clock.systemUTC(),
+            100,
+            "urn:connector:fdsc-edc");
   }
 
   @Test
@@ -73,6 +78,8 @@ public class TmfCatalogEventAuditorTest {
     assertEquals(
         TmfCatalogEventAuditor.SOURCE_TMFORUM, attr(record, TmfCatalogEventAuditor.ATTR_SOURCE));
     assertEquals("Active", attr(record, TmfCatalogEventAuditor.ATTR_LIFECYCLE_STATUS));
+    assertEquals("urn:connector:fdsc-edc", attr(record, AuditEventSubscriber.ATTR_PARTICIPANT_ID));
+    assertNull(attr(record, AuditEventSubscriber.ATTR_CONTEXT_ID));
     assertEquals("evt-1", attr(record, AuditEventSubscriber.ATTR_EVENT_ID));
     assertEquals(
         Instant.parse(EVENT_TIME).toEpochMilli() * 1_000_000L, record.getTimestampEpochNanos());

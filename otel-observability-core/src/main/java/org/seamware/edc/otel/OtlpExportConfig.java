@@ -43,6 +43,11 @@ public record OtlpExportConfig(Protocol protocol, String logsEndpoint, String me
   static final String DEFAULT_GRPC_ENDPOINT = "http://otel-collector:4317";
   static final String DEFAULT_SERVICE_NAME = "fdsc-edc";
   static final AttributeKey<String> SERVICE_NAME = AttributeKey.stringKey("service.name");
+  static final AttributeKey<String> SERVICE_NAMESPACE = AttributeKey.stringKey("service.namespace");
+  static final AttributeKey<String> SERVICE_INSTANCE_ID =
+      AttributeKey.stringKey("service.instance.id");
+  static final AttributeKey<String> DATASPACE_PARTICIPANT_ID =
+      AttributeKey.stringKey("dataspace.participant.id");
 
   private static final String LOGS_PATH = "/v1/logs";
   private static final String METRICS_PATH = "/v1/metrics";
@@ -92,11 +97,32 @@ public record OtlpExportConfig(Protocol protocol, String logsEndpoint, String me
    *     pairs
    */
   public static Resource resource(String serviceName, String resourceAttributes) {
+    return resource(serviceName, resourceAttributes, null, null, null);
+  }
+
+  /**
+   * Builds the resource attached to every log record and metric, with defaults for the attributes
+   * that identify the connector. The defaults only fill in what {@code resourceAttributes} does not
+   * set, and are omitted when blank.
+   *
+   * @param serviceNamespace {@code edc.otel.service.namespace}
+   * @param serviceInstanceId EDC runtime id
+   * @param participantId {@code edc.participant.id}, as {@code dataspace.participant.id}
+   */
+  public static Resource resource(
+      String serviceName,
+      String resourceAttributes,
+      String serviceNamespace,
+      String serviceInstanceId,
+      String participantId) {
     var parsed = parseResourceAttributes(resourceAttributes);
     if (!isBlank(serviceName)) {
       parsed.put(SERVICE_NAME.getKey(), serviceName.trim());
     }
     parsed.putIfAbsent(SERVICE_NAME.getKey(), DEFAULT_SERVICE_NAME);
+    putDefault(parsed, SERVICE_NAMESPACE, serviceNamespace);
+    putDefault(parsed, SERVICE_INSTANCE_ID, serviceInstanceId);
+    putDefault(parsed, DATASPACE_PARTICIPANT_ID, participantId);
 
     var attributes = Attributes.builder();
     parsed.forEach(attributes::put);
@@ -124,6 +150,13 @@ public record OtlpExportConfig(Protocol protocol, String logsEndpoint, String me
         .filter(pair -> pair.length == 2 && !pair[0].isBlank())
         .forEach(pair -> parsed.put(pair[0].trim(), pair[1].trim()));
     return parsed;
+  }
+
+  private static void putDefault(
+      Map<String, String> attributes, AttributeKey<String> key, String value) {
+    if (!isBlank(value)) {
+      attributes.putIfAbsent(key.getKey(), value.trim());
+    }
   }
 
   private static String signalEndpoint(String baseEndpoint, Protocol protocol, String path) {

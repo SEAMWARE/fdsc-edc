@@ -34,6 +34,7 @@ import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.runtime.metamodel.annotation.Setting;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.spi.system.configuration.Config;
 
 /**
  * Provides the OpenTelemetry {@link Logger} and {@link Meter} used by the audit and business
@@ -50,6 +51,17 @@ import org.eclipse.edc.spi.system.ServiceExtensionContext;
 public class OtelCoreExtension implements ServiceExtension {
 
   public static final String NAME = "OpenTelemetry Core";
+
+  /** EDC setting holding the id of this connector, emitted as is (DID or not). */
+  public static final String PARTICIPANT_ID_SETTING = "edc.participant.id";
+
+  @Setting(
+      key = "edc.otel.service.namespace",
+      description =
+          "service.namespace resource attribute. A service.namespace entry in"
+              + " OTEL_RESOURCE_ATTRIBUTES takes precedence",
+      required = false)
+  private String serviceNamespace;
 
   @Setting(
       key = "edc.otel.logs.endpoint",
@@ -120,7 +132,13 @@ public class OtelCoreExtension implements ServiceExtension {
             otlpMetricsEndpoint,
             edcLogsEndpoint,
             edcMetricsEndpoint);
-    var resource = OtlpExportConfig.resource(serviceName, resourceAttributes);
+    var resource =
+        OtlpExportConfig.resource(
+            serviceName,
+            resourceAttributes,
+            serviceNamespace,
+            context.getRuntimeId(),
+            participantId(context.getConfig()));
 
     monitor.info(
         String.format(
@@ -167,6 +185,12 @@ public class OtelCoreExtension implements ServiceExtension {
       sdkMeterProvider.forceFlush();
       sdkMeterProvider.shutdown();
     }
+  }
+
+  /** Id of this connector from {@value #PARTICIPANT_ID_SETTING}, or {@code null} when blank. */
+  public static String participantId(Config config) {
+    var value = config.getString(PARTICIPANT_ID_SETTING, null);
+    return value == null || value.isBlank() ? null : value.trim();
   }
 
   private static LogRecordExporter logExporter(OtlpExportConfig config) {

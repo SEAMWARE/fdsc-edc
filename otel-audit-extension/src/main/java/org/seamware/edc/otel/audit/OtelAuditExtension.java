@@ -35,6 +35,7 @@ import org.eclipse.edc.spi.types.TypeManager;
 import org.eclipse.edc.web.spi.WebService;
 import org.eclipse.edc.web.spi.configuration.PortMapping;
 import org.eclipse.edc.web.spi.configuration.PortMappingRegistry;
+import org.seamware.edc.otel.OtelCoreExtension;
 
 /**
  * Registers an {@link AuditEventSubscriber} that emits OpenTelemetry audit logs for every contract
@@ -115,8 +116,10 @@ public class OtelAuditExtension implements ServiceExtension {
   @Override
   public void initialize(ServiceExtensionContext context) {
     var monitor = context.getMonitor();
+    var participantId = OtelCoreExtension.participantId(context.getConfig());
     if (enabled) {
-      var subscriber = new AuditEventSubscriber(otelLogger, monitor, clock, stateCacheSize);
+      var subscriber =
+          new AuditEventSubscriber(otelLogger, monitor, clock, stateCacheSize, participantId);
       eventRouter.register(ContractNegotiationEvent.class, subscriber);
       eventRouter.register(TransferProcessEvent.class, subscriber);
     } else {
@@ -124,7 +127,7 @@ public class OtelAuditExtension implements ServiceExtension {
     }
 
     if (catalogEnabled) {
-      initializeCatalogAudit(context, monitor);
+      initializeCatalogAudit(context, monitor, participantId);
     } else {
       monitor.info("Otel Audit: catalog audit disabled via edc.otel.audit.catalog.enabled");
     }
@@ -146,7 +149,8 @@ public class OtelAuditExtension implements ServiceExtension {
     }
   }
 
-  private void initializeCatalogAudit(ServiceExtensionContext context, Monitor monitor) {
+  private void initializeCatalogAudit(
+      ServiceExtensionContext context, Monitor monitor, String participantId) {
     var config = context.getConfig();
     if (!config.getBoolean("tmfExtension.enabled", false)) {
       monitor.info("Otel Audit: catalog audit skipped, it requires tmfExtension.enabled=true");
@@ -166,7 +170,9 @@ public class OtelAuditExtension implements ServiceExtension {
                 tmfEventsApiConfiguration.port(),
                 tmfEventsApiConfiguration.path());
 
-    var auditor = new TmfCatalogEventAuditor(otelLogger, monitor, clock, catalogDedupCacheSize);
+    var auditor =
+        new TmfCatalogEventAuditor(
+            otelLogger, monitor, clock, catalogDedupCacheSize, participantId);
     portMappingRegistry.register(
         new PortMapping(
             TMF_EVENTS_CONTEXT,

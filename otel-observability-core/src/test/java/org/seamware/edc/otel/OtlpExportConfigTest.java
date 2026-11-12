@@ -17,6 +17,7 @@
 package org.seamware.edc.otel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.opentelemetry.api.common.AttributeKey;
@@ -124,5 +125,43 @@ public class OtlpExportConfigTest {
     var resource = OtlpExportConfig.resource(" ", "service.name=from-attributes,broken,=empty-key");
 
     assertEquals("from-attributes", resource.getAttribute(OtlpExportConfig.SERVICE_NAME));
+  }
+
+  @Test
+  void connectorIdentityIsAddedAsDefaults() {
+    var resource =
+        OtlpExportConfig.resource(null, null, "deploytour", "runtime-1", "urn:connector:fdsc-edc");
+
+    assertEquals(
+        OtlpExportConfig.DEFAULT_SERVICE_NAME,
+        resource.getAttribute(OtlpExportConfig.SERVICE_NAME));
+    assertEquals("deploytour", resource.getAttribute(OtlpExportConfig.SERVICE_NAMESPACE));
+    assertEquals("runtime-1", resource.getAttribute(OtlpExportConfig.SERVICE_INSTANCE_ID));
+    assertEquals(
+        "urn:connector:fdsc-edc", resource.getAttribute(OtlpExportConfig.DATASPACE_PARTICIPANT_ID));
+  }
+
+  @Test
+  void resourceAttributesTakePrecedenceOverIdentityDefaults() {
+    var resource =
+        OtlpExportConfig.resource(
+            null,
+            "service.namespace=from-env,service.instance.id=pod-7,dataspace.participant.id=did:web:x",
+            "deploytour",
+            "runtime-1",
+            "urn:connector:fdsc-edc");
+
+    assertEquals("from-env", resource.getAttribute(OtlpExportConfig.SERVICE_NAMESPACE));
+    assertEquals("pod-7", resource.getAttribute(OtlpExportConfig.SERVICE_INSTANCE_ID));
+    assertEquals("did:web:x", resource.getAttribute(OtlpExportConfig.DATASPACE_PARTICIPANT_ID));
+  }
+
+  @Test
+  void blankIdentityDefaultsAreOmitted() {
+    var resource = OtlpExportConfig.resource(null, null, " ", null, "");
+
+    assertNull(resource.getAttribute(OtlpExportConfig.SERVICE_NAMESPACE));
+    assertNull(resource.getAttribute(OtlpExportConfig.SERVICE_INSTANCE_ID));
+    assertNull(resource.getAttribute(OtlpExportConfig.DATASPACE_PARTICIPANT_ID));
   }
 }

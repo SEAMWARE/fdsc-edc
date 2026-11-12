@@ -34,6 +34,7 @@ import org.eclipse.edc.spi.event.EventSubscriber;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.seamware.edc.otel.EntityLifecycleTracker;
 import org.seamware.edc.otel.LifecycleStates;
+import org.seamware.edc.otel.ParticipantRole;
 
 /**
  * Translates contract negotiation and transfer process events into OpenTelemetry audit log records.
@@ -64,6 +65,8 @@ public class AuditEventSubscriber implements EventSubscriber {
   static final String ATTR_AGREEMENT_ID = "contract.agreement.id";
   static final String ATTR_OFFER_ID = "contract.offer.id";
   static final String ATTR_CONTEXT_ID = "participant.context.id";
+  static final String ATTR_PARTICIPANT_ID = "participant.id";
+  static final String ATTR_ROLE = "participant.role";
   static final String ATTR_PROVIDER = "participant.provider";
   static final String ATTR_CONSUMER = "participant.consumer";
   static final String ATTR_SIGNING_DATE = "contract.signing.date";
@@ -86,11 +89,17 @@ public class AuditEventSubscriber implements EventSubscriber {
   private final Clock clock;
   private final EntityLifecycleTracker negotiationTracker;
   private final EntityLifecycleTracker transferTracker;
+  private final String participantId;
 
-  public AuditEventSubscriber(Logger otelLogger, Monitor monitor, Clock clock, int maxEntries) {
+  /**
+   * @param participantId id of this connector ({@code edc.participant.id}), may be {@code null}
+   */
+  public AuditEventSubscriber(
+      Logger otelLogger, Monitor monitor, Clock clock, int maxEntries, String participantId) {
     this.otelLogger = otelLogger;
     this.monitor = monitor;
     this.clock = clock;
+    this.participantId = participantId;
     this.negotiationTracker =
         new EntityLifecycleTracker(maxEntries, LifecycleStates.NEGOTIATION_FINAL_STATES);
     this.transferTracker =
@@ -139,6 +148,20 @@ public class AuditEventSubscriber implements EventSubscriber {
       putIfPresent(attributes, ATTR_CONSUMER, agreement.getConsumerId());
       putIfPresent(attributes, ATTR_ASSET_ID, agreement.getAssetId());
       attributes.put(ATTR_SIGNING_DATE, agreement.getContractSigningDate());
+      putIfPresent(
+          attributes,
+          ATTR_ROLE,
+          ParticipantRole.fromParties(
+              participantId, agreement.getProviderId(), agreement.getConsumerId()));
+    } else {
+      var assigner =
+          lastOffer != null && lastOffer.getPolicy() != null
+              ? lastOffer.getPolicy().getAssigner()
+              : null;
+      putParties(
+          attributes,
+          ParticipantRole.fromOfferAssigner(participantId, assigner, event.getCounterPartyId()),
+          event.getCounterPartyId());
     }
 
     emit(envelope, newState, attributes.build());
@@ -155,6 +178,7 @@ public class AuditEventSubscriber implements EventSubscriber {
     putIfPresent(attributes, ATTR_CONTRACT_ID, event.getContractId());
     putIfPresent(attributes, ATTR_PROTOCOL, event.getProtocol());
     putIfPresent(attributes, ATTR_CONTEXT_ID, event.getParticipantContextId());
+    putIfPresent(attributes, ATTR_ROLE, ParticipantRole.fromProcessType(event.getType()));
     attributes.put(
         ATTR_TRANSFER_TYPE, event.getType() != null ? event.getType() : UNKNOWN_TRANSFER_TYPE);
     if (event instanceof TransferProcessStarted started) {
@@ -182,7 +206,23 @@ public class AuditEventSubscriber implements EventSubscriber {
             .put(ATTR_STATE_NEW, newState);
     putIfPresent(attributes, ATTR_EVENT_ID, envelope.getId());
     putIfPresent(attributes, ATTR_STATE_PREVIOUS, previousState);
+    putIfPresent(attributes, ATTR_PARTICIPANT_ID, participantId);
     return attributes;
+  }
+
+  /**
+   * Consumer and provider of a negotiation not yet finalized: this connector and its counterparty,
+   * in the order given by the role. Nothing is emitted when the role is unknown.
+   */
+  private void putParties(AttributesBuilder attributes, String role, String counterPartyId) {
+    if (role == null) {
+      return;
+    }
+    attributes.put(ATTR_ROLE, role);
+    var provider = ParticipantRole.PROVIDER.equals(role) ? participantId : counterPartyId;
+    var consumer = ParticipantRole.PROVIDER.equals(role) ? counterPartyId : participantId;
+    putIfPresent(attributes, ATTR_PROVIDER, provider);
+    putIfPresent(attributes, ATTR_CONSUMER, consumer);
   }
 
   private void emit(EventEnvelope<?> envelope, String newState, Attributes attributes) {

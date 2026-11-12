@@ -55,6 +55,8 @@ import org.junit.jupiter.api.Test;
 public class AuditEventSubscriberTest {
 
   private static final long EVENT_AT = 1_700_000_000_000L;
+  // not a DID on purpose: participant ids are emitted as is
+  private static final String SELF = "urn:connector:fdsc-edc";
 
   private InMemoryLogRecordExporter exporter;
   private AuditEventSubscriber subscriber;
@@ -69,7 +71,7 @@ public class AuditEventSubscriberTest {
             .build();
     monitor = mock(Monitor.class);
     subscriber =
-        new AuditEventSubscriber(loggerProvider.get("test"), monitor, Clock.systemUTC(), 100);
+        new AuditEventSubscriber(loggerProvider.get("test"), monitor, Clock.systemUTC(), 100, SELF);
   }
 
   @Test
@@ -105,6 +107,83 @@ public class AuditEventSubscriberTest {
     assertNull(attr(agreed, "offer.id"));
     assertEquals("asset-1", attr(agreed, AuditEventSubscriber.ATTR_ASSET_ID));
     assertEquals("ctx-1", attr(agreed, "participant.context.id"));
+    assertEquals(SELF, attr(agreed, "participant.id"));
+    // the offer has no assigner, so the role and the parties cannot be derived
+    assertNull(attr(agreed, "participant.role"));
+    assertNull(attr(agreed, AuditEventSubscriber.ATTR_PROVIDER));
+    assertNull(attr(agreed, AuditEventSubscriber.ATTR_CONSUMER));
+  }
+
+  @Test
+  void negotiationRoleIsProviderWhenThisConnectorAssignsTheOffer() {
+    subscriber.on(
+        envelope(
+            negotiation(
+                ContractNegotiationRequested.Builder.newInstance(),
+                offerAssignedBy(SELF),
+                "did:web:consumer")));
+
+    var requested = exporter.getFinishedLogRecordItems().get(0);
+    assertEquals("provider", attr(requested, "participant.role"));
+    assertEquals(SELF, attr(requested, AuditEventSubscriber.ATTR_PROVIDER));
+    assertEquals("did:web:consumer", attr(requested, AuditEventSubscriber.ATTR_CONSUMER));
+  }
+
+  @Test
+  void negotiationRoleIsConsumerWhenTheCounterpartyAssignsTheOffer() {
+    subscriber.on(
+        envelope(
+            negotiation(
+                ContractNegotiationRequested.Builder.newInstance(),
+                offerAssignedBy("did:web:provider"),
+                "did:web:provider")));
+
+    var requested = exporter.getFinishedLogRecordItems().get(0);
+    assertEquals("consumer", attr(requested, "participant.role"));
+    assertEquals("did:web:provider", attr(requested, AuditEventSubscriber.ATTR_PROVIDER));
+    assertEquals(SELF, attr(requested, AuditEventSubscriber.ATTR_CONSUMER));
+  }
+
+  @Test
+  void negotiationRoleIsOmittedWhenTheAssignerIsNeitherParty() {
+    subscriber.on(
+        envelope(
+            negotiation(
+                ContractNegotiationRequested.Builder.newInstance(),
+                offerAssignedBy("did:web:third"),
+                "did:web:provider")));
+
+    var requested = exporter.getFinishedLogRecordItems().get(0);
+    assertNull(attr(requested, "participant.role"));
+    assertNull(attr(requested, AuditEventSubscriber.ATTR_PROVIDER));
+    assertNull(attr(requested, AuditEventSubscriber.ATTR_CONSUMER));
+  }
+
+  @Test
+  void withoutOwnIdOnlyTheCounterpartySideIsEmitted() {
+    var anonymous =
+        new AuditEventSubscriber(
+            SdkLoggerProvider.builder()
+                .addLogRecordProcessor(SimpleLogRecordProcessor.create(exporter))
+                .build()
+                .get("test"),
+            monitor,
+            Clock.systemUTC(),
+            100,
+            null);
+
+    anonymous.on(
+        envelope(
+            negotiation(
+                ContractNegotiationRequested.Builder.newInstance(),
+                offerAssignedBy("did:web:provider"),
+                "did:web:provider")));
+
+    var requested = exporter.getFinishedLogRecordItems().get(0);
+    assertNull(attr(requested, "participant.id"));
+    assertEquals("consumer", attr(requested, "participant.role"));
+    assertEquals("did:web:provider", attr(requested, AuditEventSubscriber.ATTR_PROVIDER));
+    assertNull(attr(requested, AuditEventSubscriber.ATTR_CONSUMER));
   }
 
   @Test
@@ -134,6 +213,29 @@ public class AuditEventSubscriberTest {
         finalized
             .getAttributes()
             .get(AttributeKey.longKey(AuditEventSubscriber.ATTR_SIGNING_DATE)));
+    // this connector is neither party of the agreement
+    assertNull(attr(finalized, "participant.role"));
+  }
+
+  @Test
+  void finalizedNegotiationRoleComesFromTheAgreement() {
+    var agreement =
+        ContractAgreement.Builder.newInstance()
+            .id("agreement-1")
+            .providerId("did:web:provider")
+            .consumerId(SELF)
+            .assetId("asset-1")
+            .contractSigningDate(1_700_000_000L)
+            .policy(Policy.Builder.newInstance().build())
+            .build();
+    var builder = ContractNegotiationFinalized.Builder.newInstance().contractAgreement(agreement);
+
+    subscriber.on(envelope(negotiation(builder, null)));
+
+    var finalized = exporter.getFinishedLogRecordItems().get(0);
+    assertEquals("consumer", attr(finalized, "participant.role"));
+    assertEquals("did:web:provider", attr(finalized, AuditEventSubscriber.ATTR_PROVIDER));
+    assertEquals(SELF, attr(finalized, AuditEventSubscriber.ATTR_CONSUMER));
   }
 
   @Test
@@ -186,6 +288,28 @@ public class AuditEventSubscriberTest {
     // attributes not carried by the event are omitted, not emitted empty
     assertNull(attr(records.get(0), AuditEventSubscriber.ATTR_PROTOCOL));
     assertNull(attr(records.get(0), "participant.context.id"));
+    assertEquals("provider", attr(terminated, "participant.role"));
+    assertEquals(SELF, attr(terminated, "participant.id"));
+  }
+
+  @Test
+  void transferRoleComesFromTheProcessType() {
+    subscriber.on(
+        envelope(
+            TransferProcessRequested.Builder.newInstance()
+                .transferProcessId("tp-1")
+                .type("CONSUMER")
+                .build()));
+    subscriber.on(
+        envelope(
+            TransferProcessRequested.Builder.newInstance()
+                .transferProcessId("tp-2")
+                .type("SOMETHING_ELSE")
+                .build()));
+
+    var records = exporter.getFinishedLogRecordItems();
+    assertEquals("consumer", attr(records.get(0), "participant.role"));
+    assertNull(attr(records.get(1), "participant.role"));
   }
 
   @Test
@@ -214,7 +338,7 @@ public class AuditEventSubscriberTest {
     var failingLogger = mock(Logger.class);
     when(failingLogger.logRecordBuilder()).thenThrow(new IllegalStateException("exporter down"));
     var failingSubscriber =
-        new AuditEventSubscriber(failingLogger, monitor, Clock.systemUTC(), 100);
+        new AuditEventSubscriber(failingLogger, monitor, Clock.systemUTC(), 100, SELF);
 
     failingSubscriber.on(
         envelope(negotiation(ContractNegotiationRequested.Builder.newInstance(), null)));
@@ -224,9 +348,14 @@ public class AuditEventSubscriberTest {
 
   private static <B extends ContractNegotiationEvent.Builder<?, B>>
       ContractNegotiationEvent negotiation(B builder, ContractOffer offer) {
+    return negotiation(builder, offer, "provider");
+  }
+
+  private static <B extends ContractNegotiationEvent.Builder<?, B>>
+      ContractNegotiationEvent negotiation(B builder, ContractOffer offer, String counterPartyId) {
     builder
         .contractNegotiationId("cn-1")
-        .counterPartyId("provider")
+        .counterPartyId(counterPartyId)
         .counterPartyAddress("http://provider/protocol")
         .protocol("dataspace-protocol-http")
         .participantContextId("ctx-1");
@@ -234,6 +363,14 @@ public class AuditEventSubscriberTest {
       builder.contractOffers(List.of(offer));
     }
     return builder.build();
+  }
+
+  private static ContractOffer offerAssignedBy(String assigner) {
+    return ContractOffer.Builder.newInstance()
+        .id("offer-1")
+        .assetId("asset-1")
+        .policy(Policy.Builder.newInstance().assigner(assigner).build())
+        .build();
   }
 
   private static <E extends Event> EventEnvelope<E> envelope(E event) {

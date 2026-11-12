@@ -61,6 +61,20 @@ default.
 | `otel.exporter.otlp.protocol` | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc`. Any other value stops the connector at startup |
 | `otel.service.name` | `OTEL_SERVICE_NAME` | `fdsc-edc` | `service.name` resource attribute |
 | `otel.resource.attributes` | `OTEL_RESOURCE_ATTRIBUTES` | — | Extra resource attributes, `key=value,key=value` |
+| `edc.otel.service.namespace` | `EDC_OTEL_SERVICE_NAMESPACE` | — | `service.namespace` resource attribute. Omitted when not set |
+
+### Resource attributes
+
+Besides `service.name`, every log record and metric carries these resource attributes, which
+identify the connector:
+
+| Attribute | Value |
+|-----------|-------|
+| `service.namespace` | `edc.otel.service.namespace`, omitted when not set |
+| `service.instance.id` | EDC runtime id |
+| `dataspace.participant.id` | `edc.participant.id`, as is (DID or not), omitted when not set |
+
+An entry with the same key in `OTEL_RESOURCE_ATTRIBUTES` takes precedence over these values.
 
 ### Endpoint precedence
 
@@ -129,6 +143,8 @@ fdsc-edc. Attributes whose value is not carried by the EDC event are omitted, ne
 | `audit.domain` | all | `contract_negotiation` or `transfer_process` |
 | `audit.state.new` | all | New state, e.g. `REQUESTED`, `FINALIZED`, `PROVISIONING_REQUESTED` |
 | `audit.state.previous` | all except the first transition | Previous state seen by this process (see [limitations](#8-known-limitations)) |
+| `participant.id` | all | Id of this connector (`edc.participant.id`), as is. Omitted when not set |
+| `participant.role` | negotiation, transfer | `provider` or `consumer`, role of this connector. See below how it is derived. Omitted when it cannot be determined |
 | `negotiation.id` | negotiation | Contract negotiation id |
 | `participant.counterparty.id` | negotiation | Counterparty participant id |
 | `participant.counterparty.address` | negotiation | Counterparty DSP address |
@@ -138,12 +154,24 @@ fdsc-edc. Attributes whose value is not carried by the EDC event are omitted, ne
 | `asset.id` | negotiation, transfer | Asset id |
 | `contract.id` | negotiation `FINALIZED`, transfer | Local agreement id, as stored by this connector |
 | `contract.agreement.id` | negotiation `FINALIZED` | Agreement id shared by both connectors in DSP. Use it, not `contract.id`, to correlate records of the provider and the consumer |
-| `participant.provider`, `participant.consumer` | negotiation `FINALIZED` | Agreement parties |
+| `participant.provider`, `participant.consumer` | negotiation | Provider and consumer ids. On `FINALIZED`, the agreement parties. Before, this connector and its counterparty, ordered by `participant.role`; omitted when the role is unknown |
 | `contract.signing.date` | negotiation `FINALIZED` | Agreement signing date (epoch seconds) |
 | `transfer.id` | transfer | Transfer process id |
 | `transfer.type` | transfer | Transfer type, `UNKNOWN` if it is not set |
 | `transfer.data.destination.type` | transfer `STARTED` | Data address type, `NOT_SPECIFIED` if it is not set |
 | `transfer.reason` | transfer `TERMINATED` / `SUSPENDED` | Reason given by EDC |
+
+`participant.role` is derived from the event alone, the stores are never read:
+
+- Transfer: the EDC process type (`PROVIDER` / `CONSUMER`), in lower case.
+- Negotiation `FINALIZED`: `edc.participant.id` compared with the provider and consumer of the
+  agreement.
+- Other negotiation events: the assigner of the last contract offer, which is always the provider.
+  This connector is the provider when it is the assigner, and the consumer when the counterparty
+  is.
+
+All comparisons are exact string matches. The role is omitted when `edc.participant.id` is not set
+and the counterparty is not the assigner, or when the offer has no assigner.
 
 ## 4. Catalog audit via the TMForum hub
 
@@ -208,6 +236,7 @@ Body: `Audit: <Domain><Action>`, e.g. `Audit: AssetCreated`, `Audit: ContractDef
 |-----------|-------|
 | `event.type` | `AssetCreated`, `AssetUpdated`, `AssetStateChanged`, `ContractDefinitionCreated`, … |
 | `event.id` | TMForum `eventId`, if TMForum sends it |
+| `participant.id` | Id of this connector (`edc.participant.id`), omitted when not set |
 | `audit.domain` | `asset` or `contract_definition` |
 | `audit.action` | `created`, `updated` or `state_changed` |
 | `audit.source` | always `tmforum` |
