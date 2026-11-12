@@ -78,8 +78,14 @@ services:
   # Uses Scorpio NGSI-LD context broker for persistent storage.
   # -------------------------------------------------------------------------
   tmforum:
+    # The DSP TCK is stable with 1.5.4. The catalog audit needs TMF620 hub
+    # notifications, only sent from 1.10.1 on (production runs 1.14.1), so
+    # scripts/verify-tmf-audit.sh is run with TMF_VERSION=1.14.1.
     image: quay.io/fiware/tmforum-all-in-one:${TMF_VERSION:-1.5.4}
     environment:
+      # Mandatory since 1.10.x (ignored by older versions); the API extensions
+      # are not used by the TCK
+      API_EXTENSION_ENABLED: "false"
       MICRONAUT_HTTP_SERVICES_NGSI_URL: http://scorpio:9090
       MICRONAUT_HTTP_SERVICES_NGSI_PATH: ngsi-ld/v1
       MICRONAUT_CACHES_ENTITIES_MAXIMUM_SIZE: "1000"
@@ -200,6 +206,24 @@ services:
       - tck-net
 
   # -------------------------------------------------------------------------
+  # OpenTelemetry Collector - receives the connector audit logs and metrics
+  # -------------------------------------------------------------------------
+  # The otel extensions export to http://otel-collector:4318 by default. The
+  # debug exporter prints every record, inspect them with:
+  #   docker compose -f docker-compose.tck.yml logs otel-collector
+  # -------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector:0.115.1
+    # The image runs as an unprivileged user that cannot read the bind-mounted
+    # config when the checkout is not world-readable (e.g. umask 007)
+    user: "0:0"
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./config/tck/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
   # EDC Controlplane (OID4VC variant) configured for TCK mode
   # -------------------------------------------------------------------------
   edc:
@@ -228,6 +252,8 @@ services:
       retries: 30
       start_period: 30s
     depends_on:
+      otel-collector:
+        condition: service_started
       tmf-init:
         condition: service_healthy
       odrl-pap:

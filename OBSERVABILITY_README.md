@@ -1,0 +1,492 @@
+# Observability
+
+The controlplane images (`controlplane-oid4vc` and `controlplane-dcp`) export **audit logs** and
+**business metrics** over OTLP to an OpenTelemetry Collector. This document covers what to
+configure when deploying the connector and how to check that the telemetry arrives.
+
+| Module                    | What it does                                                                 |
+|---------------------------|------------------------------------------------------------------------------|
+| `otel-observability-core` | Sets up the OTLP exporters (logs + metrics) shared by the other two modules  |
+| `otel-audit-extension`    | Audit log records for contract negotiations, transfer processes and catalog changes made in TMForum |
+| `otel-business-metrics`   | Counters and histograms for negotiation and transfer lifecycles              |
+
+All three modules ship in both images and are **enabled by default**. They only observe EDC
+events: they never read or write the stores, and a telemetry failure never breaks a negotiation
+or a transfer.
+
+> This is separate from the OpenTelemetry Java agent. These extensions build their own
+> OpenTelemetry SDK and do not need the agent.
+
+## Contents
+
+1. [Setting configuration values](#1-setting-configuration-values)
+2. [OTLP export](#2-otlp-export)
+3. [Negotiation and transfer audit](#3-negotiation-and-transfer-audit)
+4. [Catalog audit via the TMForum hub](#4-catalog-audit-via-the-tmforum-hub)
+5. [Business metrics](#5-business-metrics)
+6. [Verifying that it works](#6-verifying-that-it-works)
+7. [Troubleshooting](#7-troubleshooting)
+8. [Known limitations](#8-known-limitations)
+
+## 1. Setting configuration values
+
+Settings are normal EDC configuration keys. EDC reads them from the properties file
+(`edc.fs.config`), from JVM system properties (`-Dkey=value`) and from environment variables.
+
+EDC maps an environment variable to a key by lowercasing it and replacing `_` with `.`. For example,
+`OTEL_EXPORTER_OTLP_ENDPOINT` becomes `otel.exporter.otlp.endpoint`.
+
+> **Keys that contain a hyphen cannot be set with an environment variable.**
+> `EDC_OTEL_AUDIT_STATE_CACHE_SIZE` becomes `edc.otel.audit.state.cache.size`, not
+> `edc.otel.audit.state-cache.size`, so EDC ignores it without any warning. Set these keys in the
+> properties file or as `-D` system properties (for example through `JAVA_TOOL_OPTIONS`):
+> `state-cache.size`, `catalog.callback-url`, `catalog.retry-interval`, `catalog.dedup-cache.size`,
+> `reason.max-distinct`.
+> You only need them to change the defaults, which work for a normal deployment.
+
+## 2. OTLP export
+
+Module `otel-observability-core`. Logs and metrics go to an OTLP endpoint, `http/protobuf` by
+default.
+
+### Settings
+
+| Key | Env variable | Default | Description |
+|-----|--------------|---------|-------------|
+| `edc.otel.logs.endpoint` | `EDC_OTEL_LOGS_ENDPOINT` | — | Full logs endpoint, used as is. Overrides everything below |
+| `edc.otel.metrics.endpoint` | `EDC_OTEL_METRICS_ENDPOINT` | — | Full metrics endpoint, used as is. Overrides everything below |
+| `otel.exporter.otlp.endpoint` | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://otel-collector:4318` (`:4317` for gRPC) | Base endpoint for both signals |
+| `otel.exporter.otlp.logs.endpoint` | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | — | Full logs endpoint, used as is |
+| `otel.exporter.otlp.metrics.endpoint` | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | — | Full metrics endpoint, used as is |
+| `otel.exporter.otlp.protocol` | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc`. Any other value stops the connector at startup |
+| `otel.service.name` | `OTEL_SERVICE_NAME` | `fdsc-edc` | `service.name` resource attribute |
+| `otel.resource.attributes` | `OTEL_RESOURCE_ATTRIBUTES` | — | Extra resource attributes, `key=value,key=value` |
+| `edc.otel.service.namespace` | `EDC_OTEL_SERVICE_NAMESPACE` | — | `service.namespace` resource attribute. Omitted when not set |
+
+### Resource attributes
+
+Besides `service.name`, every log record and metric carries these resource attributes, which
+identify the connector:
+
+| Attribute | Value |
+|-----------|-------|
+| `service.namespace` | `edc.otel.service.namespace`, omitted when not set |
+| `service.instance.id` | EDC runtime id |
+| `dataspace.participant.id` | `edc.participant.id`, as is (DID or not), omitted when not set |
+
+An entry with the same key in `OTEL_RESOURCE_ATTRIBUTES` takes precedence over these values.
+
+### Endpoint precedence
+
+For each signal (logs, metrics), the first value that is set wins:
+
+1. `edc.otel.logs.endpoint` / `edc.otel.metrics.endpoint`
+2. `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` / `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
+3. `OTEL_EXPORTER_OTLP_ENDPOINT` plus the signal path (`/v1/logs`, `/v1/metrics`). With `grpc`, no
+   path is added
+4. Default: `http://otel-collector:4318` (`http://otel-collector:4317` with `grpc`), plus the signal
+   path for HTTP
+
+Steps 1 and 2 use the URL exactly as given, so it must include `/v1/logs` or `/v1/metrics` when
+the protocol is HTTP.
+
+For `service.name`, `OTEL_SERVICE_NAME` overrides a `service.name=` entry in
+`OTEL_RESOURCE_ATTRIBUTES`.
+
+### Ignored variables
+
+`OTEL_LOGS_EXPORTER`, `OTEL_METRICS_EXPORTER`, `OTEL_TRACES_EXPORTER` and the other OpenTelemetry
+SDK autoconfigure variables are **ignored on purpose**. They only configure the OpenTelemetry Java
+agent, not these extensions. For example, `OTEL_METRICS_EXPORTER=none` does **not** turn off the
+business metrics: use `edc.otel.metrics.business.enabled=false` for that (see sections 3–5).
+
+### Typical deployment
+
+Only the standard variables are needed:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.monitoring:4318
+OTEL_SERVICE_NAME=fdsc-edc-provider
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod,dataspace.participant.id=did:web:example.org
+```
+
+At startup the connector logs the configuration it resolved. Check this line first:
+
+```
+Otel Core: exporting as service 'fdsc-edc-provider' over HTTP_PROTOBUF, logs to http://otel-collector.monitoring:4318/v1/logs, metrics to http://otel-collector.monitoring:4318/v1/metrics
+```
+
+## 3. Negotiation and transfer audit
+
+Module `otel-audit-extension`. Every contract negotiation and transfer process state change becomes
+one OTLP log record. The body is `Audit: <EventType>` (for example
+`Audit: ContractNegotiationFinalized`). Severity is `WARN` for `TERMINATED` and `INFO` for every
+other state.
+
+All audit records, catalog audit included (section 4), use the instrumentation scope `edc-audit`.
+The business metrics (section 5) use `edc-otel`.
+
+### Settings
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `edc.otel.audit.enabled` (env `EDC_OTEL_AUDIT_ENABLED`) | `true` | Turns negotiation/transfer audit and policy audit on or off. It does not affect catalog audit (section 4) |
+| `edc.otel.audit.state-cache.size` | `10000` | Maximum number of entities whose last state is kept in memory, used to fill in `audit.state.previous` |
+| `edc.otel.audit.agreement-cache.size` | `10000` | Maximum number of finalized agreements kept in memory, used to fill in `contract.agreement.id`, `participant.provider` and `participant.consumer` on transfer records |
+
+### Attributes
+
+The `audit.*` and `event.id` attributes are added by fdsc-edc. Attributes whose value is not
+carried by the EDC event are omitted, never emitted empty.
+
+| Attribute | Present on | Value |
+|-----------|-----------|-------|
+| `event.type` | all | EDC event class, e.g. `ContractNegotiationRequested`, `TransferProcessStarted` |
+| `event.id` | all | EDC event envelope id |
+| `audit.domain` | all | `contract_negotiation` or `transfer_process` |
+| `audit.state.new` | all | New state, e.g. `REQUESTED`, `FINALIZED`, `PROVISIONING_REQUESTED` |
+| `audit.state.previous` | all except the first transition | Previous state seen by this process (see [limitations](#8-known-limitations)) |
+| `participant.id` | all | Id of this connector (`edc.participant.id`), as is. Omitted when not set |
+| `participant.role` | negotiation, transfer | `provider` or `consumer`, role of this connector. See below how it is derived. Omitted when it cannot be determined |
+| `negotiation.id` | negotiation | Contract negotiation id |
+| `participant.counterparty.id` | negotiation | Counterparty participant id |
+| `participant.counterparty.address` | negotiation | Counterparty DSP address |
+| `protocol` | negotiation, transfer | DSP protocol version |
+| `participant.context.id` | negotiation, transfer | EDC participant context of the entity. Not emitted on catalog records (section 4) |
+| `contract.offer.id` | negotiation | Id of the last contract offer |
+| `asset.id` | negotiation, transfer | Asset id |
+| `contract.id` | negotiation `FINALIZED`, transfer | Local agreement id, as stored by this connector |
+| `contract.agreement.id` | negotiation `FINALIZED`, transfer | Agreement id shared by both connectors in DSP. Use it, not `contract.id`, to correlate records of the provider and the consumer. On transfers, only when the agreement is cached (see below) |
+| `participant.provider`, `participant.consumer` | negotiation, transfer | Provider and consumer ids. On `FINALIZED`, the agreement parties. Before, this connector and its counterparty, ordered by `participant.role`; omitted when the role is unknown. On transfers, the agreement parties, only when the agreement is cached (see below) |
+| `contract.signing.date` | negotiation `FINALIZED` | Agreement signing date (epoch seconds) |
+| `transfer.id` | transfer | Transfer process id |
+| `transfer.type` | transfer | Transfer type, `UNKNOWN` if it is not set |
+| `transfer.data.destination.type` | transfer `STARTED` | Data address type, `NOT_SPECIFIED` if it is not set |
+| `transfer.reason` | transfer `TERMINATED` / `SUSPENDED` | Reason given by EDC |
+
+`participant.role` is derived from the event alone, the stores are never read:
+
+- Transfer: the EDC process type (`PROVIDER` / `CONSUMER`), in lower case.
+- Negotiation `FINALIZED`: `edc.participant.id` compared with the provider and consumer of the
+  agreement.
+- Other negotiation events: the assigner of the last contract offer, which is always the provider.
+  This connector is the provider when it is the assigner, and the consumer when the counterparty
+  is.
+
+All comparisons are exact string matches. The role is omitted when `edc.participant.id` is not set
+and the counterparty is not the assigner, or when the offer has no assigner.
+
+Transfer events only carry the local agreement id (`contract.id`). The shared agreement id and the
+agreement parties come from an in-memory cache filled by the `FINALIZED` negotiation records of the
+same process, keyed by local agreement id (`edc.otel.audit.agreement-cache.size`, least recently
+used entries evicted first). When the agreement is not in the cache, the three attributes are
+omitted.
+
+### Policy decisions
+
+Policy decisions are audited as three more event types, with the same body format
+(`Audit: <EventType>`):
+
+| `event.type` | Severity | When |
+|--------------|----------|------|
+| `PolicyEvaluated` | `INFO` | A policy evaluation is permitted, in any scope not excluded by `edc.otel.audit.policy.excluded.scopes` |
+| `ContractNegotiationRejected` | `WARN` | A DSP negotiation request is denied: initial contract request (provider), agreement confirmation (consumer), or a message from a party other than the counterparty |
+| `TransferProcessRejected` | `WARN` | A DSP transfer request is denied: agreement policy not fulfilled, or a party outside the agreement |
+
+`PolicyEvaluated` comes from a policy engine post-validator, which only runs once the policy is
+fulfilled, ODRL-PAP pre-validation included. The rejections come from a decorator of the EDC
+`ContractValidationService` used by the DSP protocol services. Both only observe: they never change
+the result of the evaluation or of the request, never propagate an exception, and never read the
+stores. Every value comes from what EDC passes to them.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `edc.otel.audit.policy.excluded.scopes` | `catalog,policy.monitor,request.*` | Scopes whose permitted evaluations are not recorded as `PolicyEvaluated`. An entry ending in `*` excludes every scope starting with the text before it. `request.*` scopes only select the credentials presented on outgoing requests |
+
+| Attribute | Present on | Value |
+|-----------|-----------|-------|
+| `policy.decision` | all three | `permit` or `deny` |
+| `policy.scope` | all three, when known | `PolicyEvaluated`: the evaluated scope. Rejections: the scope named in the EDC failure, or `transfer.process` for agreement evaluation failures. Omitted when the denial comes from ODRL-PAP on an initial contract request, because EDC evaluates two scopes there and the PAP failure does not name one |
+| `policy.deny.reason` | rejections | EDC failure detail, including the ODRL-PAP explanation, cut to 1024 characters |
+| `negotiation.correlation.id` | `ContractNegotiationRejected`, message from a party other than the counterparty | Counterparty process id kept by EDC for the negotiation: the `consumerPid` on the provider, the `providerPid` on the consumer. In this version the attribute only appears on this record |
+
+The records also carry, when known, `participant.id`, `participant.role`,
+`participant.counterparty.id` (identity of the requesting agent, as is), `participant.provider`,
+`participant.consumer`, `contract.id`, `contract.agreement.id`, `contract.offer.id`, `asset.id` and
+`negotiation.id`, with the same meaning as above.
+
+## 4. Catalog audit via the TMForum hub
+
+Module `otel-audit-extension`. In FDSC, catalog entities live in TMForum and are created and
+changed by the Marketplace, not through the EDC management API. To audit those changes, the
+connector subscribes to the TMForum Product Catalog (TMF620) notification hub. TMForum then calls
+the connector back for each change, and the connector turns each call into an audit log record.
+
+| TMForum entity | `audit.domain` | Notification types the connector subscribes to |
+|----------------|----------------|-------------------------------------------------|
+| `ProductSpecification` (EDC asset) | `asset` | `…CreateEvent`, `…AttributeValueChangeEvent`, `…StateChangeEvent` |
+| `ProductOffering` (EDC contract definition) | `contract_definition` | `…CreateEvent`, `…AttributeValueChangeEvent`, `…StateChangeEvent` |
+
+### Settings
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `edc.otel.audit.catalog.enabled` (env `EDC_OTEL_AUDIT_CATALOG_ENABLED`) | `true` | Turns catalog audit on or off. Independent of `edc.otel.audit.enabled` |
+| `edc.otel.audit.catalog.callback-url` | computed | URL that TMForum calls. If it is not set, it is `http://<edc.hostname>:<web.http.tmfevents.port><web.http.tmfevents.path>` |
+| `web.http.tmfevents.port` (env `WEB_HTTP_TMFEVENTS_PORT`) | `8688` | Port where the connector listens for TMForum callbacks |
+| `web.http.tmfevents.path` (env `WEB_HTTP_TMFEVENTS_PATH`) | `/tmf-events` | Path where the connector listens for TMForum callbacks |
+| `edc.otel.audit.catalog.retry-interval` | `30` | **Seconds** between attempts when a hub subscription fails |
+| `edc.otel.audit.catalog.dedup-cache.size` | `10000` | Number of TMForum events remembered in memory, used to drop duplicate deliveries |
+
+With the defaults and `edc.hostname=fdsc-edc`, the callback is `http://fdsc-edc:8688/tmf-events`.
+
+### Prerequisites
+
+1. **TMForum extension enabled.** The connector needs `tmfExtension.enabled=true` and
+   `tmfExtension.productCatalogApi` set. The hub is `<productCatalogApi>/hub`. If either is
+   missing, catalog audit is skipped and the connector logs one line, without failing:
+   ```
+   Otel Audit: catalog audit skipped, it requires tmfExtension.enabled=true
+   Otel Audit: catalog audit skipped, tmfExtension.productCatalogApi not set
+   ```
+2. **TMForum can reach the connector at the callback URL.** The `tmfevents` port (default `8688`)
+   must be exposed by the connector's Service/container. No NetworkPolicy, firewall or ingress rule
+   may block traffic from TMForum to that host and port. This was checked in production
+   (SEAMWARE thread, 2026-10-06).
+3. **TMForum version.** Use **≥ 1.10.1**. Older versions accept the subscription but never send
+   notifications. Production runs **1.14.1**, which is known to work. **Avoid 1.18.x**: it has a
+   broken duplicate check on subscriptions (409) and does not work.
+
+No other step is needed. At startup the connector registers the **6 hub subscriptions** on its
+own. It retries every `retry-interval` seconds until TMForum accepts each one. If a subscription
+already exists from an earlier start (TMForum answers 409), the connector takes it as done.
+
+Expected startup log:
+
+```
+Otel Audit: catalog audit via TMForum notifications, callback http://fdsc-edc:8688/tmf-events
+Otel Audit: subscribed to TMForum ProductSpecificationCreateEvent
+...                                  (or: TMForum subscription already exists for ...)
+```
+
+### Attributes
+
+Body: `Audit: <Domain><Action>`, e.g. `Audit: AssetCreated`, `Audit: ContractDefinitionUpdated`,
+`Audit: AssetStateChanged`. Severity `INFO`. The record timestamp is the TMForum `eventTime`.
+
+| Attribute | Value |
+|-----------|-------|
+| `event.type` | `AssetCreated`, `AssetUpdated`, `AssetStateChanged`, `ContractDefinitionCreated`, … |
+| `event.id` | TMForum `eventId`, if TMForum sends it |
+| `participant.id` | Id of this connector (`edc.participant.id`), omitted when not set |
+| `audit.domain` | `asset` or `contract_definition` |
+| `audit.action` | `created`, `updated` or `state_changed` |
+| `audit.source` | always `tmforum` |
+| `tmf.event.type` | Original TMForum notification type, e.g. `ProductOfferingStateChangeEvent` |
+| `tmf.id` | TMForum entity id (`urn:ngsi-ld:product-…`) |
+| `tmf.lifecycle_status` | `lifecycleStatus` of the entity, e.g. `Active`, `retired` |
+| `catalog.asset.id` | EDC asset id (the `externalId` of the ProductSpecification) |
+| `catalog.definition.id` | EDC contract definition id (the `externalId` of the ProductOffering) |
+| `tmf.product_specification.id` | Contract definition only: the ProductSpecification it points to |
+| `catalog.policy.id`, `catalog.access.policy.id` | Contract definition only: ODRL `uid` of the contract and access policies |
+
+Catalog records carry no `participant.context.id`: TMF620 notifications have no request context,
+and a value taken from the configuration would be an assumption rather than a fact.
+
+A single TMForum change can produce more than one notification. For example, retiring an entity
+sends both an `AttributeValueChangeEvent` and a `StateChangeEvent`, so it gives two records.
+
+## 5. Business metrics
+
+Module `otel-business-metrics`. The metrics are exported every 60 s, the default of the
+OpenTelemetry SDK periodic reader.
+
+### Settings
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `edc.otel.metrics.business.enabled` (env `EDC_OTEL_METRICS_BUSINESS_ENABLED`) | `true` | Turns business metrics on or off |
+| `edc.otel.metrics.business.state-cache.size` | `10000` | Maximum number of in-flight entities tracked per domain to compute durations |
+| `edc.otel.metrics.business.reason.max-distinct` | `50` | Maximum number of distinct `transfer.reason` values before new ones are grouped as `other` |
+
+### Metrics
+
+| Metric | Type | Unit | Attributes | Meaning |
+|--------|------|------|------------|---------|
+| `edc.controlplane.negotiation.transitions` | counter | `{transition}` | `negotiation.state` | One per negotiation state change |
+| `edc.controlplane.negotiation.duration` | histogram | `s` | `negotiation.state` (`FINALIZED` / `TERMINATED`) | From the first state (`INITIATED`, `REQUESTED` or `OFFERED`) to the final state |
+| `edc.controlplane.transfer.transitions` | counter | `{transition}` | `transfer.state`, `participant.role` | One per transfer state change |
+| `edc.controlplane.transfer.duration` | histogram | `s` | `participant.role` | From `INITIATED` to `DEPROVISIONED` |
+| `edc.controlplane.transfer.interruptions` | counter | `{transition}` | `transfer.state` (`TERMINATED` / `SUSPENDED`), `transfer.reason`, `participant.role` | Terminations and suspensions, by reason |
+
+Histogram buckets (seconds): `0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600`.
+
+Notes:
+
+- A duration is only recorded when the same process saw the entity from its first state.
+  Negotiations and transfers that were already in progress when the connector (re)started are
+  counted in `transitions` but not in `duration`.
+- `participant.role` is the role of this connector, `provider` or `consumer`, taken from the EDC
+  process type as in the audit logs. It is omitted when the type is unknown.
+- `transfer.reason` comes from the same EDC field as the `transfer.reason` audit attribute, but
+  its value is normalized here: it is cut to 128 characters, an empty reason becomes
+  `unspecified`, and after `reason.max-distinct` different values new reasons are reported as
+  `other`. This keeps the number of series under control, because EDC reasons are free text and
+  often contain ids. Use the audit logs for the exact reason.
+- Backends such as Prometheus may rename the metrics (for example
+  `edc_controlplane_negotiation_transitions_total`,
+  `edc_controlplane_transfer_duration_seconds_bucket`).
+
+## 6. Verifying that it works
+
+### Local stack
+
+`docker-compose.tck.yml` includes an `otel-collector` service (config:
+[`config/tck/otel-collector.yaml`](config/tck/otel-collector.yaml)). It receives OTLP/HTTP on
+`4318` and prints everything with the `debug` exporter: log records in full (`verbosity: detailed`),
+metrics as a summary (`verbosity: basic`). The connector uses its default endpoint
+(`http://otel-collector:4318`), so no OTLP setting is needed.
+
+```bash
+# Start the stack. TMF_VERSION=1.14.1 is needed for catalog audit:
+# the TCK default (1.5.4) does not send hub notifications
+TMF_VERSION=1.14.1 docker compose -f docker-compose.tck.yml up --build -d edc
+
+# Everything the collector received
+docker compose -f docker-compose.tck.yml logs -f otel-collector
+```
+
+Useful filters on the collector output:
+
+```bash
+DC="docker compose -f docker-compose.tck.yml"
+
+# Audit records (body "Audit: ...")
+$DC logs otel-collector | grep 'Body: Str(Audit:'
+
+# All records for one negotiation / transfer / asset
+$DC logs otel-collector | grep -B25 -A5 'negotiation.id: Str(<id>)'
+$DC logs otel-collector | grep -c 'catalog.asset.id: Str(<asset-id>)'
+
+# Metrics (basic verbosity: one summary line per export, with the number of data points)
+$DC logs otel-collector | grep -i 'metrics'
+
+# Connector side: what the extensions logged at startup
+$DC logs edc | grep -E 'Otel (Core|Audit|Metrics|Business)'
+```
+
+To see each metric data point with its attributes, set `debug/metrics` to `verbosity: detailed` in
+`config/tck/otel-collector.yaml` and restart the collector.
+
+Negotiation and transfer audit records and metrics appear as soon as negotiations or transfers
+happen. For example, run the TCK (`./scripts/run-tck.sh --keep-containers`) and then look at the
+collector logs.
+
+### End-to-end catalog audit check: `scripts/verify-tmf-audit.sh`
+
+This script checks the whole TMForum → connector → collector path:
+
+1. Waits until the connector logs the 6 hub subscriptions (`subscribed to TMForum` or
+   `subscription already exists`).
+2. Creates, changes and retires a ProductSpecification and a ProductOffering directly in TMForum,
+   with unique ids for each run.
+3. Waits (up to 120 s) for the audit records in the collector output and checks:
+   - 4 records for the asset and 4 for the contract definition (created, updated, and updated +
+     state_changed when retired);
+   - `catalog.policy.id` follows the policy change: 1 record with the first policy and 3 with the
+     second one;
+   - no record appears twice (the deduplication works).
+
+```bash
+TMF_VERSION=1.14.1 docker compose -f docker-compose.tck.yml up --build -d edc
+./scripts/verify-tmf-audit.sh
+```
+
+It prints `OK`/`FAIL` for each check, ends with `Catalog audit verified.`, and exits with a non-zero
+code on failure.
+
+### In a real deployment
+
+1. Connector logs: the `Otel Core: exporting as service …` line shows the right endpoints. For
+   catalog audit, check the `callback …` line and the 6 `subscribed` / `already exists` lines. No
+   `could not subscribe … retrying` line should keep repeating.
+2. Collector: records with `service.name` = your `OTEL_SERVICE_NAME` and body `Audit: …` arrive
+   after a negotiation, and metrics `edc.controlplane.negotiation.*` / `edc.controlplane.transfer.*` arrive within
+   about a minute.
+3. Catalog: change an offering in the Marketplace (or with a `PATCH` on TMForum). An
+   `Audit: ContractDefinitionUpdated` record should arrive within seconds.
+
+## 7. Troubleshooting
+
+### No audit logs arrive at the collector
+
+| Check | How |
+|-------|-----|
+| Where the connector sends them | Startup line `Otel Core: exporting as service … logs to …`. Wrong host/port, or a missing `/v1/logs` on an explicit HTTP endpoint (`edc.otel.logs.endpoint`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`) |
+| Protocol mismatch | `grpc` against port 4318 or `http/protobuf` against 4317. Set `OTEL_EXPORTER_OTLP_PROTOCOL` to match the collector receiver |
+| Audit turned off | `Otel Audit: negotiation/transfer audit disabled via edc.otel.audit.enabled` |
+| Collector pipeline | The collector must have a `logs` pipeline with the `otlp` receiver |
+| Network | The connector must reach the collector. Export errors appear in the connector logs as OpenTelemetry SDK warnings (`Failed to export logs…`) |
+| No activity | Negotiation/transfer records appear only when a negotiation or transfer happens |
+| Errors while building a record | `Otel Audit: failed to emit audit record for …`. The record is lost, the negotiation/transfer continues |
+
+### No metrics arrive
+
+- Same endpoint, protocol and network checks as above, using the `metrics to …` part of the
+  startup line and a `metrics` pipeline in the collector.
+- Metrics are exported every 60 s: wait at least one minute after the first negotiation.
+- `Otel Metrics: disabled via edc.otel.metrics.business.enabled` means the metrics are turned off.
+  Setting `OTEL_METRICS_EXPORTER=none` has **no** effect (see [ignored variables](#ignored-variables)).
+- `duration` stays empty while `transitions` grows: no entity has reached its final state since
+  the last restart, or the entities were already in progress at startup.
+
+### Catalog audit receives no events
+
+Most likely causes first:
+
+1. **`tmfExtension.enabled` is not `true`**, or `tmfExtension.productCatalogApi` is not set. Look for
+   `Otel Audit: catalog audit skipped, …` at startup.
+2. **TMForum cannot reach the connector.** The subscriptions succeed (that is connector → TMForum),
+   but the callbacks never arrive (TMForum → connector). Check that:
+   - the callback URL in the startup line resolves **from inside TMForum's network** (`edc.hostname`
+     must be the Service name, not `localhost`). If it does not, set
+     `edc.otel.audit.catalog.callback-url`;
+   - the `tmfevents` port (default 8688) is exposed by the container/Service;
+   - no NetworkPolicy/firewall blocks it. Test it from the TMForum pod:
+     `curl -i -X POST -H 'Content-Type: application/json' -d '{}' <callback-url>` must answer
+     `204`.
+3. **TMForum is older than 1.10.1.** Subscriptions are accepted but notifications are never sent.
+   Upgrade (1.14.1 is known to work, avoid 1.18.x).
+4. **Subscriptions never complete.** `could not subscribe to TMForum … retrying in 30s` keeps
+   repeating: the hub (`<productCatalogApi>/hub`) cannot be reached or answers with an error.
+5. **Catalog audit turned off**: `Otel Audit: catalog audit disabled via edc.otel.audit.catalog.enabled`.
+6. **Callbacks arrive but nothing is exported.** Look for `Otel Audit: failed to audit TMForum catalog
+   event` or `… without entity id`. The connector always answers `204` to TMForum, so TMForum
+   shows no error even in this case.
+
+## 8. Known limitations
+
+- **Single replica only (deduplication is in memory).** The state cache of the negotiation/transfer
+  audit, the catalog deduplication cache and the duration tracking of the metrics are all held in
+  memory, in each process. With more than one controlplane replica:
+  - the same catalog notification delivered again to a different replica is audited twice;
+  - `audit.state.previous` may be missing or out of date when consecutive transitions of an entity
+    run on different replicas;
+  - durations are not recorded when an entity's first and final states are handled by different
+    replicas;
+  - transfer records lack `contract.agreement.id`, `participant.provider` and
+    `participant.consumer` when the negotiation was finalized on another replica.
+
+  After a restart, the caches start empty: the first transition of each in-flight entity has no
+  `audit.state.previous`, and transfers of agreements finalized before the restart lack the three
+  attributes above.
+- **Physical deletions in the catalog are not audited.** The connector does not subscribe to
+  `…DeleteEvent`. This is on purpose: the Marketplace never deletes catalog entities, it retires
+  them with `lifecycleStatus`, and that change is audited (`state_changed` / `updated`). An entity
+  deleted directly in TMForum leaves no audit record.
+- **Catalog changes made while the connector is down are not audited.** TMForum sends each
+  notification only at the moment of the change. There is no catch-up when the connector starts
+  again.
+- **Hub subscriptions are never removed.** They stay in TMForum after shutdown, so later starts get
+  a 409, which is expected. If the callback URL changes, the old subscriptions still point to the
+  old URL until someone deletes them in TMForum (`DELETE <productCatalogApi>/hub/<id>`).
