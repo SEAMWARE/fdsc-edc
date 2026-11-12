@@ -51,6 +51,16 @@
             <version>${edc.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>policy-engine-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>participant-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
             <version>${version.com.squareup.okhttp3}</version>

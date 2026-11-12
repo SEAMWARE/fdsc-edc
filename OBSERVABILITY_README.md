@@ -130,7 +130,7 @@ the same as participant-edc-connector. The business metrics (section 5) use `edc
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `edc.otel.audit.enabled` (env `EDC_OTEL_AUDIT_ENABLED`) | `true` | Turns negotiation/transfer audit on or off. It does not affect catalog audit (section 4) |
+| `edc.otel.audit.enabled` (env `EDC_OTEL_AUDIT_ENABLED`) | `true` | Turns negotiation/transfer audit and policy audit on or off. It does not affect catalog audit (section 4) |
 | `edc.otel.audit.state-cache.size` | `10000` | Maximum number of entities whose last state is kept in memory, used to fill in `audit.state.previous` |
 | `edc.otel.audit.agreement-cache.size` | `10000` | Maximum number of finalized agreements kept in memory, used to fill in `contract.agreement.id`, `participant.provider` and `participant.consumer` on transfer records |
 
@@ -182,6 +182,39 @@ agreement parties come from an in-memory cache filled by the `FINALIZED` negotia
 same process, keyed by local agreement id (`edc.otel.audit.agreement-cache.size`, least recently
 used entries evicted first). When the agreement is not in the cache, the three attributes are
 omitted.
+
+### Policy decisions
+
+Policy decisions are audited as three more event types, with the same body format
+(`Audit: <EventType>`):
+
+| `event.type` | Severity | When |
+|--------------|----------|------|
+| `PolicyEvaluated` | `INFO` | A policy evaluation is permitted, in any scope not excluded by `edc.otel.audit.policy.excluded.scopes` |
+| `ContractNegotiationRejected` | `WARN` | A DSP negotiation request is denied: initial contract request (provider), agreement confirmation (consumer), or a message from a party other than the counterparty |
+| `TransferProcessRejected` | `WARN` | A DSP transfer request is denied: agreement policy not fulfilled, or a party outside the agreement |
+
+`PolicyEvaluated` comes from a policy engine post-validator, which only runs once the policy is
+fulfilled, ODRL-PAP pre-validation included. The rejections come from a decorator of the EDC
+`ContractValidationService` used by the DSP protocol services. Both only observe: they never change
+the result of the evaluation or of the request, never propagate an exception, and never read the
+stores. Every value comes from what EDC passes to them.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `edc.otel.audit.policy.excluded.scopes` | `catalog,policy.monitor,request.*` | Scopes whose permitted evaluations are not recorded as `PolicyEvaluated`. An entry ending in `*` excludes every scope starting with the text before it. `request.*` scopes only select the credentials presented on outgoing requests |
+
+| Attribute | Present on | Value |
+|-----------|-----------|-------|
+| `policy.decision` | all three | `permit` or `deny` |
+| `policy.scope` | all three, when known | `PolicyEvaluated`: the evaluated scope. Rejections: the scope named in the EDC failure, or `transfer.process` for agreement evaluation failures. Omitted when the denial comes from ODRL-PAP on an initial contract request, because EDC evaluates two scopes there and the PAP failure does not name one |
+| `policy.deny.reason` | rejections | EDC failure detail, including the ODRL-PAP explanation, cut to 1024 characters |
+| `negotiation.correlation.id` | `ContractNegotiationRejected`, message from a party other than the counterparty | Counterparty process id kept by EDC for the negotiation: the `consumerPid` on the provider, the `providerPid` on the consumer. In this version the attribute only appears on this record |
+
+The records also carry, when known, `participant.id`, `participant.role`,
+`participant.counterparty.id` (identity of the requesting agent, as is), `participant.provider`,
+`participant.consumer`, `contract.id`, `contract.agreement.id`, `contract.offer.id`, `asset.id` and
+`negotiation.id`, with the same meaning as above.
 
 ## 4. Catalog audit via the TMForum hub
 
