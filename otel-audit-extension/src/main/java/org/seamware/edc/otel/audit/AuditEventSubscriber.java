@@ -90,16 +90,24 @@ public class AuditEventSubscriber implements EventSubscriber {
   private final EntityLifecycleTracker negotiationTracker;
   private final EntityLifecycleTracker transferTracker;
   private final String participantId;
+  private final AgreementPartiesCache agreementCache;
 
   /**
    * @param participantId id of this connector ({@code edc.participant.id}), may be {@code null}
+   * @param agreementCache filled from finalized negotiations, read by transfer events
    */
   public AuditEventSubscriber(
-      Logger otelLogger, Monitor monitor, Clock clock, int maxEntries, String participantId) {
+      Logger otelLogger,
+      Monitor monitor,
+      Clock clock,
+      int maxEntries,
+      String participantId,
+      AgreementPartiesCache agreementCache) {
     this.otelLogger = otelLogger;
     this.monitor = monitor;
     this.clock = clock;
     this.participantId = participantId;
+    this.agreementCache = agreementCache;
     this.negotiationTracker =
         new EntityLifecycleTracker(maxEntries, LifecycleStates.NEGOTIATION_FINAL_STATES);
     this.transferTracker =
@@ -141,6 +149,7 @@ public class AuditEventSubscriber implements EventSubscriber {
     if (event instanceof ContractNegotiationFinalized finalized
         && finalized.getContractAgreement() != null) {
       var agreement = finalized.getContractAgreement();
+      agreementCache.put(agreement);
       // contract.id is the local agreement id, contract.agreement.id the one shared in DSP
       putIfPresent(attributes, ATTR_CONTRACT_ID, agreement.getId());
       putIfPresent(attributes, ATTR_AGREEMENT_ID, agreement.getAgreementId());
@@ -179,6 +188,14 @@ public class AuditEventSubscriber implements EventSubscriber {
     putIfPresent(attributes, ATTR_PROTOCOL, event.getProtocol());
     putIfPresent(attributes, ATTR_CONTEXT_ID, event.getParticipantContextId());
     putIfPresent(attributes, ATTR_ROLE, ParticipantRole.fromProcessType(event.getType()));
+    // transfer events only carry the local agreement id: the rest comes from the finalized
+    // negotiation, if this process saw it
+    var agreement = agreementCache.get(event.getContractId());
+    if (agreement != null) {
+      putIfPresent(attributes, ATTR_AGREEMENT_ID, agreement.agreementId());
+      putIfPresent(attributes, ATTR_PROVIDER, agreement.providerId());
+      putIfPresent(attributes, ATTR_CONSUMER, agreement.consumerId());
+    }
     attributes.put(
         ATTR_TRANSFER_TYPE, event.getType() != null ? event.getType() : UNKNOWN_TRANSFER_TYPE);
     if (event instanceof TransferProcessStarted started) {

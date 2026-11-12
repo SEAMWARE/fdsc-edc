@@ -132,6 +132,7 @@ the same as participant-edc-connector. The business metrics (section 5) use `edc
 |-----|---------|-------------|
 | `edc.otel.audit.enabled` (env `EDC_OTEL_AUDIT_ENABLED`) | `true` | Turns negotiation/transfer audit on or off. It does not affect catalog audit (section 4) |
 | `edc.otel.audit.state-cache.size` | `10000` | Maximum number of entities whose last state is kept in memory, used to fill in `audit.state.previous` |
+| `edc.otel.audit.agreement-cache.size` | `10000` | Maximum number of finalized agreements kept in memory, used to fill in `contract.agreement.id`, `participant.provider` and `participant.consumer` on transfer records |
 
 ### Attributes
 
@@ -156,8 +157,8 @@ fdsc-edc. Attributes whose value is not carried by the EDC event are omitted, ne
 | `contract.offer.id` | negotiation | Id of the last contract offer |
 | `asset.id` | negotiation, transfer | Asset id |
 | `contract.id` | negotiation `FINALIZED`, transfer | Local agreement id, as stored by this connector |
-| `contract.agreement.id` | negotiation `FINALIZED` | Agreement id shared by both connectors in DSP. Use it, not `contract.id`, to correlate records of the provider and the consumer |
-| `participant.provider`, `participant.consumer` | negotiation | Provider and consumer ids. On `FINALIZED`, the agreement parties. Before, this connector and its counterparty, ordered by `participant.role`; omitted when the role is unknown |
+| `contract.agreement.id` | negotiation `FINALIZED`, transfer | Agreement id shared by both connectors in DSP. Use it, not `contract.id`, to correlate records of the provider and the consumer. On transfers, only when the agreement is cached (see below) |
+| `participant.provider`, `participant.consumer` | negotiation, transfer | Provider and consumer ids. On `FINALIZED`, the agreement parties. Before, this connector and its counterparty, ordered by `participant.role`; omitted when the role is unknown. On transfers, the agreement parties, only when the agreement is cached (see below) |
 | `contract.signing.date` | negotiation `FINALIZED` | Agreement signing date (epoch seconds) |
 | `transfer.id` | transfer | Transfer process id |
 | `transfer.type` | transfer | Transfer type, `UNKNOWN` if it is not set |
@@ -175,6 +176,12 @@ fdsc-edc. Attributes whose value is not carried by the EDC event are omitted, ne
 
 All comparisons are exact string matches. The role is omitted when `edc.participant.id` is not set
 and the counterparty is not the assigner, or when the offer has no assigner.
+
+Transfer events only carry the local agreement id (`contract.id`). The shared agreement id and the
+agreement parties come from an in-memory cache filled by the `FINALIZED` negotiation records of the
+same process, keyed by local agreement id (`edc.otel.audit.agreement-cache.size`, least recently
+used entries evicted first). When the agreement is not in the cache, the three attributes are
+omitted.
 
 ## 4. Catalog audit via the TMForum hub
 
@@ -434,10 +441,13 @@ Most likely causes first:
   - `audit.state.previous` may be missing or out of date when consecutive transitions of an entity
     run on different replicas;
   - durations are not recorded when an entity's first and final states are handled by different
-    replicas.
+    replicas;
+  - transfer records lack `contract.agreement.id`, `participant.provider` and
+    `participant.consumer` when the negotiation was finalized on another replica.
 
   After a restart, the caches start empty: the first transition of each in-flight entity has no
-  `audit.state.previous`.
+  `audit.state.previous`, and transfers of agreements finalized before the restart lack the three
+  attributes above.
 - **Physical deletions in the catalog are not audited.** The connector does not subscribe to
   `…DeleteEvent`. This is on purpose: the Marketplace never deletes catalog entities, it retires
   them with `lifecycleStatus`, and that change is audited (`state_changed` / `updated`). An entity

@@ -41,6 +41,7 @@ import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotia
 import org.eclipse.edc.connector.controlplane.contract.spi.event.contractnegotiation.ContractNegotiationTerminated;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.agreement.ContractAgreement;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractOffer;
+import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessEvent;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessRequested;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessStarted;
 import org.eclipse.edc.connector.controlplane.transfer.spi.event.TransferProcessTerminated;
@@ -61,17 +62,24 @@ public class AuditEventSubscriberTest {
   private InMemoryLogRecordExporter exporter;
   private AuditEventSubscriber subscriber;
   private Monitor monitor;
+  private SdkLoggerProvider loggerProvider;
 
   @BeforeEach
   void setUp() {
     exporter = InMemoryLogRecordExporter.create();
-    var loggerProvider =
+    loggerProvider =
         SdkLoggerProvider.builder()
             .addLogRecordProcessor(SimpleLogRecordProcessor.create(exporter))
             .build();
     monitor = mock(Monitor.class);
     subscriber =
-        new AuditEventSubscriber(loggerProvider.get("test"), monitor, Clock.systemUTC(), 100, SELF);
+        new AuditEventSubscriber(
+            loggerProvider.get("test"),
+            monitor,
+            Clock.systemUTC(),
+            100,
+            SELF,
+            new AgreementPartiesCache(100));
   }
 
   @Test
@@ -170,7 +178,8 @@ public class AuditEventSubscriberTest {
             monitor,
             Clock.systemUTC(),
             100,
-            null);
+            null,
+            new AgreementPartiesCache(100));
 
     anonymous.on(
         envelope(
@@ -334,11 +343,60 @@ public class AuditEventSubscriberTest {
   }
 
   @Test
+  void transferCarriesTheSharedAgreementIdAndPartiesOfAFinalizedNegotiation() {
+    subscriber.on(envelope(finalizedNegotiation("agreement-1", "dsp-agreement-1")));
+    subscriber.on(envelope(transfer("tp-1", "agreement-1")));
+
+    var transfer = exporter.getFinishedLogRecordItems().get(1);
+    assertEquals("agreement-1", attr(transfer, AuditEventSubscriber.ATTR_CONTRACT_ID));
+    assertEquals("dsp-agreement-1", attr(transfer, AuditEventSubscriber.ATTR_AGREEMENT_ID));
+    assertEquals("did:web:provider", attr(transfer, AuditEventSubscriber.ATTR_PROVIDER));
+    assertEquals(SELF, attr(transfer, AuditEventSubscriber.ATTR_CONSUMER));
+    // the role still comes from the process type, not from the cached agreement
+    assertEquals("provider", attr(transfer, "participant.role"));
+  }
+
+  @Test
+  void transferOfAnUnknownAgreementOmitsTheCachedAttributes() {
+    // e.g. the negotiation was finalized before a restart, or by another replica
+    subscriber.on(envelope(finalizedNegotiation("agreement-1", "dsp-agreement-1")));
+    subscriber.on(envelope(transfer("tp-1", "agreement-2")));
+
+    var transfer = exporter.getFinishedLogRecordItems().get(1);
+    assertEquals("agreement-2", attr(transfer, AuditEventSubscriber.ATTR_CONTRACT_ID));
+    assertNull(attr(transfer, AuditEventSubscriber.ATTR_AGREEMENT_ID));
+    assertNull(attr(transfer, AuditEventSubscriber.ATTR_PROVIDER));
+    assertNull(attr(transfer, AuditEventSubscriber.ATTR_CONSUMER));
+  }
+
+  @Test
+  void evictedAgreementsAreNoLongerAddedToTransfers() {
+    var smallCache =
+        new AuditEventSubscriber(
+            loggerProvider.get("test"),
+            monitor,
+            Clock.systemUTC(),
+            100,
+            SELF,
+            new AgreementPartiesCache(1));
+
+    smallCache.on(envelope(finalizedNegotiation("agreement-1", "dsp-agreement-1")));
+    smallCache.on(envelope(finalizedNegotiation("agreement-2", "dsp-agreement-2")));
+    smallCache.on(envelope(transfer("tp-1", "agreement-1")));
+    smallCache.on(envelope(transfer("tp-2", "agreement-2")));
+
+    var records = exporter.getFinishedLogRecordItems();
+    assertNull(attr(records.get(2), AuditEventSubscriber.ATTR_AGREEMENT_ID));
+    assertEquals("dsp-agreement-2", attr(records.get(3), AuditEventSubscriber.ATTR_AGREEMENT_ID));
+  }
+
+  @Test
   void loggerFailuresDoNotPropagate() {
     var failingLogger = mock(Logger.class);
     when(failingLogger.logRecordBuilder()).thenThrow(new IllegalStateException("exporter down"));
     var failingSubscriber =
-        new AuditEventSubscriber(failingLogger, monitor, Clock.systemUTC(), 100, SELF);
+        new AuditEventSubscriber(
+            failingLogger, monitor, Clock.systemUTC(), 100, SELF, new AgreementPartiesCache(100));
 
     failingSubscriber.on(
         envelope(negotiation(ContractNegotiationRequested.Builder.newInstance(), null)));
@@ -363,6 +421,34 @@ public class AuditEventSubscriberTest {
       builder.contractOffers(List.of(offer));
     }
     return builder.build();
+  }
+
+  private static ContractNegotiationEvent finalizedNegotiation(
+      String localAgreementId, String sharedAgreementId) {
+    var agreement =
+        ContractAgreement.Builder.newInstance()
+            .id(localAgreementId)
+            .agreementId(sharedAgreementId)
+            .providerId("did:web:provider")
+            .consumerId(SELF)
+            .assetId("asset-1")
+            .policy(Policy.Builder.newInstance().build())
+            .build();
+    return ContractNegotiationFinalized.Builder.newInstance()
+        .contractNegotiationId("cn-" + localAgreementId)
+        .counterPartyId("did:web:provider")
+        .counterPartyAddress("http://provider/protocol")
+        .protocol("dataspace-protocol-http")
+        .contractAgreement(agreement)
+        .build();
+  }
+
+  private static TransferProcessEvent transfer(String transferId, String localAgreementId) {
+    return TransferProcessRequested.Builder.newInstance()
+        .transferProcessId(transferId)
+        .contractId(localAgreementId)
+        .type("PROVIDER")
+        .build();
   }
 
   private static ContractOffer offerAssignedBy(String assigner) {

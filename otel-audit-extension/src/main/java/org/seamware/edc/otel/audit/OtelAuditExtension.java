@@ -65,6 +65,14 @@ public class OtelAuditExtension implements ServiceExtension {
   private int stateCacheSize;
 
   @Setting(
+      key = "edc.otel.audit.agreement-cache.size",
+      description =
+          "Max number of finalized agreements kept to add the shared agreement id and parties to"
+              + " transfer records",
+      defaultValue = DEFAULT_STATE_CACHE_SIZE)
+  private int agreementCacheSize;
+
+  @Setting(
       key = "edc.otel.audit.catalog.enabled",
       description = "Enables audit logs for catalog changes notified by TMForum",
       defaultValue = "true")
@@ -119,7 +127,13 @@ public class OtelAuditExtension implements ServiceExtension {
     var participantId = OtelCoreExtension.participantId(context.getConfig());
     if (enabled) {
       var subscriber =
-          new AuditEventSubscriber(otelLogger, monitor, clock, stateCacheSize, participantId);
+          new AuditEventSubscriber(
+              otelLogger,
+              monitor,
+              clock,
+              stateCacheSize,
+              participantId,
+              new AgreementPartiesCache(agreementCacheSize));
       eventRouter.register(ContractNegotiationEvent.class, subscriber);
       eventRouter.register(TransferProcessEvent.class, subscriber);
     } else {
