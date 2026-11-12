@@ -55,6 +55,12 @@ public class OtelCoreExtension implements ServiceExtension {
   /** EDC setting holding the id of this connector, emitted as is (DID or not). */
   public static final String PARTICIPANT_ID_SETTING = "edc.participant.id";
 
+  /** Instrumentation scope of the audit log records, shared with participant-edc-connector. */
+  static final String AUDIT_SCOPE_NAME = "edc-audit";
+
+  /** Instrumentation scope of the business metrics. */
+  static final String METRICS_SCOPE_NAME = "edc-otel";
+
   @Setting(
       key = "edc.otel.service.namespace",
       description =
@@ -166,10 +172,10 @@ public class OtelCoreExtension implements ServiceExtension {
             .setMeterProvider(sdkMeterProvider)
             .build();
 
-    Logger otelLogger = openTelemetry.getLogsBridge().get("edc-otel");
+    Logger otelLogger = openTelemetry.getLogsBridge().get(AUDIT_SCOPE_NAME);
     context.registerService(Logger.class, otelLogger);
 
-    Meter otelMeter = openTelemetry.getMeter("edc-otel");
+    Meter otelMeter = openTelemetry.getMeter(METRICS_SCOPE_NAME);
     context.registerService(Meter.class, otelMeter);
 
     monitor.info("Otel Core Extension initialized successfully");

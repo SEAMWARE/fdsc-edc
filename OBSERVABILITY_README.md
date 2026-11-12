@@ -107,7 +107,7 @@ Only the standard variables are needed:
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.monitoring:4318
 OTEL_SERVICE_NAME=fdsc-edc-provider
-OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod,participant.id=did:web:example.org
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod,dataspace.participant.id=did:web:example.org
 ```
 
 At startup the connector logs the configuration it resolved. Check this line first:
@@ -122,6 +122,9 @@ Module `otel-audit-extension`. Every contract negotiation and transfer process s
 one OTLP log record. The body is `Audit: <EventType>` (for example
 `Audit: ContractNegotiationFinalized`). Severity is `WARN` for `TERMINATED` and `INFO` for every
 other state.
+
+All audit records, catalog audit included (section 4), use the instrumentation scope `edc-audit`,
+the same as participant-edc-connector. The business metrics (section 5) use `edc-otel`.
 
 ### Settings
 
