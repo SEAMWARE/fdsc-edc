@@ -214,9 +214,9 @@ change.
   - `ExtendableUsage*VO`.
 
   Include the new field in `equals` and `hashCode`.
-- `tmf/ProductCatalogApiClient`, `tmf/QuoteApiClient`, `tmf/AgreementApiClient`
-  and `tmf/UsageApiClient` (where present): add context-aware overloads of the
-  list and by-`externalId` lookups, e.g.
+- `tmf/ProductCatalogApiClient`, `tmf/QuoteApiClient` and `tmf/AgreementApiClient`
+  (there is no Usage client; Usage VOs are only mapped in `TMFEdcMapper`): add
+  context-aware overloads of the list and by-`externalId` lookups, e.g.
   `getProductSpecByExternalId(String externalId, String participantContextId)`.
   - A `null` context means no filter, which is today's behaviour.
   - The "multiple … exist" uniqueness check is scoped to the
