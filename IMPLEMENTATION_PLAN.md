@@ -12,7 +12,10 @@ modules must keep working in both modes. The deliverables are the code changes a
 an operator guide, `docs/multi-dataspace.md`, with an example multi-dataspace
 configuration.
 
-### Scope decisions (from the ticket's analysis comment — do not re-open)
+### Scope decisions (from the ticket's analysis comment)
+
+All points below are settled except the virtual-only DCP switch, which is
+**pending maintainer confirmation**.
 
 - Target EDC **0.18.1**, which `main` already uses, so there is no version bump.
 - **Virtual mode applies only to `controlplane-dcp`.** `controlplane-oid4vc` and
@@ -20,9 +23,11 @@ configuration.
   - This is a breaking change for every existing DCP deployment (management API
     v5 with OAuth2, DSP URLs gain `/{ctx}/{profile}`); Step 10 documents it and
     the PR is labelled `major`.
-  - If a maintainer overrides this before Step 8, Step 8 adds a sibling
-    `controlplane-dcp-virtual` module instead and leaves `controlplane-dcp`
-    classic. Steps 2–7 work in both modes and are unaffected.
+  - **Open: @wistefan has not yet confirmed this.** Step 8 must not start until
+    he confirms it or asks for the alternative: a sibling
+    `controlplane-dcp-virtual` module, leaving `controlplane-dcp` classic and the
+    release non-breaking (no `major` label). Steps 1–7 work in both modes and do
+    not depend on this answer.
 - **One TMForum and one ODRL-PAP** serve all dataspaces.
 - **DCP identity is configured per dataspace:** DID, STS, scope mappings and the
   EBSI TIR.
@@ -137,6 +142,10 @@ configuration.
    in two dataspaces as two ProductSpecifications. Decision 3's default-context
    rule applies here too: an `externalId` lookup for the default context also
    matches untagged entities.
+   - **Policy ids are the exception: they must be globally unique.**
+     `PolicyDefinitionStore.findById(id)` takes no context, so the store cannot
+     choose between two offerings in different contexts that share a policy id.
+     `getByPolicyId` treats such a duplicate as a data error (see Step 3).
 5. **Your own identity is resolved per context.** It is never read from
    `TMFConfig.getParticipantId()` on a code path that has a context: use
    `ParticipantContext.getIdentity()` or `ParticipantIdentityResolver`.
@@ -202,6 +211,9 @@ record the answer:
 - **Management API auth for operators:** decide on the JWT issuer that FDSC uses
   for `management-api-oauth2-authentication`, e.g. the existing Keycloak in the
   FIWARE Data Space Connector chart.
+- **DSP version endpoint in virtual mode:** is `/.well-known/dspace-version`
+  still served at the protocol root, or per `{ctx}` / `{ctx}/{profile}`? Record
+  the exact path(s); Step 9 asserts against them.
 - **`test-extension` in `controlplane-dcp`:** it is compile-scoped at
   `controlplane-dcp/pom.xml:52`. Decide whether to drop it from the DCP assembly;
   the `controlplane-tck` assembly owns TCK use.
@@ -271,9 +283,16 @@ unchanged.
     2. the context of the `SingleParticipantContextSupplier`, when one is
        registered (classic mode; this is what `TMFConfig.fromConfig` fills
        `participantContextId` from today);
-    3. `edc.participant.context.id`, then `edc.participant.id` (the existing
-       no-supplier fallback in `fromConfig`);
-    4. none: in virtual mode, log the decision 3 startup warning.
+    3. no supplier registered (virtual mode, or a test): **nothing else**. Do
+       not fall back to `edc.participant.context.id` / `edc.participant.id`:
+       `fromConfig` reads the latter with an `ANONYMOUS_PARTICIPANT` default, so
+       it always yields a value, and in virtual mode those keys are per-context
+       entries, not a runtime identity. The default stays unset, legacy
+       entities stay unstamped and invisible, and the decision 3 startup
+       warning is logged.
+
+    The `participantId` fallback in `fromConfig` (the classic-mode identity,
+    decision 5) is unchanged; only the default *context* stops using it.
   - log a warning when the explicit key (1) and the supplier context (2) are
     both set and differ. The explicit key still wins, so a classic deployment
     with both set behaves predictably;
@@ -303,6 +322,11 @@ unchanged.
   no write path to add.
   - The policy's context is the owning ProductOffering's `participantContextId`
     (absent → default context), stamped by `TMFEdcMapper`.
+  - Policy ids are globally unique (decision 4). `getByPolicyId` keeps paging
+    after the first hit and throws `BadGatewayException` naming the policy id
+    and the contexts when matches come from offerings in more than one
+    context. Matches within one context keep today's "policies need to be
+    unique" error.
   - Drop the store's own `participantContextId` field. Do not add a schema or a
     write path for policies.
 - `store/TMForumBackedCatalogProtocolService.getCatalog` / `getDataset`:
@@ -317,11 +341,14 @@ unchanged.
     `QuerySpec`;
   - a default-context query returns the untagged legacy entities (and does not
     send `participantContextId=<default>` as a plain server-side filter);
-  - `findById` on the policy store stamps the owning offering's context;
+  - `findById` on the policy store stamps the owning offering's context, and
+    fails for a policy id used by offerings in two contexts;
   - the catalog for context A never contains B's datasets.
 - `TMFConfig` default-context resolution, parameterized over which of
   (explicit key, supplier context, `edc.participant.*`) are set: the expected
   winner, and a warning only when the explicit key and the supplier differ.
+  Include the row "no supplier, no explicit key, `edc.participant.id` set"
+  → default unset and the decision 3 warning logged.
 
 Acceptance:
 - `mvn -pl tmf-extension -am test` is green;
@@ -334,10 +361,13 @@ Acceptance:
   - persist the negotiation's `participantContextId` on the Quote (and its items)
     and on the Agreement and Usage. Products and ProductOrders stay untagged
     (see Step 2);
-  - `findById`, `findContractAgreement`, `queryNegotiations`, `queryAgreements`
-    and `nextNotLeased` honour context criteria. `queryAgreements` must match
-    `(agreementId, participantContextId)`, which upstream
-    `TransferProcessProtocolServiceImpl.findAgreement` relies on.
+  - `queryNegotiations`, `queryAgreements` and `nextNotLeased` honour context
+    criteria. `queryAgreements` must match `(agreementId, participantContextId)`,
+    which upstream `TransferProcessProtocolServiceImpl.findAgreement` relies on;
+  - `findById` and `findContractAgreement` take only an id, so they get no
+    filtered overload. The loaded entity must carry its correct mapped context
+    (absent → default); the upstream protocol services compare
+    `getParticipantContextId()` themselves.
 - Your own identity per context:
   - replace the `participantId` constructor field (used for related parties at
     `:1305`/`:1310` and in `TMFEdcMapper` at `:557` to derive the negotiation
@@ -433,15 +463,18 @@ contexts in `prepare()`:
 
 - It reads `fdsc.participants.<key>.*`:
   - `.id`, which becomes the participant context id;
-  - `.identity` (the DID);
+  - `.identity` (the DID), the **single source** of the context's DID;
   - `.profiles` (CSV of dataspace profile names);
-  - `.config.<edcKey>` (plain entries such as `edc.participant.did` and
-    `edc.iam.sts.oauth.token.url`);
+  - `.config.<edcKey>` (plain entries such as `edc.iam.sts.oauth.token.url`);
   - `.privateConfig.<edcKey>`, for sensitive entries.
 - For each participant it upserts:
   - the context, through `ParticipantContextService`;
   - its configuration, through the `ParticipantContextConfig` store. The
-    profiles become the `edc.dataspace.profiles` entry.
+    profiles become the `edc.dataspace.profiles` entry, and `.identity`
+    becomes the `edc.participant.did` entry that `DidConfigProvider` reads.
+    Startup fails when `.config.` sets `edc.participant.id`,
+    `edc.participant.did` or `edc.iam.issuer.id` to a value other than
+    `.identity`; an equal value is accepted.
 - It upserts: a context or config entry that already exists (e.g. created
   earlier through the management API v5, or persisted by a later SQL store) is
   updated, not duplicated, and does not fail startup.
@@ -456,6 +489,7 @@ Tests (Mockito on the EDC SPIs):
 - two participants are seeded with their config and profiles;
 - re-running against already-seeded stores updates and does not duplicate them;
 - an unknown profile fails startup;
+- a `.config.` DID entry that differs from `.identity` fails startup;
 - with no keys nothing is seeded.
 
 Acceptance: `mvn -pl participant-bootstrap-extension -am test` is green.
@@ -514,7 +548,8 @@ Acceptance:
   - `GET <protocol>/{A}/{profileA}/...` resolves, while
     `<protocol>/{A}/{profileB}/...` returns 404, because that profile is not
     associated with A;
-  - `/.well-known/dspace-version` answers.
+  - the DSP version endpoint answers at the path(s) Step 1 recorded for virtual
+    mode.
 
   A full DSP catalog exchange needs a real DCP wallet and is out of scope here.
   The unit tests of Steps 3–6 cover catalog isolation.
@@ -537,7 +572,7 @@ Acceptance:
   - management API v5 and OAuth2;
   - how to tag TMForum entities with `participantContextId`, and the
     default-context rule for legacy data;
-  - `externalId` uniqueness per context;
+  - `externalId` uniqueness per context, and globally unique policy ids;
   - a walkthrough of `config/multi-dataspace/edc.properties`;
   - migrating an existing single-dataspace `controlplane-dcp` deployment.
 - `README.md`, `controlplane-dcp/README.md`: link the guide and state that the
