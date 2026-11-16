@@ -523,8 +523,22 @@ Acceptance:
     returns that context's identity (via `ParticipantIdentityResolver`) as
     `issuer` and 404 for an unknown context. The existing
     `/.well-known/openid-configuration` keeps answering for the default
-    context, so classic deployments are unchanged. Both return the same
-    `jwks_uri`;
+    context. Its `issuer` is the identity of the resolved default context
+    (Step 3) through `ParticipantIdentityResolver`, no longer
+    `tmfConfig.getParticipantId()`. In classic mode that is the
+    `SingleParticipantContextSupplier` identity, the same value as today, so
+    classic deployments are unchanged. In virtual mode with no default context
+    configured it returns 404 instead of `ANONYMOUS_PARTICIPANT`. Both paths
+    return the same `jwks_uri`;
+  - `transfer/TransferMapper.toDcpServiceRoute` and its caller
+    `FDSCDcpProvisioner` (`:137`): the APISIX `openid-connect` plugin checks
+    the EDR's `iss` against the discovery document's `issuer`, so the route
+    must point at the transfer's own context. Pass the transfer's
+    `participantContextId` (the same one the EDR service signs with) into
+    `toDcpServiceRoute`, and build `discovery` as
+    `oidConfig().host() + oidConfig().openIdPath() + "/" + participantContextId`.
+    For the default context, or when the id is null, keep today's
+    `host() + openIdPath()`, so classic routes are byte-for-byte unchanged;
   - `dcp/JwksController`: unchanged, one signing key for all contexts. The
     JWKS is not identity-bound; only the `issuer` claim differs per context.
 - `DataPlaneInstance` registration: apply the Step 1 decision, either one
@@ -542,7 +556,10 @@ Acceptance:
     the decision in the PR and add nothing.
 - Tests: an EDR issuer is created for a transfer in each of two contexts; the
   OID config is returned for each context and for the default path, and an
-  unknown context gets 404.
+  unknown context gets 404; parameterized over (context B, default context,
+  null), `toDcpServiceRoute` sets `discovery` ending in `/{B}` for B and the
+  unchanged default path otherwise, and the issuer of B's OID config equals
+  the `iss` of B's EDR.
 
 Acceptance:
 - `mvn -pl policy-extension -am test` is green (it pulls in
