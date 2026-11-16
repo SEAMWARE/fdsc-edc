@@ -137,15 +137,20 @@ All points below are settled except the virtual-only DCP switch, which is
      queries "equals default OR absent" if Step 1 finds the TMForum API supports
      it, otherwise it fetches unfiltered. Either way it maps first (absent →
      default) and filters in memory afterwards.
-4. **`externalId` must be unique per context, not globally.** Lookups by
-   `externalId` also filter by the context, so the same asset id can be offered
-   in two dataspaces as two ProductSpecifications. Decision 3's default-context
-   rule applies here too: an `externalId` lookup for the default context also
-   matches untagged entities.
-   - **Policy ids are the exception: they must be globally unique.**
-     `PolicyDefinitionStore.findById(id)` takes no context, so the store cannot
-     choose between two offerings in different contexts that share a policy id.
-     `getByPolicyId` treats such a duplicate as a data error (see Step 3).
+4. **Asset, contract-definition and policy ids are globally unique, across
+   all contexts.** `AssetIndex.findById(String)`, `AssetIndex.resolveForAsset(String)`,
+   `ContractDefinitionStore.findById(String)` and `PolicyDefinitionStore.findById(String)`
+   take no context, so a store cannot choose between two TMForum entities in
+   different contexts that share an id. To offer the same data in two
+   dataspaces, the operator creates two ProductSpecifications with distinct
+   `externalId`s.
+   - By-id lookups (`getProductSpecByExternalId`, `getProductOfferingByExternalId`,
+     `getByPolicyId`) therefore stay context-less. A cross-context duplicate is
+     a data error, raised by the existing "multiple … exist" check, which now
+     names the id and the contexts involved (see Steps 2 and 3).
+   - The loaded entity carries its mapped context (absent → default), so
+     context-aware callers can still compare `getParticipantContextId()`.
+   - Negotiation and agreement ids are UUIDs, so the rule costs nothing there.
 5. **Your own identity is resolved per context.** It is never read from
    `TMFConfig.getParticipantId()` on a code path that has a context: use
    `ParticipantContext.getIdentity()` or `ParticipantIdentityResolver`.
@@ -215,7 +220,7 @@ record the answer:
   still served at the protocol root, or per `{ctx}` / `{ctx}/{profile}`? Record
   the exact path(s); Step 9 asserts against them.
 - **`test-extension` in `controlplane-dcp`:** it is compile-scoped at
-  `controlplane-dcp/pom.xml:52`. Decide whether to drop it from the DCP assembly;
+  `controlplane-dcp/pom.xml:54`. Decide whether to drop it from the DCP assembly;
   the `controlplane-tck` assembly owns TCK use.
 
 Acceptance:
@@ -259,11 +264,13 @@ change.
   reference, not a stored entity.
 - `tmf/ProductCatalogApiClient`, `tmf/QuoteApiClient` and `tmf/AgreementApiClient`
   (there is no Usage client; Usage VOs are only mapped in `TMFEdcMapper`): add
-  context-aware overloads of the list and by-`externalId` lookups, e.g.
-  `getProductSpecByExternalId(String externalId, String participantContextId)`.
+  context-aware overloads of the **list** lookups only (e.g.
+  `getProductSpecifications(int offset, int limit, String participantContextId)`).
   - A `null` context means no filter, which is today's behaviour.
-  - The "multiple … exist" uniqueness check is scoped to the
-    (externalId, context) pair.
+  - The by-`externalId` lookups get no context parameter (decision 4). Their
+    "multiple … exist" checks stay global; the error message adds the
+    `participantContextId` of each match, so a cross-context duplicate is
+    identifiable from the log.
   - Add one shared constant `PARTICIPANT_CONTEXT_ID_QUERY_PARAM` instead of
     per-client literals.
 - Tests:
@@ -307,9 +314,16 @@ unchanged.
 
   This applies to every builder that sets it today (`:321`, `:512`, `:772`,
   `:935`). Rename the constructor parameter to `defaultParticipantContextId`.
-- `store/TMFBackedAssetIndex`, `TMFBackedContractDefinitionStore`:
-  - persist the entity's context on create and update;
-  - when the `QuerySpec` holds a `participantContextId` criterion
+- `store/TMFBackedAssetIndex`, `TMFBackedContractDefinitionStore` are
+  **read-only** like the policy store (`create`/`save`, `update`/`updateAsset`
+  and `deleteById` throw `UnsupportedOperationException`; the contract
+  definition store's `findAll` too). There is no write path to add.
+  - `findById` (and `resolveForAsset`, which delegates to it) stays context-less
+    (decision 4). Its `catch (RuntimeException)` keeps returning `null` as the
+    interface requires, but logs a cross-context duplicate with
+    `monitor.severe` instead of `warning`, since it hides the asset in every
+    dataspace until the data is fixed.
+  - `TMFBackedAssetIndex.queryAssets`: when the `QuerySpec` holds a `participantContextId` criterion
     (`ParticipantResource.filterByParticipantContextId`) for a non-default
     context, push it down to the Step 2 client overloads. For the default
     context follow decision 3 (no plain push-down). Always keep the in-memory
@@ -321,14 +335,23 @@ unchanged.
   `ProductCatalogApiClient.getByPolicyId`. There is no TMForum policy entity and
   no write path to add.
   - The policy's context is the owning ProductOffering's `participantContextId`
-    (absent → default context), stamped by `TMFEdcMapper`.
+    (absent → default context). Today `getByPolicyId` returns a bare
+    `Optional<Policy>`, which loses the offering, and the store builds the
+    `PolicyDefinition` inline. Change this:
+    - add `record OfferingPolicy(Policy policy, @Nullable String participantContextId)`
+      in `tmf/`; `getByPolicyId` returns `Optional<OfferingPolicy>`, carrying the
+      owning offering's raw (possibly absent) context;
+    - add `TMFEdcMapper.toPolicyDefinition(OfferingPolicy)`, which builds the
+      `PolicyDefinition` (id via `getIdFromPolicy`) and applies the
+      absent → default rule, so default stamping lives only in the mapper;
+    - the store injects `TMFEdcMapper` and calls it. Drop the store's own
+      `participantContextId` field.
   - Policy ids are globally unique (decision 4). `getByPolicyId` keeps paging
     after the first hit and throws `BadGatewayException` naming the policy id
     and the contexts when matches come from offerings in more than one
     context. Matches within one context keep today's "policies need to be
     unique" error.
-  - Drop the store's own `participantContextId` field. Do not add a schema or a
-    write path for policies.
+  - Do not add a schema or a write path for policies.
 - `store/TMForumBackedCatalogProtocolService.getCatalog` / `getDataset`:
   - fetch specs and offerings for `participantContext.getParticipantContextId()`
     only;
@@ -343,6 +366,9 @@ unchanged.
     send `participantContextId=<default>` as a plain server-side filter);
   - `findById` on the policy store stamps the owning offering's context, and
     fails for a policy id used by offerings in two contexts;
+  - `findById` on the asset index and contract-definition store returns the
+    entity with its mapped context, and returns `null` (logged severe) for an
+    `externalId` used in two contexts;
   - the catalog for context A never contains B's datasets.
 - `TMFConfig` default-context resolution, parameterized over which of
   (explicit key, supplier context, `edc.participant.*`) are set: the expected
@@ -409,8 +435,10 @@ Acceptance:
     otherwise. The JWKS is not identity-bound.
 - `DataPlaneInstance` registration: apply the Step 1 decision, either one
   instance per configured context or a context-less shared instance.
-- `transfer/FDSCDcpProvisioner` / `FDSCOID4VPProvisioner`: product lookups go
-  through the context-aware `ProductCatalogApiClient` overloads.
+- `transfer/FDSCDcpProvisioner` / `FDSCOID4VPProvisioner`: keep the
+  context-less `getProductSpecByExternalId` (asset ids are globally unique,
+  decision 4); assert that the found spec's mapped context equals the transfer
+  process's `participantContextId` and fail the provisioning otherwise.
 - `policy-extension`: no per-dataspace split, because the ODRL-PAP is shared.
   - Verify that `PolicyContextInputMapper` / `OdrlPapPolicyExtension` work
     unchanged with entities from several contexts.
@@ -539,7 +567,9 @@ Acceptance:
 - `scripts/init-tmforum-multi-dataspace.sh` seeds:
   - one ProductSpecification and ProductOffering per context;
   - one legacy spec without a context;
-  - the **same `externalId`** in both contexts, which exercises decision 4.
+  - distinct `externalId`s in each context (decision 4: ids are globally
+    unique; the cross-context duplicate case is covered by the Step 3 unit
+    tests).
 - `scripts/verify-multi-dataspace.sh` generates an admin JWT with
   `openssl`/`jq` and asserts the following, exiting non-zero on any failure:
   - `GET /v5beta/participants` lists both contexts;
@@ -572,7 +602,8 @@ Acceptance:
   - management API v5 and OAuth2;
   - how to tag TMForum entities with `participantContextId`, and the
     default-context rule for legacy data;
-  - `externalId` uniqueness per context, and globally unique policy ids;
+  - globally unique asset, contract-definition and policy ids (decision 4),
+    and how to offer the same data in two dataspaces with distinct ids;
   - a walkthrough of `config/multi-dataspace/edc.properties`;
   - migrating an existing single-dataspace `controlplane-dcp` deployment.
 - `README.md`, `controlplane-dcp/README.md`: link the guide and state that the
