@@ -83,7 +83,9 @@ All points below are settled.
   The context and config stores are in memory unless the SQL BOM is added.
 - **Management API v5:**
   - resources are scoped under `/v5beta/participants/{ctxId}/assets` (and the
-    same for the other resources);
+    same for the other resources). `AssetApiV5Controller` has `POST` (create),
+    `POST /request` (query), `GET /{id}`, `PUT` and `DELETE /{id}`; there is
+    **no collection `GET`**;
   - authentication is an OAuth2 JWT (`edc.iam.oauth2.jwks.url`,
     `edc.iam.oauth2.issuer`);
   - a token's `sub` must name an existing context. `management-api:admin`
@@ -111,13 +113,21 @@ All points below are settled.
   - Compare `getParticipantContextId()` on the loaded entity: the negotiation and
     transfer protocol services. `ContractNegotiationProtocolServiceImpl:247`
     rejects an offer whose **contract definition** belongs to another context.
-  - **An asset's `participantContextId` is never compared.** The context-less
-    `AssetIndex.findById` callers only null-check the result
+  - **On the DSP protocol path an asset's `participantContextId` is never
+    compared.** The context-less `AssetIndex.findById` callers only null-check
+    the result
     (`ContractValidationServiceImpl:70`/`:157`, `TransferProcessProviderFactory:60`;
     `TransferProcessorsImpl:373` calls `resolveForAsset`). `countAssets` in
     `ContractValidationServiceImpl` uses only the definition's asset selector.
     Only `DatasetResolverImpl.query` filters assets by context, and it drops
     every dataset that has no offer from that context's contract definitions.
+  - **The management API v5 path does compare it.** For every non-admin
+    principal, `AuthorizationServiceImpl.authorize` checks
+    `resource.getParticipantContextId()` against the owning context. The
+    asset it checks is loaded by `AssetApiV5Extension.findAsset` with
+    `assetService.search(participantContextId = <owner> AND id = <assetId>)`,
+    i.e. through `AssetIndex.queryAssets`, not `findById`. Decision 4 holds
+    only because `queryAssets` stamps the queried context (Step 3).
 - **Reference code:**
   - `system-tests/tck/dsp-tck-virtual-connector-under-test`: its
     `TckSetupExtension` seeds contexts in code.
@@ -170,8 +180,9 @@ All points below are settled.
    - **Products (assets):** the ProductSpecification has no context. The asset
      index stamps the mapped `Asset` with the context the query asks for
      (`queryAssets`), or with the default context on the context-less
-     `findById`. This is safe because upstream never compares an asset's
-     context (see the verified facts). Its `externalId` stays globally unique,
+     `findById`. This is safe because the DSP path never compares an asset's
+     context, and the management API v5 path loads the asset through
+     `queryAssets` with the owner's context criterion (see the verified facts). Its `externalId` stays globally unique,
      as it is today.
    - **Offerings (contract definitions and policies):** ids are globally
      unique across all contexts, because `ContractDefinitionStore.findById(String)`
@@ -257,6 +268,14 @@ record the answer:
 - **DSP version endpoint in virtual mode:** is `/.well-known/dspace-version`
   still served at the protocol root, or per `{ctx}` / `{ctx}/{profile}`? Record
   the exact path(s); Step 9 asserts against them.
+- **DSP request without a token in virtual mode:** do the `dsp-virtual`
+  controllers resolve the `{ctx}/{profile}` association *before* they check the
+  DCP token? Record the exact status Step 9 expects for
+  `POST <protocol>/{A}/{profileA}/catalog/request` without a token (associated
+  profile, e.g. 401) and for `<protocol>/{A}/{profileB}/catalog/request`
+  (unassociated profile, 404). If the token is checked first, both return the
+  same status; record that, and Step 9 then asserts the association through
+  `GET /v5beta/participants/{A}/profiles` (or the config entry) instead.
 - **`test-extension` in `controlplane-dcp`:** it is compile-scoped at
   `controlplane-dcp/pom.xml:54`. Decide whether to drop it from the DCP assembly;
   the `controlplane-tck` assembly owns TCK use.
@@ -375,6 +394,12 @@ unchanged.
       only becomes *offered* in a dataspace through that dataspace's offering
       (the catalog and the negotiation check both go through the offering).
       Without a context criterion, stamp the default context, as today.
+    - This includes a `QuerySpec` that combines an `id` criterion with the
+      context criterion. Management API v5 loads `GET /assets/{id}` exactly
+      this way and then authorizes non-admin tokens against the asset's
+      context (see the verified facts). Do not route such id queries to
+      `findById`: its default stamp would turn every non-default-context
+      `GET /assets/{id}` into a 404 for non-admin tokens.
   - `TMFBackedContractDefinitionStore` (one offering per dataspace):
     - `findById` stays context-less (decision 4). Its `catch (RuntimeException)`
       keeps returning `null` as the interface requires, but logs a
@@ -424,6 +449,8 @@ unchanged.
     product stamped with the queried context;
   - a default-context query returns the untagged legacy entities (and does not
     send `participantContextId=<default>` as a plain server-side filter);
+  - `queryAssets` with `participantContextId = B AND id = <sharedSpec>` (the
+    management API v5 lookup) returns that one asset stamped with B;
   - `findById` on the policy store stamps the owning offering's context, and
     fails for a policy id used by offerings in two contexts;
   - `findById` on the contract-definition store returns the offering with its
@@ -655,12 +682,18 @@ Acceptance:
 - `scripts/verify-multi-dataspace.sh` generates an admin JWT with
   `openssl`/`jq` and asserts the following, exiting non-zero on any failure:
   - `GET /v5beta/participants` lists both contexts;
-  - `GET /v5beta/participants/{A}/assets` and `.../{B}/assets` both list the
-    shared product (products are listed in every context; offer isolation is
-    asserted in the Step 3 catalog tests);
-  - `GET <protocol>/{A}/{profileA}/...` resolves, while
-    `<protocol>/{A}/{profileB}/...` returns 404, because that profile is not
-    associated with A;
+  - `POST /v5beta/participants/{A}/assets/request` and
+    `.../{B}/assets/request` (empty QuerySpec) both list the shared product
+    (products are listed in every context; offer isolation is asserted in the
+    Step 3 catalog tests). There is no collection `GET` on assets in 0.18.1;
+  - `GET /v5beta/participants/{B}/assets/{sharedProductId}` with a
+    **non-admin** token whose `sub` is B returns 200. This exercises the
+    `AuthorizationServiceImpl` context check on a shared product;
+  - `POST <protocol>/{A}/{profileA}/catalog/request` without a DCP token
+    returns the status Step 1 recorded for an associated profile (not 404),
+    while `<protocol>/{A}/{profileB}/catalog/request` returns 404, because
+    that profile is not associated with A. If Step 1 found the token is
+    checked first, use the fallback it recorded instead;
   - the DSP version endpoint answers at the path(s) Step 1 recorded for virtual
     mode.
 
