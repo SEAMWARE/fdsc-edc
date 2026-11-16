@@ -14,8 +14,7 @@ configuration.
 
 ### Scope decisions (from the ticket's analysis comment)
 
-All points below are settled except the virtual-only DCP switch, which is
-**pending maintainer confirmation**.
+All points below are settled.
 
 - Target EDC **0.18.1**, which `main` already uses, so there is no version bump.
 - **Virtual mode applies only to `controlplane-dcp`.** `controlplane-oid4vc` and
@@ -23,11 +22,10 @@ All points below are settled except the virtual-only DCP switch, which is
   - This is a breaking change for every existing DCP deployment (management API
     v5 with OAuth2, DSP URLs gain `/{ctx}/{profile}`); Step 10 documents it and
     the PR is labelled `major`.
-  - **Open: @wistefan has not yet confirmed this.** Step 8 must not start until
-    he confirms it or asks for the alternative: a sibling
-    `controlplane-dcp-virtual` module, leaving `controlplane-dcp` classic and the
-    release non-breaking (no `major` label). Steps 1–7 work in both modes and do
-    not depend on this answer.
+  - **Confirmed by the maintainer** (PR #7 review: "Please switch the
+    controlplane to virtual mode"). Step 8 switches the existing
+    `controlplane-dcp` module in place; no sibling `controlplane-dcp-virtual`
+    module is added.
 - **One TMForum and one ODRL-PAP** serve all dataspaces.
 - **DCP identity is configured per dataspace:** DID, STS, scope mappings and the
   EBSI TIR.
@@ -346,8 +344,9 @@ unchanged.
       absent → default rule, so default stamping lives only in the mapper;
     - the store injects `TMFEdcMapper` and calls it. Drop the store's own
       `participantContextId` field.
-  - Policy ids are globally unique (decision 4). `getByPolicyId` keeps paging
-    after the first hit and throws `BadGatewayException` naming the policy id
+  - Policy ids are globally unique (decision 4). Today `getByPolicyId` stops
+    at the first page with a hit; change it to keep paging through all
+    offerings, and throw `BadGatewayException` naming the policy id
     and the contexts when matches come from offerings in more than one
     context. Matches within one context keep today's "policies need to be
     unique" error.
