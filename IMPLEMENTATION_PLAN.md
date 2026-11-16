@@ -225,14 +225,26 @@ change.
   or add one shared schema, whichever Step 1 found the TMForum API accepts. Do
   not make it `required`.
 - `tmf-extension/src/main/java/org/seamware/edc/domain/`: add a
-  `participantContextId` field with a getter and a fluent setter to the
-  `Extendable*` VOs that carry `externalId`:
-  - `ExtendableProductSpecification`, `ExtendableProductOffering`,
-  - `ExtendableQuoteVO` / `ExtendableQuoteCreateVO` / `ExtendableQuoteUpdateVO`,
-  - `ExtendableAgreement*VO`,
-  - `ExtendableUsage*VO`.
+  `participantContextId` field with a getter and a fluent setter to these VOs
+  (and only these):
+  - next to `externalId`: `ExtendableProductSpecification`,
+    `ExtendableProductOffering`, `ExtendableQuoteItemVO`,
+    `ExtendableAgreementVO` / `ExtendableAgreementCreateVO` /
+    `ExtendableAgreementUpdateVO`, and `ExtendableUsageVO` /
+    `ExtendableUsageCreateVO` / `ExtendableUsageUpdateVO`;
+  - next to `contractNegotiation` (the Quote VOs have no `externalId`):
+    `ExtendableQuoteVO` / `ExtendableQuoteCreateVO` / `ExtendableQuoteUpdateVO`.
 
   Include the new field in `equals` and `hashCode`.
+- **Not tagged:** `ExtendableProduct` / `ExtendableProductCreate` and the
+  ProductOrder that `TMFBackedContractNegotiationStore` creates (around `:798`
+  and `:955`–`:989`), and `ExtendableProductSpecificationRef`. Nothing lists
+  or looks these up by `externalId`: a Product is read by its TMForum id
+  (`ProductInventoryApiClient.getProductById`), a ProductOrder by its Quote id
+  (`ProductOrderApiClient.findByQuoteId`), and the Product's `externalId`
+  already embeds the agreement id (a UUID). They are only reached through a
+  Quote or Agreement, which carries the context. The ref is an embedded
+  reference, not a stored entity.
 - `tmf/ProductCatalogApiClient`, `tmf/QuoteApiClient` and `tmf/AgreementApiClient`
   (there is no Usage client; Usage VOs are only mapped in `TMFEdcMapper`): add
   context-aware overloads of the list and by-`externalId` lookups, e.g.
@@ -253,10 +265,21 @@ unchanged.
 ### Step 3: Context-aware mapper, asset/contract-definition/policy stores and catalog service
 
 - `TMFConfig`:
-  - add `tmfExtension.defaultParticipantContextId`, defaulting to the
-    classic-supplier context id (decision 3);
-  - keep `participantContextId` as an alias for the default context, for
-    compatibility.
+  - add `tmfExtension.defaultParticipantContextId` (decision 3) and resolve
+    the default context in this order, first non-blank wins:
+    1. `tmfExtension.defaultParticipantContextId`;
+    2. the context of the `SingleParticipantContextSupplier`, when one is
+       registered (classic mode; this is what `TMFConfig.fromConfig` fills
+       `participantContextId` from today);
+    3. `edc.participant.context.id`, then `edc.participant.id` (the existing
+       no-supplier fallback in `fromConfig`);
+    4. none: in virtual mode, log the decision 3 startup warning.
+  - log a warning when the explicit key (1) and the supplier context (2) are
+    both set and differ. The explicit key still wins, so a classic deployment
+    with both set behaves predictably;
+  - keep `getParticipantContextId()` as a deprecated accessor that returns the
+    resolved default, so existing callers compile unchanged until they move to
+    the new accessor.
 - `store/TMFEdcMapper`:
   - stop stamping the constructor-injected `participantContextId`;
   - stamp each entity with the TMForum entity's `participantContextId`, or with
@@ -296,6 +319,9 @@ unchanged.
     send `participantContextId=<default>` as a plain server-side filter);
   - `findById` on the policy store stamps the owning offering's context;
   - the catalog for context A never contains B's datasets.
+- `TMFConfig` default-context resolution, parameterized over which of
+  (explicit key, supplier context, `edc.participant.*`) are set: the expected
+  winner, and a warning only when the explicit key and the supplier differ.
 
 Acceptance:
 - `mvn -pl tmf-extension -am test` is green;
@@ -306,7 +332,8 @@ Acceptance:
 
 - `store/TMFBackedContractNegotiationStore`:
   - persist the negotiation's `participantContextId` on the Quote (and its items)
-    and on the Agreement and Usage;
+    and on the Agreement and Usage. Products and ProductOrders stay untagged
+    (see Step 2);
   - `findById`, `findContractAgreement`, `queryNegotiations`, `queryAgreements`
     and `nextNotLeased` honour context criteria. `queryAgreements` must match
     `(agreementId, participantContextId)`, which upstream
