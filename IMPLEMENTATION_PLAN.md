@@ -514,10 +514,36 @@ Acceptance:
 
 ### Step 5: Per-context identity in `fdsc-transfer-extension`; verify `policy-extension`
 
+- **Where the transfer's context comes from.** The EDR service and the
+  provisioner run on the data-plane side and never see a `TransferProcess`:
+  `FDSCDcpEndpointDataReferenceService.createEndpointDataReference(DataFlow)`
+  gets the `DataFlow` that `FDSCProvisioner.endpointDataReference` loads via
+  `dataPlaneStore.findById(flowId)`, and `FDSCDcpProvisioner.provision` gets a
+  `ProvisionResource`. In 0.18.1 neither carries a context:
+  `DataFlow.getParticipantId()` is the **counter-party** and must never be used
+  as our context or `iss`; `ProvisionResource` has only `getFlowId()` and
+  properties; `DataFlowStartMessage` has no context either. Therefore:
+  - add one `TransferContextResolver` in `fdsc-transfer-extension`
+    (`resolve(String flowId)`), the **single source** for both the EDR `iss`
+    and the route `discovery` suffix, so the two cannot diverge;
+  - it loads the transfer with `TransferProcessStore.findById(flowId)` (the
+    store is already injected in `FDSCTransferControlExtension:134`). In the
+    embedded data plane the flow id is the transfer process id
+    (`DataPlaneSignalingFlowController` sends `processId = transferProcess.getId()`;
+    `toDcpServiceRoute` already names its flow-id argument `transferProcessId`).
+    Step 5 verifies this in the 0.18.1 source before relying on it. If it does
+    not hold, resolve instead from `dataFlow.getAgreementId()` (also the
+    `AGREEMENT_ID_PROPERTY` on the `ProvisionResource`) through the agreement
+    store, whose agreements carry their context since Step 4;
+  - it returns the transfer's `participantContextId`, or the resolved default
+    context (Step 3) when that is null. When no transfer is found it returns a
+    failure, and provisioning fails with a clear message rather than signing
+    with a guessed issuer.
 - Remove the single `tmfConfig.getParticipantId()` from
   `FDSCTransferControlExtension` (`:192`, `:201`):
-  - `FDSCDcpEndpointDataReferenceService` resolves the issuer from the transfer
-    process's `participantContextId` through `ParticipantIdentityResolver`;
+  - `FDSCDcpEndpointDataReferenceService` resolves the context with
+    `TransferContextResolver.resolve(dataFlow.getId())` and the issuer from it
+    through `ParticipantIdentityResolver`;
   - `dcp/OidConfigController` (decided here, not in Step 1): add
     `GET /.well-known/openid-configuration/{participantContextId}`, which
     returns that context's identity (via `ParticipantIdentityResolver`) as
@@ -533,9 +559,10 @@ Acceptance:
   - `transfer/TransferMapper.toDcpServiceRoute` and its caller
     `FDSCDcpProvisioner` (`:137`): the APISIX `openid-connect` plugin checks
     the EDR's `iss` against the discovery document's `issuer`, so the route
-    must point at the transfer's own context. Pass the transfer's
-    `participantContextId` (the same one the EDR service signs with) into
-    `toDcpServiceRoute`, and build `discovery` as
+    must point at the transfer's own context. Pass the context from
+    `TransferContextResolver.resolve(provisionResource.getFlowId())` (the same
+    resolver the EDR service signs with) into `toDcpServiceRoute`, and build
+    `discovery` as
     `oidConfig().host() + oidConfig().openIdPath() + "/" + participantContextId`.
     For the default context, or when the id is null, keep today's
     `host() + openIdPath()`, so classic routes are byte-for-byte unchanged;
@@ -554,12 +581,21 @@ Acceptance:
     so that PAP policies *can* tell dataspaces apart. Add it only if the
     existing input shape has an obvious place for it. If it does not, record
     the decision in the PR and add nothing.
-- Tests: an EDR issuer is created for a transfer in each of two contexts; the
-  OID config is returned for each context and for the default path, and an
-  unknown context gets 404; parameterized over (context B, default context,
-  null), `toDcpServiceRoute` sets `discovery` ending in `/{B}` for B and the
-  unchanged default path otherwise, and the issuer of B's OID config equals
-  the `iss` of B's EDR.
+- Tests: the context always comes from a `DataFlow` / `ProvisionResource`
+  plus a mocked `TransferProcessStore`, never from a pre-set context:
+  - `TransferContextResolver`, parameterized over (transfer in B, transfer with
+    null context, no transfer found) → B, the default context, failure; a
+    `DataFlow` whose `getParticipantId()` is the counter-party DID never
+    leaks into the result;
+  - for one flow id, the EDR `iss` and the route `discovery` suffix come from
+    the same resolved context;
+  - an EDR issuer is created for a transfer in each of two contexts; the OID
+    config is returned for each context and for the default path, and an
+    unknown context gets 404;
+  - parameterized over (context B, default context, null),
+    `toDcpServiceRoute` sets `discovery` ending in `/{B}` for B and the
+    unchanged default path otherwise, and the issuer of B's OID config equals
+    the `iss` of B's EDR.
 
 Acceptance:
 - `mvn -pl policy-extension -am test` is green (it pulls in
