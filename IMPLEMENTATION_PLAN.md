@@ -1,465 +1,897 @@
-# Implementation Plan: FDSC-EDC upgrade to 0.18.1
+# Implementation Plan: Multi-Dataspace support for the FDSC-EDC
 
 ## Overview
 
-Upgrade `fdsc-edc` from Eclipse EDC `0.14.1` to `0.18.1` (seven upstream releases:
-0.15.0, 0.15.1, 0.16.0, 0.16.1, 0.17.0, 0.18.0, 0.18.1 — there is no 0.17.1).
-The ticket scopes the *first* deliverable as a written compatibility overview; the
-remaining steps carry out the migration module by module, ending with a green DSP
-TCK conformance run and updated docs.
+Let one `controlplane-dcp` runtime take part in several dataspaces at once, using
+EDC 0.18.1's **virtual participant-context mode** plus **dataspace profiles**. Each
+dataspace becomes a participant context with its own DID, STS settings and
+associated profile(s). The data still lives in the **single shared TMForum**, so
+the dataspace-specific TMForum entities (offerings, quotes, agreements, usage)
+carry their context and the stores filter by it. Products
+(ProductSpecifications) stay shared, and **one ProductOffering can be offered in
+one dataspace, in several, or in all of them** (decision 4).
+`controlplane-oid4vc` and `controlplane-tck` stay on classic mode, and the shared
+modules must keep working in both modes. The deliverables are the code changes and
+an operator guide, `docs/multi-dataspace.md`, with an example multi-dataspace
+configuration.
 
-The dominant breaking change is upstream's **Participant Context** refactor
-(0.15.0–0.17.0), which threads a `ParticipantContext` through the protocol services
-and puts a `participantContextId` on every control-plane entity. Second is the
-**DCP module rename** (`identity-trust-*` → `decentralized-claims-*`), third is the
-**removal of DSP 0.8 and 2024/1**, which this repo still wires in.
+### Scope decisions (from the ticket's analysis comment)
 
-### Working agreement for this plan
+All points below are settled.
 
-- All steps land on the work branch `ticket-72/work`, one PR per step.
-- **The extension modules are not all independent.** Four of the six
-  (`tmf-extension`, `test-extension`, `oid4vc-extension`, `dcp-extension`) depend
-  only on EDC artifacts and the parent POM, but two have compile-scoped sibling
-  dependencies:
+- Target EDC **0.18.1**, which `main` already uses, so there is no version bump.
+- **Virtual mode applies only to `controlplane-dcp`.** `controlplane-oid4vc` and
+  `controlplane-tck` keep `participant-context-connector-classic-core`.
+  - This is a breaking change for every existing DCP deployment (management API
+    v5 with OAuth2, DSP URLs gain `/{ctx}/{profile}`); Step 10 documents it and
+    the PR is labelled `major`.
+  - **Confirmed by the maintainer** (PR #7 review: "Please switch the
+    controlplane to virtual mode"). Step 8 switches the existing
+    `controlplane-dcp` module in place; no sibling `controlplane-dcp-virtual`
+    module is added.
+- **One TMForum and one ODRL-PAP** serve all dataspaces.
+- **DCP identity is configured per dataspace:** DID, STS, scope mappings and the
+  EBSI TIR.
 
-  ```
-  policy-extension  depends on  fdsc-transfer-extension  depends on  tmf-extension
-      (policy-extension/pom.xml:18)        (fdsc-transfer-extension/pom.xml:25)
-  ```
+### Verified upstream facts (EDC tag `v0.18.1`, commit 3a22ff4 — do not re-research)
 
-  So the build order is `tmf-extension` → `fdsc-transfer-extension` →
-  `policy-extension`.
+> The docs on the `main` branch of eclipse-edc.github.io describe features that
+> 0.18.1 does **not** have: the `/v5beta/dataspaceprofiles` and `/v5beta/dcpscopes`
+> APIs, `trustedIssuers` and `protocol.path` on a profile,
+> `edc.iam.sts.type` and `edc.participants.config.validation.strict`. Do not plan
+> against them.
 
-  Two consequences, both binding on the step order below:
-  - **Always use `mvn -pl <module> -am test`**, never a bare `-pl`. A bare `-pl`
-    resolves the sibling from `~/.m2` at `0.0.1-SNAPSHOT`, where it is either
-    absent or a stale 0.14.1 build — so the step would verify against the wrong
-    code or fail for an unrelated reason. Alternatively end each step with
-    `mvn -pl <module> install -DskipTests`, but `-am` is the safer default
-    because it cannot leave a stale artifact behind.
-  - **Step 5 is hard-blocked by Step 3**, and *within* Step 5
-    `fdsc-transfer-extension` must be migrated before `policy-extension`. The
-    step order below already satisfies this — do not reorder the steps on the
-    assumption that the modules are independent.
+- **Profile SPI** (`protocol-spi`, package `org.eclipse.edc.protocol.spi`):
+  - `record DataspaceProfileContext(name, protocolVersion, webhook, idExtractionFunction, protocolNamespace, jsonLdContextsUrl)`
+  - `DataspaceProfileContextRegistry`
+  - `ParticipantProfileService.resolve(ctxId, profileId)` / `resolveAll(ctxId)`
+  - `ProtocolWebhookResolver.getWebhook(ctxId, protocol)`
 
-  Only `controlplane-oid4vc` / `controlplane-dcp` aggregate all six.
-- Consequently the **full reactor is expected to stay red from Step 2 until
-  Step 6**. Each step's acceptance criterion is its *own* module going green.
-  The two reactor-wide gates are split so that neither step is asked to pass a
-  gate depending on work scoped to the next one:
-  - **Step 6** — `mvn clean test` green across the reactor (every module
-    compiles, all unit tests pass). This is where the build comes back.
-  - **Step 7** — `mvn clean package` green across the reactor. `package` also
-    builds the two controlplane Docker images, which is Step 7's own deliverable.
-- `.github/workflows/test.yml` triggers on every push, so **CI will be red on the
-  PRs for Steps 2–5 by design**. Say so in each of those PR descriptions; a red
-  check there is the planned state, not breakage. CI is expected green from
-  Step 6 onwards.
-- Do not merge `ticket-72/work` into `main` before Step 9 passes.
-- **Known-wrong line in `AGENTS.md`, read this instead.** The doc-comment bullet in
-  `AGENTS.md` says `@param`/`@return` blocks are "used only in config classes".
-  That is false for this codebase: 19 of the 138 `src/main/java` files use them —
-  all 7 files of `policy-extension`, 5 in `tmf-extension`, 4 in
-  `fdsc-transfer-extension`, 2 in `test-extension` and 1 in `oid4vc-extension`.
-  Read it as "concentrated in config classes and the policy extension". The
-  surrounding density guidance is sound (69 of 138 files carry a `/**` block, so
-  "roughly half" holds) and still applies — match the density of the file you are
-  editing. The line is corrected in `AGENTS.md` itself in Step 9, which owns that
-  file; it is flagged here so no agent running Steps 2–8 acts on the wrong
-  version.
+  A profile binds only the protocol version and binding, the JSON-LD
+  namespace and contexts, and the webhook. It does **not** bind a DID, STS,
+  trusted issuers or scopes.
+- **Profile declaration** (`DataspaceProfileConfigurationExtension`, artifact
+  `dsp-http-core-virtual`):
+  - keys: `edc.dataspace.profiles.<key>.name`, `.protocol.version`,
+    `.protocol.binding`, `.protocol.namespace` and `.jsonld.context.urls` (CSV);
+  - `DspVirtualApiConfigurationV2025Extension` always registers the default
+    profile `http-dsp-profile-2025-1`.
+- **DSP path in virtual mode:**
+  `<web.http.protocol.path>/{participantContextId}/{profileId}/{catalog|negotiations|transfers}/...`
+  - It returns 404 unless the profile is associated with that context. The
+    association comes from the per-context config entry `edc.dataspace.profiles`
+    (CSV); `edc.dataspace.enable.profiles.all=true` bypasses it.
+  - `web.http.protocol.virtual=true` is required. An explicit
+    `edc.dsp.callback.address` must contain `%s`, which is replaced by the
+    participant context id.
+- **Virtual mode assembly:**
+  - Use the `controlplane-virtual-base-bom` BOM. It contains `dsp-virtual`,
+    `management-api-v5`, `management-api-authorization` and
+    `management-api-oauth2-authentication`, and does **not** contain the classic
+    core.
+  - Optional add-ons: `controlplane-virtual-feature-dcp-bom`,
+    `controlplane-virtual-feature-sql-bom` and `controlplane-virtual-feature-nats-bom`.
+  - `participant-context-connector-core` (`ParticipantIdentityResolver`,
+    `ParticipantProfileService`) is used by both modes.
+  - **No `SingleParticipantContextSupplier` exists in virtual mode.**
+- **Creating contexts** (management API v5, which needs `management-api:admin`):
+  - `POST /v5beta/participants` with `identity`, `properties` and `state`;
+  - `PUT /v5beta/participants/{id}/config` with `entries` and `privateEntries`;
+  - `PUT /v5beta/participants/{id}/profiles`.
 
-### Verified findings (do not re-research)
+  Values are read per context through `ParticipantContextConfig.getString(ctxId, key)`.
+  The context and config stores are in memory unless the SQL BOM is added.
+- **Management API v5:**
+  - resources are scoped under `/v5beta/participants/{ctxId}/assets` (and the
+    same for the other resources). `AssetApiV5Controller` has `POST` (create),
+    `POST /request` (query), `GET /{id}`, `PUT` and `DELETE /{id}`; there is
+    **no collection `GET`**;
+  - authentication is an OAuth2 JWT (`edc.iam.oauth2.jwks.url`,
+    `edc.iam.oauth2.issuer`);
+  - a token's `sub` must name an existing context. `management-api:admin`
+    grants access to every context.
+- **DCP:**
+  - Per participant context: the DID (`DidConfigProvider`: `edc.participant.id`,
+    then `edc.participant.did`, then `edc.iam.issuer.id`) and the STS settings
+    `edc.iam.sts.oauth.token.url`, `.client.id` and `.client.secret.alias`.
+    The secret is read with `vault.resolveSecret(ctxId, alias)`.
+  - Per **profile, not per context:** upstream DCP scopes
+    (`edc.iam.dcp.scopes.<k>.profile`). `DefaultScopeMappingFunction` matches
+    the scope's profile against `message.getProtocol()`.
+  - Upstream scopes of type `DEFAULT` are added identically to the catalog,
+    negotiation and transfer requests (`DynamicDcpScopeExtension:60-62`
+    registers one `DefaultScopeMappingFunction` on all three request policy
+    contexts). They cannot express a scope for one request type only. Because
+    `decentralized-claims-core` is already on the `dcp-extension` classpath,
+    both this post-validator and ours (`DCPExtension:104-119`) run today. Both
+    add to the same `RequestScope` set, so the result is the union.
+  - Global: `TrustedIssuerRegistry`, which has no context dimension.
+- **Upstream code that filters on `participantContextId`:**
+  - Filters: `ContractDefinitionResolverImpl`, `DatasetResolverImpl`,
+    `TransferProcessProtocolServiceImpl.findAgreement` (`queryAgreements`),
+    `EmbeddedDataPlaneSelectorService` and `DataPlaneSignalingFlowController`.
+  - Compare `getParticipantContextId()` on the loaded entity: the negotiation and
+    transfer protocol services. `ContractNegotiationProtocolServiceImpl:247`
+    rejects an offer whose **contract definition** belongs to another context.
+  - **On the DSP protocol path an asset's `participantContextId` is never
+    compared.** The context-less `AssetIndex.findById` callers only null-check
+    the result
+    (`ContractValidationServiceImpl:70`/`:157`, `TransferProcessProviderFactory:60`;
+    `TransferProcessorsImpl:373` calls `resolveForAsset`). `countAssets` in
+    `ContractValidationServiceImpl` uses only the definition's asset selector.
+    Only `DatasetResolverImpl.query` filters assets by context, and it drops
+    every dataset that has no offer from that context's contract definitions.
+  - **The management API v5 path does compare it.** For every non-admin
+    principal, `AuthorizationServiceImpl.authorize` checks
+    `resource.getParticipantContextId()` against the owning context. The
+    asset it checks is loaded by `AssetApiV5Extension.findAsset` with
+    `assetService.search(participantContextId = <owner> AND id = <assetId>)`,
+    i.e. through `AssetIndex.queryAssets`, not `findById`. Decision 4 holds
+    only because `queryAssets` stamps the queried context (Step 3).
+- **Reference code:**
+  - `system-tests/tck/dsp-tck-virtual-connector-under-test`: its
+    `TckSetupExtension` seeds contexts in code.
+  - `system-tests/management-api/management-api-test-runner/.../v5/CatalogApiV5MultiProfileEndToEndTest.java`:
+    two custom profiles.
+  - Decision records `2025-05-28-dataspace-profile-context` and
+    `2026-05-11-multi-profile-virtual-connector`.
 
-Moved to [`docs/migration/EDC-0.18.1-UPGRADE.md`](docs/migration/EDC-0.18.1-UPGRADE.md),
-which is the single source of truth for artifact coordinates, SPI signature changes,
-configuration keys and the Participant Context decision. Do not copy any of it back
-here — two copies will drift.
+### Design decisions
+
+1. **One dataspace is one participant context.** A dataspace's identity (DID,
+   STS, TIR, scopes) lives on the context. The context is associated with one or
+   more profiles. If an operator uses the same DID in two dataspaces, they may
+   still configure two contexts, so that data and policy stay isolated.
+2. **TMForum carries `participantContextId` as an extension property on the
+   dataspace-specific entities only:**
+
+   | TMForum entity | EDC entity | Tagged | Why |
+   |---|---|---|---|
+   | ProductSpecification | Asset | **no** | the product; shared across dataspaces (decision 4) |
+   | ProductOffering (and its embedded policies) | ContractDefinition, PolicyDefinition | yes, **multi-valued** `participantContextIds` | an offer made in one, several or all dataspaces (decision 4) |
+   | Quote, QuoteItem | ContractNegotiation | yes | a negotiation runs in one dataspace |
+   | Agreement | ContractAgreement | yes | an agreement is made in one dataspace |
+   | Usage | TransferProcess (`TMFEdcMapper.fromTransferProcess`) | yes | a transfer runs in one dataspace |
+   | Product, ProductOrder, ProductSpecificationRef | — | no | reached only through a tagged Quote or Agreement (Step 2) |
+
+   - Every tagged entity except the ProductOffering carries one
+     `participantContextId` string. The ProductOffering carries
+     `participantContextIds`, an array of context ids or the wildcard `*`
+     (all contexts); see decision 4.
+   - It is declared **optional** in the JSON schemas under `schemas/`, so
+     existing data still validates.
+   - For a **non-default** context it is queried **server-side** with a
+     `participantContextId=` query parameter (for offerings: the array contains
+     the context or `*`), the same way
+     `ProductCatalogApiClient.getProductSpecByExternalId` already queries
+     `externalId`.
+3. **Legacy data with no context id** belongs to the *default context*.
+   - The new setting is `tmfExtension.defaultParticipantContextId`.
+   - In classic mode it defaults to the `SingleParticipantContextSupplier`
+     context.
+   - In virtual mode it must be configured, or such entities stay invisible and
+     a startup warning is logged.
+   - **The default context is never pushed down as `participantContextId=<default>`**:
+     that filter returns only tagged entities and drops the untagged legacy
+     ones (all of the classic TCK data). For the default context the store
+     queries "equals default OR absent" if Step 1 finds the TMForum API supports
+     it, otherwise it fetches unfiltered. Either way it maps first (absent →
+     default) and filters in memory afterwards.
+4. **A product is shared; an offering names the dataspaces it is made in.**
+   The ProductOffering's `participantContextIds` decides where it is offered:
+
+   | `participantContextIds` | Offered in |
+   |---|---|
+   | absent or empty | the default context only (decision 3; legacy data) |
+   | `["A"]` | dataspace A only |
+   | `["A", "B"]` | dataspaces A and B |
+   | `["*"]` | every context, including ones added later |
+
+   Absent deliberately does **not** mean "all": an existing single-dataspace
+   deployment that adds a second dataspace must not expose its existing offers
+   there without an explicit tag. An offer that needs *different* policies per
+   dataspace is modelled as one offering per dataspace, all referencing the same
+   ProductSpecification. The wildcard is the named constant
+   `ALL_PARTICIPANT_CONTEXTS = "*"`.
+   - **Products (assets):** the ProductSpecification has no context. The asset
+     index stamps the mapped `Asset` with the context the query asks for
+     (`queryAssets`), or with the default context on the context-less
+     `findById`. This is safe because the DSP path never compares an asset's
+     context, and the management API v5 path loads the asset through
+     `queryAssets` with the owner's context criterion (see the verified facts). Its `externalId` stays globally unique,
+     as it is today.
+   - **Offerings (contract definitions and policies):** an EDC
+     `ContractDefinition` / `PolicyDefinition` has exactly one
+     `participantContextId`, `ContractDefinitionStore.findById(String)` and
+     `PolicyDefinitionStore.findById(String)` take no context, and upstream
+     *does* compare the definition's context with the negotiation's
+     (`ContractNegotiationProtocolServiceImpl:247`). A by-id lookup therefore
+     has to learn the context from the id itself:
+     - an offering that serves **exactly one** context (absent, or one id) keeps
+       its plain `externalId` as contract definition id and its plain policy
+       ids, stamped with that context. Classic and TCK data are therefore
+       unchanged;
+     - an offering that serves **several or all** contexts is exposed in
+       context X under the *context-qualified* contract definition id
+       `<offeringExternalId>@X`, and its policies under `<policyId>@X`, stamped
+       with X. One shared helper `ContextQualifiedId` (in `store/`, separator
+       constant `CONTEXT_QUALIFIER_SEPARATOR = "@"`) builds and parses these ids;
+     - parsing tries the full id as a plain `externalId` first (one lookup, as
+       today). Only if that finds nothing and the id contains the separator is
+       it split at the **last** separator. The qualified form resolves only if
+       the prefix names a multi-context offering whose `participantContextIds`
+       contains X or `*`; otherwise the lookup returns nothing. Each
+       (offering, context) pair thus has exactly one id, and an id qualified
+       with X can only produce a definition stamped X, which line 247 rejects
+       in any other context;
+     - offering `externalId`s and policy ids stay globally unique. By-id
+       lookups (`getProductOfferingByExternalId`, `getByPolicyId`) stay
+       context-less. A duplicate is a data error, raised by the existing
+       "multiple … exist" check, which now names the id and the offerings'
+       contexts (see Steps 2 and 3).
+   - The contract offer id is `ContractOfferId.create(<definitionId>, <specExternalId>)`,
+     so the same product gets a distinct offer id per offering and, for a
+     multi-context offering, per dataspace.
+   - A negotiation, agreement and usage always belong to exactly one context:
+     the one the negotiation ran in, even when the offering serves several.
+     Their ids are UUIDs. An agreement's `assetId` may name a shared product;
+     that is fine because the agreement itself is tagged and `findAgreement`
+     filters by context.
+5. **Your own identity is resolved per context.** It is never read from
+   `TMFConfig.getParticipantId()` on a code path that has a context: use
+   `ParticipantContext.getIdentity()` or `ParticipantIdentityResolver`.
+   `TMFConfig.participantId` / `participantContextId` remain as the
+   classic-mode default only.
+6. **Contexts are seeded from static configuration at startup.** A new
+   `participant-bootstrap-extension` reads them, because FDSC deploys through
+   Helm and has no SQL store for EDC. The management API v5 stays available for
+   runtime changes.
+
+### Working agreement
+
+- Use `mvn -pl <module> -am test`. Never use a bare `-pl`: sibling modules
+  depend on each other.
+- Every step must leave `mvn clean test` and `mvn spotless:check` green across
+  the reactor, and must keep the classic DSP TCK (`controlplane-tck`, the
+  `.github/workflows/test.yml` TCK job) green. Steps 2–7 change no assembly,
+  so classic behaviour must stay byte-for-byte equivalent. Their unit tests must
+  cover both an entity *with* and one *without* a `participantContextId`.
+- New property keys are named `static final` constants in the module's config
+  class (`TMFConfig`, `DcpConfig`, `TirConfig`, `TransferConfig`). No inline
+  literals.
+- Prefer `@ParameterizedTest` for the "context A / context B / no context" case
+  tables instead of duplicating test methods.
 
 ## Steps
 
-### Step 1: Migration overview and compatibility report
+### Step 1: Multi-dataspace design record and open-item verification
 
-The ticket's explicit first deliverable: a written overview of what changes, what is
-incompatible, and what adjacent components must move in lockstep. The only code-
-adjacent task is capturing the TCK baseline (last bullet), which must happen while
-the build is still at 0.14.1 and green.
+Create `docs/multi-dataspace-design.md` and put the "Verified upstream facts" and
+"Design decisions" sections above into it. Then replace those two sections in
+this plan with a one-line pointer to the file, so that only one copy exists.
+Resolve each of the following against the 0.18.1 source or a running stack, and
+record the answer:
 
-**Move and extend, do not rewrite.** The "Verified findings" section that used to sit above is the
-seed of this document, not a parallel copy of it. Cut that section out of
-`IMPLEMENTATION_PLAN.md`, paste it into `docs/migration/EDC-0.18.1-UPGRADE.md`,
-and leave behind a one-line pointer to the new file. Two copies of the same
-artifact table will drift; there must be exactly one.
+- **TMForum extension-property query:** does the FIWARE TMForum API used in
+  `docker-compose.tck.yml` (a) accept an *optional* extra property in an
+  `@schemaLocation` schema, and (b) filter list endpoints by
+  `?participantContextId=`? `externalId` shows (b) works for a required
+  property, but it is not proven for an optional one.
+  - Verify this against the TCK compose stack and record the exact query form.
+  - If (b) does not work, the fallback is fetch-all with in-memory filtering.
+    Record the paging consequence for `TMForumBackedCatalogProtocolService.getCatalog`,
+    which today pages specs by `QuerySpec` offset and limit and fetches up to
+    `MAX_OFFERINGS` offerings. Only the offerings are filtered by context; the
+    specs are shared (decision 4).
+  - Record the query form for the default context (decision 3): can the API
+    express "`participantContextId` equals X OR is absent" in one request? If
+    not, the default context fetches unfiltered and filters in memory; record
+    the same paging consequence for that path.
+  - Record the query form for the multi-valued offering tag (decision 4): can
+    the API filter "`participantContextIds` contains X OR contains `*`" (plus
+    "OR absent" for the default context) in one request? If not, offerings
+    are fetched unfiltered and filtered in memory; record the paging
+    consequence.
+  - Confirm in the 0.18.1 source which DSP-path callers of
+    `ContractDefinitionStore.findById` / `PolicyDefinitionStore.findById`
+    exist, and that they take the id from the offer id / the definition's
+    policy ids, so the context-qualified ids of decision 4 reach them
+    unchanged.
+- **Data plane registration:**
+  `FDSCTransferControlExtension` saves exactly one `DataPlaneInstance`. Does
+  `EmbeddedDataPlaneSelectorService` filter it out for a context that does not
+  own it? If so, decide between one instance per context and a context-less
+  shared instance.
+- **Vault per context:** `vault.resolveSecret(ctxId, alias)` together with
+  `vault-hashicorp`. Determine which path or prefix layout the STS client secret
+  of each context needs.
+- **TIR per dataspace:** `TrustedIssuerRegistry` is global. Pick a mechanism and
+  record it:
+  - a per-profile post-validator that checks the VC issuer against that
+    profile's TIL; or
+  - `EbsiTrustedIssuersRegistry` holding the union of all TILs, combined with a
+    per-profile issuer check.
+- **Management API auth for operators:** decide on the JWT issuer that FDSC uses
+  for `management-api-oauth2-authentication`, e.g. the existing Keycloak in the
+  FIWARE Data Space Connector chart.
+- **DSP version endpoint in virtual mode:** is `/.well-known/dspace-version`
+  still served at the protocol root, or per `{ctx}` / `{ctx}/{profile}`? Record
+  the exact path(s); Step 9 asserts against them.
+- **DSP request without a token in virtual mode:** do the `dsp-virtual`
+  controllers resolve the `{ctx}/{profile}` association *before* they check the
+  DCP token? Record the exact status Step 9 expects for
+  `POST <protocol>/{A}/{profileA}/catalog/request` without a token (associated
+  profile, e.g. 401) and for `<protocol>/{A}/{profileB}/catalog/request`
+  (unassociated profile, 404). If the token is checked first, both return the
+  same status; record that, and Step 9 then asserts the association through
+  `GET /v5beta/participants/{A}/profiles` (or the config entry) instead.
+- **`test-extension` in `controlplane-dcp`:** it is compile-scoped at
+  `controlplane-dcp/pom.xml:54`. Decide whether to drop it from the DCP assembly;
+  the `controlplane-tck` assembly owns TCK use.
 
-Create `docs/migration/EDC-0.18.1-UPGRADE.md` containing:
+Acceptance:
+- the design record exists and every open item above is answered or explicitly
+  deferred with a reason;
+- this plan holds a single pointer instead of the moved sections;
+- no code changes.
 
-- **Release-by-release summary** of 0.15.0 → 0.18.1 with the breaking change for
-  each, linked to the upstream release notes and PR numbers.
-- **Artifact coordinate table** — the six removed artifacts and their replacements,
-  moved over from the former "Verified findings" section, plus the full list of the
-  72 declared EDC artifacts with a resolve-status column, and the two false-friend
-  warnings (`dcp-*`, `*participant-context-spi`) recorded there.
-- **API break inventory** — the `javap`-confirmed signature changes above, each
-  mapped to the concrete files in this repo that implement them:
-  `TMFBackedContractNegotiationStore`, `TMForumBackedCatalogProtocolService`,
-  `OID4VPIdentityService`, `TestIdentityService`, `NoopAudienceResolver`,
-  `CounterPartyAddressAudienceResolver`.
-- **Participant Context impact analysis** — the central open design question: the
-  TMForum-backed stores have no SQL schema, so decide and record *where*
-  `participantContextId` lives in the TMForum entity model, and whether to adopt
-  `participant-context-connector-classic-core` (single-participant compatibility)
-  or the full multi-context core. Recommend `classic`.
-- **DSP protocol impact** — DSP 0.8 and 2024/1 are gone; the repo already targets
-  `2025-1` in `config/tck/tck.properties` and already declares `dsp-2025` /
-  `dsp-spi-2025` next to the 2024 artifacts, so confirm that dropping `dsp-2024` /
-  `dsp-spi-2024` is behaviour-neutral for the TCK, and state the consequence for
-  any external counterparty still on 2024/1. Record explicitly that the 2024/1
-  leftOperand IRI in `config/tck/scope-mappings.json:8` is ODRL policy vocabulary,
-  **not** protocol wiring, and must survive the removal (see Step 7).
-- **Config migration table** — `edc.iam.issuer.id` → `edc.participant.did`,
-  removal of `edc.dsp.well-known-path.enabled`, addition of
-  `edc.participant.context.id`, and the DCP scope config move to map-based
-  `...prefix.mapping`. Cross-check every key in `config/tck/edc.properties`
-  and the Helm/deployment values that feed the controlplane images.
-- **External component alignment** — IdentityHub must move to 0.18.1 together with
-  the connector (STS moved out of the Connector into IdentityHub in 0.15.0;
-  IdentityHub 0.18.0 replaced the `CredentialFormat` enum with profile strings,
-  bumped Admin APIs to v1beta and swapped roles for scopes). Flag the TMForum,
-  Scorpio and ODRL-PAP images as unaffected.
-- **Open questions** — at minimum:
-  - **Are EDC `CallbackAddress` notifications still delivered at 0.18.1 without
-    `callback-http-dispatcher`, and if so by which artifact?** The coordinate is
-    gone with no same-named replacement (see the upgrade doc, §8.1), while
-    `callback-event-dispatcher` and `callback-static-endpoint` remain wired.
-    Answer it concretely: read `callback-event-dispatcher`'s 0.18.1 extension to
-    see what `CallbackRegistry`/transport it now resolves, and name the artifact
-    that must be added in its place — or record that HTTP callback dispatch is
-    genuinely gone and what that costs the TMForum callback addresses stored in
-    `TMFContractNegotiation`. Do not close this one as "resolve succeeds".
-  - Whether to adopt upstream's `tck-extension` in place of the hand-rolled
-    `test-extension`.
-- **TCK baseline capture** (do this *first*, while the tree is still at 0.14.1 and
-  green): run `./scripts/run-tck.sh` with `TCK_FILTER` unset and commit the
-  resulting per-test pass/fail list as `docs/migration/tck-baseline-0.14.1.md`.
-  The repo records no TCK baseline anywhere today, so without this file Step 8 has
-  no way to tell a genuine regression from a test that never passed — and by then
-  the 0.14.1 build no longer exists on the branch. Note in the file whether the
-  run was fully green or already had failures.
+### Step 2: TMForum data layer — `participantContextId` extension property
 
-Acceptance: the document resolves every "needs verification" item above or states
-explicitly why it remains open; `docs/migration/tck-baseline-0.14.1.md` is
-committed; the "Verified findings" section has been moved out of this plan rather
-than copied; and Steps 2–9 can be executed from it without further upstream
-research.
+This step adds the data layer only. No caller uses it yet, so behaviour does not
+change.
 
-### Step 2: Bump `edc.version` and migrate dependency coordinates
+- `schemas/`: add
+  - an optional `participantContextIds` (array of string; an id or `*`) for the
+    ProductOffering. `external-id.json` is shared with the ProductSpecification,
+    Product and ref, so add it to `external-id.json` (they *may* carry it, but
+    nothing reads it there) or give the offering its own schema, whichever
+    Step 1 found the API accepts;
+  - an optional `participantContextId` (string) to `quote-item.json`, `contract-negotiation.json`, `agreement.json`,
+    `usage.json` and `contract-definition.json`,
 
-Mechanical dependency work only — make the build *resolve* against 0.18.1.
-Expect compilation to fail afterwards; that is this step's output, not a defect.
+  or add one shared schema, whichever Step 1 found the TMForum API accepts. Do
+  not make it `required`. Existing offerings keep their `@schemaLocation`.
+- `tmf-extension/src/main/java/org/seamware/edc/domain/`: add a
+  `participantContextId` field with a getter and a fluent setter to these VOs
+  (and only these):
+  - next to `externalId`: `ExtendableQuoteItemVO`,
+    `ExtendableAgreementVO` / `ExtendableAgreementCreateVO` /
+    `ExtendableAgreementUpdateVO`, and `ExtendableUsageVO` /
+    `ExtendableUsageCreateVO` / `ExtendableUsageUpdateVO`;
+  - next to `contractNegotiation` (the Quote VOs have no `externalId`):
+    `ExtendableQuoteVO` / `ExtendableQuoteCreateVO` / `ExtendableQuoteUpdateVO`;
+  - `ExtendableProductOffering` gets `List<String> participantContextIds`
+    instead, next to `externalId`.
 
-- `pom.xml`: `edc.version` `0.14.1` → `0.18.1`.
-- `dcp-extension/pom.xml`: `identity-trust-core` → `decentralized-claims-core`,
-  `identity-trust-spi` → `decentralized-claims-spi`,
-  `identity-trust-transform` → `decentralized-claims-transform`. Also remove the
-  duplicate `catalog-spi` declaration (declared twice, lines 62 and 67).
-- `controlplane-oid4vc/pom.xml` and `controlplane-dcp/pom.xml`: drop `dsp-2024` and
-  `callback-http-dispatcher`; apply the `callback-http-dispatcher` resolution from
-  Step 1.
-- `tmf-extension/pom.xml` and `test-extension/pom.xml`: drop `dsp-spi-2024`.
-- Add `connector-participant-context-spi` to `tmf-extension` (needed for
-  `ParticipantContext` in Step 3) and add
-  `participant-context-connector-classic-core` to both controlplane modules, per
-  the Step 1 decision.
-- **Decide `transfer-data-plane-signaling` explicitly** in both controlplane POMs
-  (`controlplane-oid4vc/pom.xml:185`, `controlplane-dcp/pom.xml:175`). It still
-  resolves at 0.18.1, so it will not surface on its own — see "Other confirmed
-  facts" above. Two admissible outcomes, and the PR description must state which
-  and why:
-  - **Drop it and declare `data-plane-signaling` in its place** (plus
-    `data-plane-signaling-oauth2` only if the OAuth2 data-plane path is actually
-    used — this repo does not currently declare it), following upstream's own
-    controlplane assembly; or
-  - **keep it**, with a recorded reason naming what in
-    `fdsc-transfer-extension` still needs it.
+  Include the new field in `equals` and `hashCode`. Add the constant
+  `ALL_PARTICIPANT_CONTEXTS` (decision 4) to `TMFConfig`.
+- **Not tagged:** `ExtendableProductSpecification`. It is the shared product
+  (decision 4); the asset index stamps the context on read.
+- **Not tagged either:** `ExtendableProduct` / `ExtendableProductCreate` and the
+  ProductOrder that `TMFBackedContractNegotiationStore` creates (around `:798`
+  and `:955`–`:989`), and `ExtendableProductSpecificationRef`. Nothing lists
+  or looks these up by `externalId`: a Product is read by its TMForum id
+  (`ProductInventoryApiClient.getProductById`), a ProductOrder by its Quote id
+  (`ProductOrderApiClient.findByQuoteId`), and the Product's `externalId`
+  already embeds the agreement id (a UUID). They are only reached through a
+  Quote or Agreement, which carries the context. The ref is an embedded
+  reference, not a stored entity.
+- `tmf/ProductCatalogApiClient`, `tmf/QuoteApiClient` and `tmf/AgreementApiClient`
+  (there is no Usage client; Usage VOs are only mapped in `TMFEdcMapper`): add
+  context-aware overloads of the **list** lookups of tagged entities only (e.g.
+  `getProductOfferings(int offset, int limit, String participantContextId)`).
+  `getProductSpecifications` gets no overload, because specs are untagged.
+  - A `null` context means no filter, which is today's behaviour.
+  - The offering overload returns the offerings whose `participantContextIds`
+    contains the context or `*`, in the query form Step 1 recorded.
+  - The by-`externalId` lookups get no context parameter (decision 4). The
+    offering lookup's "multiple … exist" check stays global; its error message
+    adds the `participantContextId` of each match, so a cross-context duplicate
+    is identifiable from the log. The spec lookup is unchanged.
+  - Add one shared constant `PARTICIPANT_CONTEXT_ID_QUERY_PARAM` instead of
+    per-client literals.
+- Tests:
+  - Jackson round-trip of each VO, with and without the field;
+  - MockWebServer/WireMock tests asserting the query parameter, following the
+    pattern of the existing client tests.
 
-  Because the BOM is import-scoped here, the replacement must be declared with an
-  explicit `${edc.version}` like every other dependency in those POMs. Note that at
-  0.18.1 only **one** `DataFlowController` may be provided, and `test-extension`
-  contributes a noop one — resolving that conflict for the TCK assembly belongs to
-  Step 6 (see `docs/migration/EDC-0.18.1-UPGRADE.md` §8.3), so state the decision made
-  here clearly enough for Step 6 to act on. Whichever
-  way this goes, it is a runtime-behaviour change that no compile gate covers, so
-  it folds into Step 7's data-flow verification.
-- Delete the stray `org/eclipse/edc/iam/identitytrust/spi/DcpConstants.java` at the
-  repo root; if anything actually references it, move it into a module source root
-  under an `org.seamware` package instead.
+Acceptance: `mvn -pl tmf-extension -am test` is green, and existing tests pass
+unchanged.
 
-Acceptance: `mvn -DskipTests dependency:resolve` emits **no
-`Could not resolve ... org.eclipse.edc:*`** line. Note that the command as a whole
-is expected to fail: `controlplane-oid4vc` and `controlplane-dcp` depend on the
-five extension modules at `0.0.1-SNAPSHOT`, which this step deliberately leaves
-non-compiling and therefore uninstalled — a red exit code caused by
-`org.seamware.edc:*-extension` is the planned state. Only EDC coordinates are
-being proved here. Capture the full `mvn -DskipTests compile` error output and
-attach it to the PR description as the breakage inventory driving Steps 3–6.
+### Step 3: Context-aware mapper, asset/contract-definition/policy stores and catalog service
 
-### Step 3: Migrate `tmf-extension` to the Participant Context store SPIs
+- `TMFConfig`:
+  - add `tmfExtension.defaultParticipantContextId` (decision 3) and resolve
+    the default context in this order, first non-blank wins:
+    1. `tmfExtension.defaultParticipantContextId`;
+    2. the context of the `SingleParticipantContextSupplier`, when one is
+       registered (classic mode; this is what `TMFConfig.fromConfig` fills
+       `participantContextId` from today);
+    3. no supplier registered (virtual mode, or a test): **nothing else**. Do
+       not fall back to `edc.participant.context.id` / `edc.participant.id`:
+       `fromConfig` reads the latter with an `ANONYMOUS_PARTICIPANT` default, so
+       it always yields a value, and in virtual mode those keys are per-context
+       entries, not a runtime identity. The default stays unset, legacy
+       entities stay unstamped and invisible, and the decision 3 startup
+       warning is logged.
 
-The largest module (56 main + 28 test files) and the one the Participant Context
-refactor hits hardest.
+    The `participantId` fallback in `fromConfig` (the classic-mode identity,
+    decision 5) is unchanged; only the default *context* stops using it.
+  - log a warning when the explicit key (1) and the supplier context (2) are
+    both set and differ. The explicit key still wins, so a classic deployment
+    with both set behaves predictably;
+  - keep `getParticipantContextId()` as a deprecated accessor that returns the
+    resolved default, so existing callers compile unchanged until they move to
+    the new accessor.
+- `store/TMFEdcMapper`:
+  - stop stamping the constructor-injected `participantContextId`;
+  - stamp each entity of a tagged TMForum type with that entity's
+    `participantContextId`, or with the default context when it is absent;
+  - for a ProductOffering, `fromProductOffer` takes the requesting context.
+    It applies the decision 4 table: a single-context offering keeps its plain
+    id and its own context; a multi-context or `*` offering gets the
+    `ContextQualifiedId` definition and policy ids and the requesting context.
+    It returns empty when the offering does not serve that context;
+  - stamp an `Asset` (from an untagged ProductSpecification) with a context the
+    caller passes in: the queried context, or the default context
+    (decision 4);
+  - in the EDC→TMForum direction, write `entity.getParticipantContextId()`.
 
-- `store/TMFBackedContractNegotiationStore.java`: change `save(T)` to return
-  `StoreResult<Void>` and implement the new `breakLease(T)`. Implement
-  `breakLease` consistently with the existing lease handling in
-  `AutomaticUnlockingLockManager` — do not stub it to a no-op, protocol services
-  now call it explicitly.
-- `store/TMForumBackedCatalogProtocolService.java`: adopt the new
-  `getCatalog(ParticipantContext, ...)` and
-  `getDataset(ParticipantContext, DatasetRequestMessage, TokenRepresentation)`
-  signatures. Note `getDataset` changed shape, not just arity — the dataset id now
-  arrives inside `DatasetRequestMessage`.
-- `store/TMFBackedAssetIndex.java`, `TMFBackedContractDefinitionStore.java`,
-  `TMFBackedPolicyDefinitionStore.java`: their declared methods are unchanged, but
-  entities now carry `participantContextId`. Implement the persistence and
-  `QuerySpec`/`Criterion` filtering decided in Step 1, in `TMFEdcMapper`.
-- `TMFEdcMapper.java`: map `participantContextId` in both directions, on **every**
-  entity it builds — including `ContractAgreement` (`:176`), which implements
-  `ParticipantResource` at 0.18.1. Introduce it as a named constant alongside the
-  existing TMForum field-name constants — no inline literals.
-- `ContractAgreement` also gains `agreementId`, distinct from `id`, and
-  transfer-request lookup is by `(agreementId, participantContextId)` — so
-  `toContractAgreement`, `findContractAgreement` and `queryAgreements`
-  (`TMFBackedContractNegotiationStore.java:163,196`) all need a decision on which
-  TMForum field carries the agreement id. See
-  `docs/migration/EDC-0.18.1-UPGRADE.md` §3.2 and §4.2.
-- Update the 28 test files; prefer `@ParameterizedTest` where a new participant-context
-  dimension multiplies existing cases rather than copying test methods.
+  This applies to every builder that sets it today (`:321`, `:512`, `:772`,
+  `:935`). Rename the constructor parameter to `defaultParticipantContextId`.
+- `store/TMFBackedAssetIndex`, `TMFBackedContractDefinitionStore` are
+  **read-only** like the policy store (`create`/`save`, `update`/`updateAsset`
+  and `deleteById` throw `UnsupportedOperationException`; the contract
+  definition store's `findAll` too). There is no write path to add.
+  - `TMFBackedAssetIndex` (products are shared, decision 4):
+    - `findById` / `resolveForAsset` are unchanged apart from stamping the
+      default context. Upstream only null-checks their result.
+    - `queryAssets` / `countAssets`: when the `QuerySpec` holds a
+      `participantContextId` criterion
+      (`ParticipantResource.filterByParticipantContextId`), stamp every mapped
+      asset with that context before the in-memory `CriterionOperatorRegistry`
+      predicate runs, so the criterion matches. Nothing is pushed down to
+      TMForum. Every product is therefore listed in every context; a product
+      only becomes *offered* in a dataspace through that dataspace's offering
+      (the catalog and the negotiation check both go through the offering).
+      Without a context criterion, stamp the default context, as today.
+    - This includes a `QuerySpec` that combines an `id` criterion with the
+      context criterion. Management API v5 loads `GET /assets/{id}` exactly
+      this way and then authorizes non-admin tokens against the asset's
+      context (see the verified facts). Do not route such id queries to
+      `findById`: its default stamp would turn every non-default-context
+      `GET /assets/{id}` into a 404 for non-admin tokens.
+  - `TMFBackedContractDefinitionStore`:
+    - `findById` stays context-less (decision 4): it resolves a plain or
+      context-qualified id through `ContextQualifiedId` and maps it with the
+      context from the qualifier (or the offering's single context). Its
+      `catch (RuntimeException)`
+      keeps returning `null` as the interface requires, but logs a
+      cross-context duplicate with `monitor.severe` instead of `warning`, since
+      it hides the offering in every dataspace until the data is fixed.
+    - `findAll` keeps throwing. The catalog is built by
+      `TMForumBackedCatalogProtocolService` (below), which filters the
+      offerings by context itself.
+- `store/TMFBackedPolicyDefinitionStore` is **read-only**: `create`, `update`,
+  `delete` and `findAll` throw `UnsupportedOperationException`, and `findById`
+  reads the policy out of its owning ProductOffering via
+  `ProductCatalogApiClient.getByPolicyId`. There is no TMForum policy entity and
+  no write path to add.
+  - The policy's context follows decision 4: the owning ProductOffering's
+    single context (absent → default), or, for a multi-context offering, the
+    qualifier of the requested `<policyId>@X`. Today `getByPolicyId` returns a bare
+    `Optional<Policy>`, which loses the offering, and the store builds the
+    `PolicyDefinition` inline. Change this:
+    - add `record OfferingPolicy(Policy policy, @Nullable List<String> participantContextIds)`
+      in `tmf/`; `getByPolicyId` (called with the unqualified policy id)
+      returns `Optional<OfferingPolicy>`, carrying the owning offering's raw
+      (possibly absent) contexts;
+    - add `TMFEdcMapper.toPolicyDefinition(OfferingPolicy, @Nullable String qualifier)`,
+      which builds the `PolicyDefinition` (id via `getIdFromPolicy`, qualified
+      when the offering is multi-context) and applies the decision 4 table, so
+      context stamping lives only in the mapper;
+    - the store injects `TMFEdcMapper` and calls it. Drop the store's own
+      `participantContextId` field.
+  - Policy ids are globally unique (decision 4): one policy id belongs to one
+    offering, which may serve several contexts. Today `getByPolicyId` stops
+    at the first page with a hit; change it to keep paging through all
+    offerings, and throw `BadGatewayException` naming the policy id, the
+    offerings and their contexts when more than one offering matches.
+  - Do not add a schema or a write path for policies.
+- `store/TMForumBackedCatalogProtocolService.getCatalog` / `getDataset`:
+  - fetch the offerings that serve `participantContext.getParticipantContextId()`
+    only: tagged with it or with `*`, plus the untagged ones for the default
+    context (decisions 3 and 4); specs stay unfiltered;
+  - `TMFEdcMapper.datasetFromProductSpecification` takes the requesting context
+    and builds each offer id from the definition id `fromProductOffer` would
+    return in that context (plain or `ContextQualifiedId`);
+  - no other change is needed: `TMFEdcMapper.datasetFromProductSpecification`
+    already drops a spec that no given offering references, so a product
+    appears in a dataspace's catalog only with that dataspace's offers, and
+    `getDataset` returns not-found for a product that has no offering in the
+    requesting context.
+- `TMFOfferResolverExtension` / `store/TMForumConsumerOfferResolver`: resolve
+  offers within the requesting context. Every caller that turns an offer id's
+  `definitionPart()` into an offering (this resolver, and
+  `TMFBackedContractNegotiationStore.getTmfOfferId`, Step 4) goes through
+  `ContextQualifiedId`, so a qualified definition id finds its offering.
+- Tests, parameterized over (context A, context B, legacy-no-context):
+  - each mapper output has a non-null `participantContextId`;
+  - the catalog service fetches only the requesting context's offerings, and
+    the asset index returns every product stamped with the queried context
+    (the contract-definition store's `findAll` keeps throwing, see above);
+  - a default-context query returns the untagged legacy entities (and does not
+    send `participantContextId=<default>` as a plain server-side filter);
+  - `queryAssets` with `participantContextId = B AND id = <sharedSpec>` (the
+    management API v5 lookup) returns that one asset stamped with B;
+  - `findById` on the policy store stamps the owning offering's context, and
+    fails for a policy id used by offerings in two contexts;
+  - `findById` on the contract-definition store returns the offering with its
+    mapped context, and returns `null` (logged severe) for an offering
+    `externalId` used in two contexts;
+  - **one product offered in A and B** (one spec, two offerings): A's catalog
+    and B's catalog both list the dataset, each with only its own offer id and
+    policy; `getDataset` in each context returns its own offer;
+  - **one offering in several dataspaces**, parameterized over
+    `participantContextIds` (`["A","B"]`, `["*"]`) × requesting context
+    (A, B, C): the offering appears exactly where the decision 4 table says,
+    with offer id `<externalId>@<ctx>`; the contract-definition and policy
+    stores resolve that qualified id to a definition stamped with `<ctx>`;
+    an id qualified with a context the offering does not serve, or a
+    qualified id for a single-context offering, resolves to `null`;
+  - a single-context and an untagged offering keep their plain ids (the
+    classic offer ids are unchanged);
+  - an offering `externalId` that itself contains `@` still resolves as a plain
+    id;
+  - a product offered only in A is missing from B's catalog, and `getDataset`
+    in B returns not-found.
+- `TMFConfig` default-context resolution, parameterized over which of
+  (explicit key, supplier context, `edc.participant.*`) are set: the expected
+  winner, and a warning only when the explicit key and the supplier differ.
+  Include the row "no supplier, no explicit key, `edc.participant.id` set"
+  → default unset and the decision 3 warning logged.
 
-Acceptance: `mvn -pl tmf-extension -am test` green; `mvn -pl tmf-extension spotless:check`
-clean. (`tmf-extension` has no sibling dependency, so `-am` only pulls in the parent
-POM here — but use it anyway for consistency with Steps 4 and 5.)
+Acceptance:
+- `mvn -pl tmf-extension -am test` is green;
+- the classic TCK run is still green (the default context equals the TCK's
+  `urn:connector:fdsc-edc`).
 
-### Step 4: Migrate the identity stack (`dcp-extension`, `oid4vc-extension`)
+### Step 4: Context-aware negotiation and agreement store
 
-- `dcp-extension`: rewrite imports from `org.eclipse.edc.iam.identitytrust.*` to
-  `org.eclipse.edc.iam.decentralizedclaims.*`. `IdentityAndTrustService` →
-  `DcpIdentityService`, `IdentityAndTrustExtension` → `DcpCoreExtension`,
-  `IdentityAndTrustTransformExtension` → `DcpTransformExtension`. Affected files
-  include `DCPExtension.java`, `TirExtension.java`,
-  `FixedJwtToVerifiableCredentialTransformer.java` (its superclass
-  `JwtToVerifiableCredentialTransformer` moved package),
-  `tir/EbsiTrustedIssuersRegistry.java` (`TrustedIssuerRegistry`) and
-  `policy/CredentialScopeExtractorRegistry.java` (`ScopeExtractorRegistry`).
-- Migrate DCP scope configuration to the map-based `...prefix.mapping` form; the
-  dashed `prefix-mapping` variant is deprecated.
-- `oid4vc-extension/identity/OID4VPIdentityService.java`: adopt the new
-  `IdentityService` signatures carrying `participantContextId`, and thread that id
-  through to the OID4VP client rather than ignoring it.
-- `oid4vc-extension/identity/CounterPartyAddressAudienceResolver.java`: change
-  `resolve(RemoteMessage)` to `resolve(ProtocolRemoteMessage)`.
-- `oid4vc-extension/identity/OID4VPParticipantIdExtractionFunction.java`: verify
-  against upstream's `DefaultDcpParticipantIdExtractionFunction`, since 0.18.0 moved
-  principal identity into the `sub` claim and dropped the `participant_context_id`
-  and `role` claims.
-- Note `edc.iam.issuer.id` → `edc.participant.did`: this repo never reads that key,
-  so there is nothing to rename here, but `DCPExtension` should be checked for any
-  hard-coded issuer/DID resolution that upstream now derives from the new key.
+- `store/TMFBackedContractNegotiationStore`:
+  - persist the negotiation's `participantContextId` on the Quote (and its items)
+    and on the Agreement and Usage. Products and ProductOrders stay untagged
+    (see Step 2). A negotiation on a multi-context offering carries the
+    context it ran in, never the offering's set (decision 4);
+  - `getTmfOfferId` resolves the offer's `definitionPart()` through
+    `ContextQualifiedId` (Step 3), so the Quote item references the right
+    ProductOffering for a qualified id;
+  - `queryNegotiations`, `queryAgreements` and `nextNotLeased` honour context
+    criteria. `queryAgreements` must match `(agreementId, participantContextId)`,
+    which upstream `TransferProcessProtocolServiceImpl.findAgreement` relies on;
+  - `findById` and `findContractAgreement` take only an id, so they get no
+    filtered overload. The loaded entity must carry its correct mapped context
+    (absent → default); the upstream protocol services compare
+    `getParticipantContextId()` themselves.
+- Your own identity per context:
+  - replace the `participantId` constructor field (used for related parties at
+    `:1305`/`:1310` and in `TMFEdcMapper` at `:557` to derive the negotiation
+    role) with a lookup through `ParticipantIdentityResolver` for the
+    negotiation's context;
+  - fall back to `TMFConfig.getParticipantId()` only when no resolver is
+    registered, i.e. a classic runtime without the connector core.
+- `TMFContractNegotiationExtension`: inject `ParticipantIdentityResolver`
+  (optional) and pass it through. The `SingleParticipantContextSupplier` stays
+  optional, as it is today.
+- `TMFBackedLeaseHolder` / `AutomaticUnlockingLockManager`: confirm that lease
+  keys are entity ids that are unique across contexts. Ids are UUIDs, but
+  record this in a test.
+- `test-extension/.../edc/DataAssembly.java` and
+  `scripts/init-tmforum.sh`: only touch these if TCK data must carry the
+  context explicitly. Prefer relying on the default context, so TCK data stays
+  unchanged.
+- Tests:
+  - two negotiations with the same counter-party in two contexts are stored with
+    distinct related parties (their own DID per context) and are not visible
+    across contexts;
+  - the legacy Quote with no context maps to the default context.
 
-Acceptance: `mvn -pl dcp-extension -am test` and `mvn -pl oid4vc-extension -am test` green.
-Neither module depends on a sibling, so these two can be done in either order.
+Acceptance:
+- `mvn -pl tmf-extension -am test` and `mvn clean test` are green;
+- the classic TCK run is green.
 
-### Step 5: Migrate `fdsc-transfer-extension` and `policy-extension`
+### Step 5: Per-context identity in `fdsc-transfer-extension`; verify `policy-extension`
 
-- `fdsc-transfer-extension`: the control-plane `provisioner` API was cleaned up in
-  0.16.0 and `DataAddress` now lives in the vault rather than the store (0.16.0) —
-  rework `FDSCProvisioner`, `FDSCDcpProvisioner`, `FDSCOID4VPProvisioner`,
-  `FDSCProvisionedResource` and the two `*EndpointDataReferenceService`
-  implementations accordingly. The Data Plane Framework is deprecated in
-  favour of data-plane-signaling, which is the BOM default at 0.18.0 — confirm
-  `FDSCEndpointGenerator` and `FDSCDataAddress` still fit the signaling flow.
-- **Data-flow API renames** (`javap`-confirmed, see the API break inventory):
-  `DataFlowResponse` (artifact `transfer-spi`) kept `dataPlaneId` but renamed
-  `boolean provisioning` / `isProvisioning()` → `boolean async` / `isAsync()` and
-  gained `toBuilder()`; `DataFlowController.provision(TransferProcess, Policy)` was
-  renamed `prepare(...)` and the interface gained four more abstract methods —
-  `resume(TransferProcess)`, `started(TransferProcess)`,
-  `completed(TransferProcess)` and a `transferTypesFor(String)` overload. The four
-  do not share a return type — `resume` returns `StatusResult<DataFlowResponse>`,
-  not `StatusResult<Void>`; see the table in Step 6.
-  `DataFlowResponseMessage` (artifact `core-spi`) is **byte-identical** between
-  0.14.1 and 0.18.1 — it never had a `dataPlaneId`, so nothing was removed there.
-  Audit `fdsc-transfer-extension` for `DataFlowController` implementations and
-  `DataFlowResponse` builder calls; the one in `test-extension` is Step 6's.
-- `policy-extension`: check `PolicyContextInputMapper`, `ScopeMappingRule` and
-  `OdrlPapPolicyExtension` against the new `ParticipantAgentPolicyContext`
-  (introduced 0.15.0) and the request-policy-context SPI. Claims are now stored on
-  `ContractAgreement` / `TransferProcess` (0.17.0), which may simplify how the PAP
-  input is assembled.
+- **Where the transfer's context comes from.** The EDR service and the
+  provisioner run on the data-plane side and never see a `TransferProcess`:
+  `FDSCDcpEndpointDataReferenceService.createEndpointDataReference(DataFlow)`
+  gets the `DataFlow` that `FDSCProvisioner.endpointDataReference` loads via
+  `dataPlaneStore.findById(flowId)`, and `FDSCDcpProvisioner.provision` gets a
+  `ProvisionResource`. In 0.18.1 neither carries a context:
+  `DataFlow.getParticipantId()` is the **counter-party** and must never be used
+  as our context or `iss`; `ProvisionResource` has only `getFlowId()` and
+  properties; `DataFlowStartMessage` has no context either. Therefore:
+  - add one `TransferContextResolver` in `fdsc-transfer-extension`
+    (`resolve(String flowId)`), the **single source** for both the EDR `iss`
+    and the route `discovery` suffix, so the two cannot diverge;
+  - it loads the transfer with `TransferProcessStore.findById(flowId)` (the
+    store is already injected in `FDSCTransferControlExtension:134`). In the
+    embedded data plane the flow id is the transfer process id
+    (`DataPlaneSignalingFlowController` sends `processId = transferProcess.getId()`;
+    `toDcpServiceRoute` already names its flow-id argument `transferProcessId`).
+    Step 5 verifies this in the 0.18.1 source before relying on it. If it does
+    not hold, resolve instead from `dataFlow.getAgreementId()` (also the
+    `AGREEMENT_ID_PROPERTY` on the `ProvisionResource`) through the agreement
+    store, whose agreements carry their context since Step 4;
+  - it returns the transfer's `participantContextId`, or the resolved default
+    context (Step 3) when that is null. When no transfer is found it returns a
+    failure, and provisioning fails with a clear message rather than signing
+    with a guessed issuer.
+- Remove the single `tmfConfig.getParticipantId()` from
+  `FDSCTransferControlExtension` (`:192`, `:201`):
+  - `FDSCDcpEndpointDataReferenceService` resolves the context with
+    `TransferContextResolver.resolve(dataFlow.getId())` and the issuer from it
+    through `ParticipantIdentityResolver`;
+  - `dcp/OidConfigController` (decided here, not in Step 1): add
+    `GET /.well-known/openid-configuration/{participantContextId}`, which
+    returns that context's identity (via `ParticipantIdentityResolver`) as
+    `issuer` and 404 for an unknown context. The existing
+    `/.well-known/openid-configuration` keeps answering for the default
+    context. Its `issuer` is the identity of the resolved default context
+    (Step 3) through `ParticipantIdentityResolver`, no longer
+    `tmfConfig.getParticipantId()`. In classic mode that is the
+    `SingleParticipantContextSupplier` identity, the same value as today, so
+    classic deployments are unchanged. In virtual mode with no default context
+    configured it returns 404 instead of `ANONYMOUS_PARTICIPANT`. Both paths
+    return the same `jwks_uri`;
+  - `transfer/TransferMapper.toDcpServiceRoute` and its caller
+    `FDSCDcpProvisioner` (`:137`): the APISIX `openid-connect` plugin checks
+    the EDR's `iss` against the discovery document's `issuer`, so the route
+    must point at the transfer's own context. Pass the context from
+    `TransferContextResolver.resolve(provisionResource.getFlowId())` (the same
+    resolver the EDR service signs with) into `toDcpServiceRoute`, and build
+    `discovery` as
+    `oidConfig().host() + oidConfig().openIdPath() + "/" + participantContextId`.
+    For the default context, or when the id is null, keep today's
+    `host() + openIdPath()`, so classic routes are byte-for-byte unchanged;
+  - `dcp/JwksController`: unchanged, one signing key for all contexts. The
+    JWKS is not identity-bound; only the `issuer` claim differs per context.
+- `DataPlaneInstance` registration: apply the Step 1 decision, either one
+  instance per configured context or a context-less shared instance.
+- `transfer/FDSCDcpProvisioner` / `FDSCOID4VPProvisioner`: keep the
+  context-less `getProductSpecByExternalId`. The product is shared (decision 4),
+  so there is no context to check on the spec. The dataspace binding is the
+  agreement, which upstream `findAgreement` already filters by context.
+- `policy-extension`: no per-dataspace split, because the ODRL-PAP is shared.
+  - Verify that `PolicyContextInputMapper` / `OdrlPapPolicyExtension` work
+    unchanged with entities from several contexts.
+  - Add `participantContextId` to the PAP/OPA input as an **optional** field,
+    so that PAP policies *can* tell dataspaces apart. Add it only if the
+    existing input shape has an obvious place for it. If it does not, record
+    the decision in the PR and add nothing.
+- Tests: the context always comes from a `DataFlow` / `ProvisionResource`
+  plus a mocked `TransferProcessStore`, never from a pre-set context:
+  - `TransferContextResolver`, parameterized over (transfer in B, transfer with
+    null context, no transfer found) → B, the default context, failure; a
+    `DataFlow` whose `getParticipantId()` is the counter-party DID never
+    leaks into the result;
+  - for one flow id, the EDR `iss` and the route `discovery` suffix come from
+    the same resolved context;
+  - an EDR issuer is created for a transfer in each of two contexts; the OID
+    config is returned for each context and for the default path, and an
+    unknown context gets 404;
+  - parameterized over (context B, default context, null),
+    `toDcpServiceRoute` sets `discovery` ending in `/{B}` for B and the
+    unchanged default path otherwise, and the issuer of B's OID config equals
+    the `iss` of B's EDR.
 
-Acceptance: `mvn -pl fdsc-transfer-extension -am test` and `mvn -pl policy-extension -am test`
-green. The `-am` is load-bearing in this step: `fdsc-transfer-extension` depends on the
-`tmf-extension` migrated in Step 3 and `policy-extension` depends on
-`fdsc-transfer-extension`, so a bare `-pl` resolves a stale or missing
-`0.0.1-SNAPSHOT` sibling. Migrate `fdsc-transfer-extension` first.
+Acceptance:
+- `mvn -pl policy-extension -am test` is green (it pulls in
+  `fdsc-transfer-extension` and `tmf-extension`);
+- `mvn clean test` is green.
 
-### Step 6: Migrate `test-extension` and decide on upstream's `tck-extension`
+### Step 6: Per-dataspace DCP scopes and TIR in `dcp-extension`
 
-- Act on the Step 1 decision about upstream's `tck-extension` / 
-  `dsp-tck-connector-under-test` (both published at 0.18.1). If adopted, delete the
-  overlapping hand-rolled pieces rather than running both; if not, record in the PR
-  why the local harness is retained.
-- `services/TestIdentityService.java`: new `IdentityService` signatures.
-- `services/NoopAudienceResolver.java`: `resolve(ProtocolRemoteMessage)`.
-- `services/TestIdentityExtension.java`: 0.17.0 added a runtime-provided default
-  `TokenValidationService`; the local override may now clash — register it as a
-  default or remove it.
-- `edc/DataAssembly.java`: entities need `participantContextId` set consistently
-  with Step 3 and with `edc.participant.context.id`.
-- `edc/ContractNegotiationGuard.java`, `edc/TransferProcessGuard.java`,
-  `edc/DelayedActionGuard.java` and both trigger subscribers: `PendingGuard` and
-  `EventSubscriber` are unchanged, so these should need no signature work — but
-  protocol services now call `breakLease` explicitly, so re-check the interaction
-  with `StepRecorder`. Handle the new `TransferProcessPrepared` event.
-- **Do not revert the lease retry in `DelayedActionGuard`.** Step 1 found that the
-  guard dropped a queued action whenever the state machine still held the entity
-  lease, stranding the entity as `pending` and hanging the TCK run indefinitely; it
-  now re-queues on a short delay. The 0.14.1 baseline is only green with that fix
-  (`docs/migration/tck-baseline-0.14.1.md`). `StateEntityStore.save` returning
-  `StoreResult<Void>` touches the same method — port it, keep the retry, and keep
-  `DelayedActionGuardTest` passing.
-- `edc/NoopDataFlowController.java`: **will not compile at 0.18.1** — three
-  confirmed breaks. Rename the `provision(TransferProcess, Policy)` override
-  (line 58) to `prepare(...)`; change `.provisioning(false)` to `.async(false)` in
-  both `DataFlowResponse` builders (lines 64 and 75); and implement the four
-  methods `DataFlowController` added — `resume(TransferProcess)`,
-  `started(TransferProcess)`, `completed(TransferProcess)` and the
-  `transferTypesFor(String)` overload. **The four do not share a return type**, so
-  a blanket `StatusResult.success(...)` will not compile:
+- **Two scope mechanisms, split by what each can express** (see the DCP
+  verified facts):
+  - a scope that a profile needs on **every** request (catalog, negotiation and
+    transfer alike) uses the upstream keys
+    `edc.iam.dcp.scopes.<k>.{id,type=DEFAULT,value,profile}`. Nothing is added
+    for it in our code;
+  - a scope that differs **per request type** (what `DCPExtension` registers
+    today: one scope for catalog, one for negotiation, one for transfer) cannot
+    be expressed upstream, because an upstream `DEFAULT` scope is added to all
+    three. Only this case uses our keys.
+- `DcpConfig`:
+  - keep the global `dcp.scopes.{catalog,negotiation,transfer}` as the
+    profile-less default;
+  - add per-profile overrides `dcp.profiles.<profileName>.scopes.{catalog,negotiation,transfer}`.
+- `policy/DefaultScopeMappingFunction`: choose the scope from the message's
+  protocol (`message.getProtocol()` is the profile name), mirroring upstream's
+  profile matching. Profiles without an override fall back to the global
+  scopes.
+- Both post-validators keep running on the same request policy contexts, as
+  they do today, and both add to one `RequestScope` set. The two mechanisms are
+  therefore additive and never replace each other. The operator guide (Step 10)
+  says which to use when, and that a scope must not be configured in both.
+- `TirConfig` / `TirExtension` / `tir/EbsiTrustedIssuersRegistry`: add
+  per-profile TIL addresses (`ebsiTir.profiles.<profileName>.tilAddress`)
+  using the mechanism Step 1 picked. The global `ebsiTir.tilAddress` stays the
+  default.
+- Do **not** re-implement what upstream already does per context: the DID and
+  the STS keys `edc.iam.sts.oauth.*` are participant-context config entries
+  (Step 7 seeds them). Check `DCPExtension` for any global DID or STS
+  assumption and remove it.
+- Tests:
+  - parameterized (profile with override, profile without override, unknown
+    profile) → expected scopes;
+  - with an upstream `edc.iam.dcp.scopes.*` scope and a `dcp.profiles.*` scope
+    both configured for one profile, the request scope is their union;
+  - a TIR check for an issuer trusted in profile A but not in B.
 
-  | New method | Return type | No-op implementation |
-  |---|---|---|
-  | `resume(TransferProcess)` | `StatusResult<DataFlowResponse>` | needs a `DataFlowResponse` payload — build one from the same `noopDataAddress()` helper the existing `provision`/`start` bodies use; `StatusResult.success()` with no argument does **not** satisfy it |
-  | `started(TransferProcess)` | `StatusResult<Void>` | `StatusResult.success()` |
-  | `completed(TransferProcess)` | `StatusResult<Void>` | `StatusResult.success()` |
-  | `transferTypesFor(String)` | `Set<String>` | mirror the existing `transferTypesFor(Asset)` body |
+Acceptance:
+- `mvn -pl dcp-extension -am test` is green;
+- with no `dcp.profiles.*` / `ebsiTir.profiles.*` set, behaviour is identical to
+  today.
 
-  Make these choices deliberately rather than by autocompletion: the TCK drives
-  transfer state through these callbacks.
-- **`TckGuardExtension` registration will not compile either — and this step owns the
-  single-`DataFlowController` decision.** `DataFlowManager` was removed from
-  `transfer-spi` in 0.16.0, so the `@Inject`ed manager and the
-  `dataFlowManager.register(noopPriority, new NoopDataFlowController(monitor))` call at
-  `TckGuardExtension.java:151` (import at :50, field at :88) must go; the noop controller
-  is contributed as a `@Provider`-ed `DataFlowController` instead and `noopPriority`
-  becomes meaningless. See `docs/migration/EDC-0.18.1-UPGRADE.md` §8.3. Because 0.18.1
-  wires **exactly one** `DataFlowController`, the TCK runtime cannot provide the noop one
-  *and* a signaling module (`transfer-data-plane-signaling` or `data-plane-signaling`)
-  without failing at startup on a duplicate provider — no compile gate catches this.
-  Decide here which one the TCK assembly wires, in the light of Step 2's keep-or-replace
-  call on `transfer-data-plane-signaling`, and record the decision in the PR.
-- `edc/ProviderRequestedStateFixListener.java`: verify against the
-  data-plane-signaling defaults.
+### Step 7: `participant-bootstrap-extension` — seed participant contexts from config
 
-Acceptance: `mvn -pl test-extension -am test` green, **and** `mvn clean test` green
-across the whole reactor — this is the step where the build comes back. The
-image-producing `mvn clean package` gate belongs to Step 7, which owns the
-controlplane assembly those images depend on.
+Add a new module `participant-bootstrap-extension` (register it in the parent
+`pom.xml` `<modules>`, following the existing extension POM layout). It holds a
+`ServiceExtension`, modelled on upstream `TckSetupExtension`, that seeds the
+contexts in `prepare()`:
 
-### Step 7: Update runtime configuration and controlplane assembly
+- It reads `fdsc.participants.<key>.*`:
+  - `.id`, which becomes the participant context id;
+  - `.identity` (the DID), the **single source** of the context's DID;
+  - `.profiles` (CSV of dataspace profile names);
+  - `.config.<edcKey>` (plain entries such as `edc.iam.sts.oauth.token.url`);
+  - `.privateConfig.<edcKey>`, for sensitive entries.
+- For each participant it upserts:
+  - the context, through `ParticipantContextService`;
+  - its configuration, through the `ParticipantContextConfig` store. The
+    profiles become the `edc.dataspace.profiles` entry, and `.identity`
+    becomes the `edc.participant.did` entry that `DidConfigProvider` reads.
+    Startup fails when `.config.` sets `edc.participant.id`,
+    `edc.participant.did` or `edc.iam.issuer.id` to a value other than
+    `.identity`; an equal value is accepted.
+- It upserts: a context or config entry that already exists (e.g. created
+  earlier through the management API v5, or persisted by a later SQL store) is
+  updated, not duplicated, and does not fail startup.
+- It fails startup with a clear message when a referenced profile is not
+  registered in `DataspaceProfileContextRegistry`.
+- It is a no-op when no `fdsc.participants.*` keys are set, so it is harmless
+  on the classic classpath. It is added only to `controlplane-dcp`.
 
-- `config/tck/edc.properties`: apply the Step 1 config migration table — add
-  `edc.participant.context.id` (stable value matching `edc.participant.id`) and drop
-  any 2024/1 protocol *wiring* — of which there is in fact none in that file, so
-  expect this to be a no-op. **Do not confuse protocol wiring with the ODRL
-  vocabulary.** `config/tck/scope-mappings.json:8` matches the leftOperand IRI
-  `https://w3id.org/dspace/2024/1/membershipType`, which maps to the
-  `contract.negotiation` and `catalog` scopes. That is a policy vocabulary
-  identifier consumed by `policy-extension` via
-  `odrlPap.policy.scopeMappingsPath` (`config/tck/edc.properties:140`) — it has
-  nothing to do with the DSP 2024/1 *protocol binding*, and deleting it on a
-  string match for "2024" would silently break scope mapping for negotiation and
-  catalog. **Leave that IRI untouched.** Dropping `dsp-2024` / `dsp-spi-2024` is
-  behaviour-neutral precisely because `dsp-2025` and `dsp-spi-2025` are already
-  declared alongside them (`controlplane-oid4vc/pom.xml:80`,
-  `controlplane-dcp/pom.xml:69`, `tmf-extension/pom.xml:153`,
-  `test-extension/pom.xml:128`) and `config/tck/tck.properties` already targets
-  `2025-1`. Note that neither `edc.iam.issuer.id` nor
-  `edc.dsp.well-known-path.enabled` is set anywhere in this repo, so those two
-  upstream changes are no-ops here — but both *are* likely set in the surrounding
-  FIWARE Data Space Connector deployment (Helm values), so they belong in the
-  operator-facing notes of Step 9 rather than in a code change.
-- Verify the DSP protocol path still resolves to `/protocol/2025-1` and that
-  `GET /.well-known/dspace-version` answers, now that the version toggle is gone.
-- `docker/Dockerfile`, `docker/Dockerfile.tck`: review the
-  `eclipse-temurin:24_36-jre-alpine` base against 0.18.1 (bytecode target is 17,
-  runtime support extends to Java 25 — no change forced, but confirm).
-- Re-run `./scripts/verify-tck-config.sh` and extend it if the new keys are not
-  covered.
-- **Exercise a callback delivery end to end**, acting on the Step 1 answer about
-  `callback-http-dispatcher`. Run a negotiation against the compose stack with a
-  consumer-supplied HTTP `CallbackAddress` and assert the connector actually POSTs
-  the state-change notification to it. This is the only gate in the plan that can
-  catch the dropped HTTP callback transport; neither `dependency:resolve` nor
-  compilation will.
-- **Exercise a data-plane transfer end to end**, acting on the Step 2 decision
-  about `transfer-data-plane-signaling` vs `data-plane-signaling`. Like the
-  callback case, swapping (or keeping) that module is invisible to
-  `dependency:resolve` and to the compiler — the failure mode is a data flow that
-  never starts at runtime. Drive one transfer through the compose stack and
-  confirm the data plane is selected and the flow reaches `STARTED`.
+The config class holds named constants for every key and has a one-line Javadoc.
 
-Acceptance: `mvn clean package` green across the whole reactor — both controlplane
-images build; a container starts against the TCK compose stack and logs no
-missing-config or unresolved-service errors; and both runtime gates above — one
-callback delivered, one transfer started — are observed, not assumed.
+Tests (Mockito on the EDC SPIs):
+- two participants are seeded with their config and profiles;
+- re-running against already-seeded stores updates and does not duplicate them;
+- an unknown profile fails startup;
+- a `.config.` DID entry that differs from `.identity` fails startup;
+- with no keys nothing is seeded.
 
-### Step 8: Re-pin and green the DSP TCK conformance run
+Acceptance: `mvn -pl participant-bootstrap-extension -am test` is green.
 
-- Bump `DSP_TCK_VERSION` from `1.0.0-RC6` in `docker-compose.tck.yml` (line 237),
-  `.github/workflows/test.yml` (line 8) and the comment block at
-  `docker-compose.tck.yml:19`. EDC 0.18.1 pins `dsp-tck:1.0.1`; the TCK runtime image
-  has a released `1.0.2`. Prefer the version EDC itself pins unless 1.0.2 passes
-  cleanly — record the choice.
-- `scripts/init-tmforum.sh`: if `participantContextId` became part of the TMForum
-  entity shape in Step 3, the seeded test data must carry it.
-- Run `./scripts/run-tck.sh` and diff the result against
-  `docs/migration/tck-baseline-0.14.1.md`, captured in Step 1. That baseline is
-  **fully green — 65 of 65** — so the gate is absolute: any failure at 0.18.1 is a
-  regression to fix, not to filter out. There is no pre-existing failure to discount.
+### Step 8: Switch `controlplane-dcp` to virtual mode with an example profile configuration
 
-Acceptance: the TCK job passes locally and in CI with `TCK_FILTER` unset (its
-compose default, `docker-compose.tck.yml:244`), `docker/tck-filter/src/.../DisplayNameFilter.java`
-unmodified, and no test that passes in `docs/migration/tck-baseline-0.14.1.md`
-failing. Note `docker/tck-filter` is a JUnit extension source tree, not a list of
-skipped tests — filtering is driven only by the `tck.filter` system property fed
-from `TCK_FILTER`.
+- `controlplane-dcp/pom.xml`:
+  - import `controlplane-virtual-base-bom` (plus `controlplane-virtual-feature-dcp-bom`)
+    instead of `controlplane-base-bom`;
+  - drop `participant-context-connector-classic-core`, `dsp`/`dsp-2025` classic
+    wiring and `management-api` v3/v4, replacing them with what the virtual
+    BOMs bring (`dsp-virtual`, `management-api-v5`,
+    `management-api-oauth2-authentication`);
+  - add `participant-bootstrap-extension`;
+  - remove `test-extension` if Step 1 decided so.
+- Resolve the full assembly with `mvn -pl controlplane-dcp -am dependency:tree`.
+  Make sure exactly one `DataFlowController` is present and no duplicate
+  providers (see `docs/migration/EDC-0.18.1-UPGRADE.md` §8.3).
+- Add the example configuration `config/multi-dataspace/edc.properties` with:
+  - two profiles via `edc.dataspace.profiles.*`, plus the default
+    `http-dsp-profile-2025-1`;
+  - two participants via `fdsc.participants.*`, each with its own DID, STS
+    client and profile list;
+  - `web.http.protocol.virtual=true`;
+  - `edc.dsp.callback.address` containing `%s`;
+  - management OAuth2 settings;
+  - per-profile `dcp.profiles.*` / `ebsiTir.profiles.*`;
+  - `tmfExtension.defaultParticipantContextId`.
 
-### Step 9: Update documentation and release notes
+  Add a one-line comment per block.
+- Confirm that `controlplane-oid4vc/pom.xml` and `controlplane-tck/pom.xml` are
+  untouched.
 
-- `AGENTS.md`: update the EDC version, the module/artifact names changed in Step 2,
-  the DSP protocol note, and the TCK architecture section if Step 6 adopted
-  upstream's `tck-extension`. Also correct the doc-comment convention: the
-  parenthetical "`@param`/`@return` blocks are rare (used only in config classes)"
-  is wrong — 19 of 138 `src/main/java` files use `@param`, concentrated in the
-  whole of `policy-extension` plus `FDSCDcpProvisioner`, `FDSCOID4VPProvisioner`,
-  `OdrlPapClient`, `TMFEdcMapper`, `TMForumBackedCatalogProtocolService` and
-  `DataAssembly`. Reword to "concentrated in config classes and the policy
-  extension" or drop the parenthetical. (The "roughly half" density claim is
-  accurate — 69 of 138 files carry a `/**` block — and stays; an earlier revision of
-  this plan said 59, which was a miscount.) This is deferred to
-  Step 9 rather than fixed on the plan branch because `AGENTS.md` is appended to
-  every agent's system prompt: the rename landed in commit `a655f1b` and is
-  therefore already in the cached prefix, so a further edit now invalidates that
-  cache for every chained session downstream rather than riding along for free.
-  The interim correction is recorded in the working agreement at the top of this
-  plan, which every step agent reads, so no one executing Steps 2–8 acts on the
-  wrong version in the meantime.
-- `README.md` and `TRANSACTION_README.md`: update version references and any
-  renamed config keys.
-- Add `releases/notes/RELEASE_NOTES_EDC_0_18_1.md` covering the operator-facing
-  changes: required config renames, the IdentityHub 0.18.1 lockstep requirement,
-  and the loss of DSP 2024/1 support for counterparties.
-- Label the final PR `minor` or `major` per the repo's semver-label convention —
-  the dropped DSP 2024/1 support and the config renames argue for `major`.
+Acceptance:
+- `mvn clean package` is green, so the `controlplane-dcp` image builds;
+- the image starts with `config/multi-dataspace/edc.properties` against a
+  TMForum and logs both contexts seeded, both profiles registered and no
+  unresolved-service or participant-context warnings;
+- the classic TCK job is still green.
 
-Acceptance: `mvn clean package` and `mvn spotless:check` green, TCK green, and
-`docs/migration/EDC-0.18.1-UPGRADE.md` updated to mark each item as resolved.
+### Step 9: Compose-level two-dataspace verification
+
+- Add `docker-compose.multi-dataspace.yml`, which reuses the postgis, scorpio
+  and tmforum services of `docker-compose.tck.yml`. It runs the
+  `controlplane-dcp` image with `config/multi-dataspace/edc.properties`, plus a
+  static JWKS server for the management API JWT.
+- `scripts/init-tmforum-multi-dataspace.sh` seeds (decision 4):
+  - one **shared** ProductSpecification with one ProductOffering tagged `["A"]`
+    and one tagged `["B"]`, each with a different policy;
+  - one ProductSpecification offered only in A;
+  - one ProductSpecification with a single ProductOffering tagged `["*"]`
+    (offered in every dataspace);
+  - one legacy ProductOffering without a context (default context).
+
+  Offering `externalId`s are distinct; the duplicate case is covered by the
+  Step 3 unit tests.
+- `scripts/verify-multi-dataspace.sh` generates an admin JWT with
+  `openssl`/`jq` and asserts the following, exiting non-zero on any failure:
+  - `GET /v5beta/participants` lists both contexts;
+  - `POST /v5beta/participants/{A}/assets/request` and
+    `.../{B}/assets/request` (empty QuerySpec) both list the shared product
+    (products are listed in every context; offer isolation is asserted in the
+    Step 3 catalog tests). There is no collection `GET` on assets in 0.18.1;
+  - `GET /v5beta/participants/{B}/assets/{sharedProductId}` with a
+    **non-admin** token whose `sub` is B returns 200. This exercises the
+    `AuthorizationServiceImpl` context check on a shared product;
+  - `POST <protocol>/{A}/{profileA}/catalog/request` without a DCP token
+    returns the status Step 1 recorded for an associated profile (not 404),
+    while `<protocol>/{A}/{profileB}/catalog/request` returns 404, because
+    that profile is not associated with A. If Step 1 found the token is
+    checked first, use the fallback it recorded instead;
+  - the DSP version endpoint answers at the path(s) Step 1 recorded for virtual
+    mode;
+  - the TMForum seed itself: listing offerings with the Step 1 query form for
+    A and for B both return the `*` offering, and only A's returns the A-only
+    one.
+
+  A full DSP catalog exchange needs a real DCP wallet and is out of scope here.
+  The unit tests of Steps 3–6 cover catalog isolation.
+- `.github/workflows/test.yml`: add a `multi-dataspace` job that runs the
+  script. Keep the existing TCK job unchanged.
+
+Acceptance:
+- the script passes locally and in CI;
+- the classic TCK job is still green.
+
+### Step 10: Operator guide and documentation
+
+- Add `docs/multi-dataspace.md`, the deliverable guide. It covers:
+  - concepts, in the order dataspace → participant context → profile;
+  - the DSP URL layout `/protocol/{ctx}/{profile}`;
+  - which settings are per context (DID, STS) and which are per profile (DCP
+    scopes, TIR);
+  - `fdsc.participants.*` reference;
+  - `edc.dataspace.profiles.*` reference;
+  - management API v5 and OAuth2;
+  - which TMForum entities carry `participantContextId` (the decision 2
+    table), and the default-context rule for legacy data;
+  - how to offer a product in one, several or all dataspaces: one
+    ProductSpecification, with either one offering whose
+    `participantContextIds` lists the dataspaces (or `*`), or one offering per
+    dataspace when the policies differ; untagged offerings stay in the default
+    context only; offering and policy ids are globally unique, and
+    multi-dataspace offerings appear under `<id>@<ctx>` (decision 4);
+  - DCP scopes: upstream `edc.iam.dcp.scopes.*` for scopes on every request of
+    a profile, `dcp.profiles.*.scopes.*` only for per-request-type scopes, and
+    never the same scope in both (Step 6);
+  - a walkthrough of `config/multi-dataspace/edc.properties`;
+  - migrating an existing single-dataspace `controlplane-dcp` deployment.
+- `README.md`, `controlplane-dcp/README.md`: link the guide and state that the
+  DCP image now runs in virtual mode, which is a breaking change: the
+  management API moves to v5 with OAuth2, and DSP URLs change.
+- `AGENTS.md`:
+  - add `participant-bootstrap-extension` to the structure;
+  - record the virtual-vs-classic assembly split and the TMForum
+    `participantContextId` convention.
+- `releases/notes/RELEASE_NOTES_MULTI_DATASPACE.md`: list the operator-facing
+  breaking changes. Label the final PR `major`, because the DCP image's DSP and
+  management API URLs change.
+- In `docs/multi-dataspace-design.md`, mark every open item resolved.
+
+Acceptance:
+- `mvn clean package` and `mvn spotless:check` are green;
+- every config key named in the guide exists as a constant in code or is an
+  upstream key listed in the design record.
