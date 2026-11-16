@@ -7,9 +7,9 @@ EDC 0.18.1's **virtual participant-context mode** plus **dataspace profiles**. E
 dataspace becomes a participant context with its own DID, STS settings and
 associated profile(s). The data still lives in the **single shared TMForum**, so
 the dataspace-specific TMForum entities (offerings, quotes, agreements, usage)
-carry a `participantContextId` and the stores filter by it. Products
-(ProductSpecifications) stay shared, so **one product can be offered in several
-dataspaces**, with one ProductOffering per dataspace (decision 4).
+carry their context and the stores filter by it. Products
+(ProductSpecifications) stay shared, and **one ProductOffering can be offered in
+one dataspace, in several, or in all of them** (decision 4).
 `controlplane-oid4vc` and `controlplane-tck` stay on classic mode, and the shared
 modules must keep working in both modes. The deliverables are the code changes and
 an operator guide, `docs/multi-dataspace.md`, with an example multi-dataspace
@@ -148,16 +148,21 @@ All points below are settled.
    | TMForum entity | EDC entity | Tagged | Why |
    |---|---|---|---|
    | ProductSpecification | Asset | **no** | the product; shared across dataspaces (decision 4) |
-   | ProductOffering (and its embedded policies) | ContractDefinition, PolicyDefinition | yes | the offer of a product *in one dataspace* |
+   | ProductOffering (and its embedded policies) | ContractDefinition, PolicyDefinition | yes, **multi-valued** `participantContextIds` | an offer made in one, several or all dataspaces (decision 4) |
    | Quote, QuoteItem | ContractNegotiation | yes | a negotiation runs in one dataspace |
    | Agreement | ContractAgreement | yes | an agreement is made in one dataspace |
    | Usage | TransferProcess (`TMFEdcMapper.fromTransferProcess`) | yes | a transfer runs in one dataspace |
    | Product, ProductOrder, ProductSpecificationRef | — | no | reached only through a tagged Quote or Agreement (Step 2) |
 
+   - Every tagged entity except the ProductOffering carries one
+     `participantContextId` string. The ProductOffering carries
+     `participantContextIds`, an array of context ids or the wildcard `*`
+     (all contexts); see decision 4.
    - It is declared **optional** in the JSON schemas under `schemas/`, so
      existing data still validates.
    - For a **non-default** context it is queried **server-side** with a
-     `participantContextId=` query parameter, the same way
+     `participantContextId=` query parameter (for offerings: the array contains
+     the context or `*`), the same way
      `ProductCatalogApiClient.getProductSpecByExternalId` already queries
      `externalId`.
 3. **Legacy data with no context id** belongs to the *default context*.
@@ -172,11 +177,22 @@ All points below are settled.
      queries "equals default OR absent" if Step 1 finds the TMForum API supports
      it, otherwise it fetches unfiltered. Either way it maps first (absent →
      default) and filters in memory afterwards.
-4. **A product is shared; an offering belongs to one dataspace.** To offer the
-   same product in two dataspaces, the operator keeps **one**
-   ProductSpecification and creates one ProductOffering per dataspace, each
-   tagged with its context and carrying that dataspace's policies. Each
-   dataspace's catalog then lists the product with its own offer only.
+4. **A product is shared; an offering names the dataspaces it is made in.**
+   The ProductOffering's `participantContextIds` decides where it is offered:
+
+   | `participantContextIds` | Offered in |
+   |---|---|
+   | absent or empty | the default context only (decision 3; legacy data) |
+   | `["A"]` | dataspace A only |
+   | `["A", "B"]` | dataspaces A and B |
+   | `["*"]` | every context, including ones added later |
+
+   Absent deliberately does **not** mean "all": an existing single-dataspace
+   deployment that adds a second dataspace must not expose its existing offers
+   there without an explicit tag. An offer that needs *different* policies per
+   dataspace is modelled as one offering per dataspace, all referencing the same
+   ProductSpecification. The wildcard is the named constant
+   `ALL_PARTICIPANT_CONTEXTS = "*"`.
    - **Products (assets):** the ProductSpecification has no context. The asset
      index stamps the mapped `Asset` with the context the query asks for
      (`queryAssets`), or with the default context on the context-less
@@ -184,20 +200,43 @@ All points below are settled.
      context, and the management API v5 path loads the asset through
      `queryAssets` with the owner's context criterion (see the verified facts). Its `externalId` stays globally unique,
      as it is today.
-   - **Offerings (contract definitions and policies):** ids are globally
-     unique across all contexts, because `ContractDefinitionStore.findById(String)`
-     and `PolicyDefinitionStore.findById(String)` take no context, and upstream
-     *does* compare the definition's context (`ContractNegotiationProtocolServiceImpl:247`).
-     By-id lookups (`getProductOfferingByExternalId`, `getByPolicyId`) stay
-     context-less. A cross-context duplicate is a data error, raised by the
-     existing "multiple … exist" check, which now names the id and the
-     contexts involved (see Steps 2 and 3). The loaded entity carries its
-     mapped context (absent → default).
-   - The contract offer id is `<offeringExternalId>:<specExternalId>`, so the
-     same product gets a distinct offer id in each dataspace.
-   - Negotiation and agreement ids are UUIDs, so the rule costs nothing there.
-     An agreement's `assetId` may name a shared product; that is fine because
-     the agreement itself is tagged and `findAgreement` filters by context.
+   - **Offerings (contract definitions and policies):** an EDC
+     `ContractDefinition` / `PolicyDefinition` has exactly one
+     `participantContextId`, `ContractDefinitionStore.findById(String)` and
+     `PolicyDefinitionStore.findById(String)` take no context, and upstream
+     *does* compare the definition's context with the negotiation's
+     (`ContractNegotiationProtocolServiceImpl:247`). A by-id lookup therefore
+     has to learn the context from the id itself:
+     - an offering that serves **exactly one** context (absent, or one id) keeps
+       its plain `externalId` as contract definition id and its plain policy
+       ids, stamped with that context. Classic and TCK data are therefore
+       unchanged;
+     - an offering that serves **several or all** contexts is exposed in
+       context X under the *context-qualified* contract definition id
+       `<offeringExternalId>@X`, and its policies under `<policyId>@X`, stamped
+       with X. One shared helper `ContextQualifiedId` (in `store/`, separator
+       constant `CONTEXT_QUALIFIER_SEPARATOR = "@"`) builds and parses these ids;
+     - parsing tries the full id as a plain `externalId` first (one lookup, as
+       today). Only if that finds nothing and the id contains the separator is
+       it split at the **last** separator. The qualified form resolves only if
+       the prefix names a multi-context offering whose `participantContextIds`
+       contains X or `*`; otherwise the lookup returns nothing. Each
+       (offering, context) pair thus has exactly one id, and an id qualified
+       with X can only produce a definition stamped X, which line 247 rejects
+       in any other context;
+     - offering `externalId`s and policy ids stay globally unique. By-id
+       lookups (`getProductOfferingByExternalId`, `getByPolicyId`) stay
+       context-less. A duplicate is a data error, raised by the existing
+       "multiple … exist" check, which now names the id and the offerings'
+       contexts (see Steps 2 and 3).
+   - The contract offer id is `ContractOfferId.create(<definitionId>, <specExternalId>)`,
+     so the same product gets a distinct offer id per offering and, for a
+     multi-context offering, per dataspace.
+   - A negotiation, agreement and usage always belong to exactly one context:
+     the one the negotiation ran in, even when the offering serves several.
+     Their ids are UUIDs. An agreement's `assetId` may name a shared product;
+     that is fine because the agreement itself is tagged and `findAgreement`
+     filters by context.
 5. **Your own identity is resolved per context.** It is never read from
    `TMFConfig.getParticipantId()` on a code path that has a context: use
    `ParticipantContext.getIdentity()` or `ParticipantIdentityResolver`.
@@ -248,6 +287,16 @@ record the answer:
     express "`participantContextId` equals X OR is absent" in one request? If
     not, the default context fetches unfiltered and filters in memory; record
     the same paging consequence for that path.
+  - Record the query form for the multi-valued offering tag (decision 4): can
+    the API filter "`participantContextIds` contains X OR contains `*`" (plus
+    "OR absent" for the default context) in one request? If not, offerings
+    are fetched unfiltered and filtered in memory; record the paging
+    consequence.
+  - Confirm in the 0.18.1 source which DSP-path callers of
+    `ContractDefinitionStore.findById` / `PolicyDefinitionStore.findById`
+    exist, and that they take the id from the offer id / the definition's
+    policy ids, so the context-qualified ids of decision 4 reach them
+    unchanged.
 - **Data plane registration:**
   `FDSCTransferControlExtension` saves exactly one `DataPlaneInstance`. Does
   `EmbeddedDataPlaneSelectorService` filter it out for a context that does not
@@ -291,11 +340,13 @@ Acceptance:
 This step adds the data layer only. No caller uses it yet, so behaviour does not
 change.
 
-- `schemas/`: add an optional `participantContextId` (string) to
-  - `external-id.json` (used by the ProductOffering; the ProductSpecification,
-    Product and ref share this schema, so they *may* carry the property, but
-    nothing reads it there);
-  - `quote-item.json`, `contract-negotiation.json`, `agreement.json`,
+- `schemas/`: add
+  - an optional `participantContextIds` (array of string; an id or `*`) for the
+    ProductOffering. `external-id.json` is shared with the ProductSpecification,
+    Product and ref, so add it to `external-id.json` (they *may* carry it, but
+    nothing reads it there) or give the offering its own schema, whichever
+    Step 1 found the API accepts;
+  - an optional `participantContextId` (string) to `quote-item.json`, `contract-negotiation.json`, `agreement.json`,
     `usage.json` and `contract-definition.json`,
 
   or add one shared schema, whichever Step 1 found the TMForum API accepts. Do
@@ -303,14 +354,17 @@ change.
 - `tmf-extension/src/main/java/org/seamware/edc/domain/`: add a
   `participantContextId` field with a getter and a fluent setter to these VOs
   (and only these):
-  - next to `externalId`: `ExtendableProductOffering`, `ExtendableQuoteItemVO`,
+  - next to `externalId`: `ExtendableQuoteItemVO`,
     `ExtendableAgreementVO` / `ExtendableAgreementCreateVO` /
     `ExtendableAgreementUpdateVO`, and `ExtendableUsageVO` /
     `ExtendableUsageCreateVO` / `ExtendableUsageUpdateVO`;
   - next to `contractNegotiation` (the Quote VOs have no `externalId`):
-    `ExtendableQuoteVO` / `ExtendableQuoteCreateVO` / `ExtendableQuoteUpdateVO`.
+    `ExtendableQuoteVO` / `ExtendableQuoteCreateVO` / `ExtendableQuoteUpdateVO`;
+  - `ExtendableProductOffering` gets `List<String> participantContextIds`
+    instead, next to `externalId`.
 
-  Include the new field in `equals` and `hashCode`.
+  Include the new field in `equals` and `hashCode`. Add the constant
+  `ALL_PARTICIPANT_CONTEXTS` (decision 4) to `TMFConfig`.
 - **Not tagged:** `ExtendableProductSpecification`. It is the shared product
   (decision 4); the asset index stamps the context on read.
 - **Not tagged either:** `ExtendableProduct` / `ExtendableProductCreate` and the
@@ -328,6 +382,8 @@ change.
   `getProductOfferings(int offset, int limit, String participantContextId)`).
   `getProductSpecifications` gets no overload, because specs are untagged.
   - A `null` context means no filter, which is today's behaviour.
+  - The offering overload returns the offerings whose `participantContextIds`
+    contains the context or `*`, in the query form Step 1 recorded.
   - The by-`externalId` lookups get no context parameter (decision 4). The
     offering lookup's "multiple … exist" check stays global; its error message
     adds the `participantContextId` of each match, so a cross-context duplicate
@@ -371,6 +427,11 @@ unchanged.
   - stop stamping the constructor-injected `participantContextId`;
   - stamp each entity of a tagged TMForum type with that entity's
     `participantContextId`, or with the default context when it is absent;
+  - for a ProductOffering, `fromProductOffer` takes the requesting context.
+    It applies the decision 4 table: a single-context offering keeps its plain
+    id and its own context; a multi-context or `*` offering gets the
+    `ContextQualifiedId` definition and policy ids and the requesting context.
+    It returns empty when the offering does not serve that context;
   - stamp an `Asset` (from an untagged ProductSpecification) with a context the
     caller passes in: the queried context, or the default context
     (decision 4);
@@ -400,8 +461,11 @@ unchanged.
       context (see the verified facts). Do not route such id queries to
       `findById`: its default stamp would turn every non-default-context
       `GET /assets/{id}` into a 404 for non-admin tokens.
-  - `TMFBackedContractDefinitionStore` (one offering per dataspace):
-    - `findById` stays context-less (decision 4). Its `catch (RuntimeException)`
+  - `TMFBackedContractDefinitionStore`:
+    - `findById` stays context-less (decision 4): it resolves a plain or
+      context-qualified id through `ContextQualifiedId` and maps it with the
+      context from the qualifier (or the offering's single context). Its
+      `catch (RuntimeException)`
       keeps returning `null` as the interface requires, but logs a
       cross-context duplicate with `monitor.severe` instead of `warning`, since
       it hides the offering in every dataspace until the data is fixed.
@@ -413,35 +477,44 @@ unchanged.
   reads the policy out of its owning ProductOffering via
   `ProductCatalogApiClient.getByPolicyId`. There is no TMForum policy entity and
   no write path to add.
-  - The policy's context is the owning ProductOffering's `participantContextId`
-    (absent → default context). Today `getByPolicyId` returns a bare
+  - The policy's context follows decision 4: the owning ProductOffering's
+    single context (absent → default), or, for a multi-context offering, the
+    qualifier of the requested `<policyId>@X`. Today `getByPolicyId` returns a bare
     `Optional<Policy>`, which loses the offering, and the store builds the
     `PolicyDefinition` inline. Change this:
-    - add `record OfferingPolicy(Policy policy, @Nullable String participantContextId)`
-      in `tmf/`; `getByPolicyId` returns `Optional<OfferingPolicy>`, carrying the
-      owning offering's raw (possibly absent) context;
-    - add `TMFEdcMapper.toPolicyDefinition(OfferingPolicy)`, which builds the
-      `PolicyDefinition` (id via `getIdFromPolicy`) and applies the
-      absent → default rule, so default stamping lives only in the mapper;
+    - add `record OfferingPolicy(Policy policy, @Nullable List<String> participantContextIds)`
+      in `tmf/`; `getByPolicyId` (called with the unqualified policy id)
+      returns `Optional<OfferingPolicy>`, carrying the owning offering's raw
+      (possibly absent) contexts;
+    - add `TMFEdcMapper.toPolicyDefinition(OfferingPolicy, @Nullable String qualifier)`,
+      which builds the `PolicyDefinition` (id via `getIdFromPolicy`, qualified
+      when the offering is multi-context) and applies the decision 4 table, so
+      context stamping lives only in the mapper;
     - the store injects `TMFEdcMapper` and calls it. Drop the store's own
       `participantContextId` field.
-  - Policy ids are globally unique (decision 4). Today `getByPolicyId` stops
+  - Policy ids are globally unique (decision 4): one policy id belongs to one
+    offering, which may serve several contexts. Today `getByPolicyId` stops
     at the first page with a hit; change it to keep paging through all
-    offerings, and throw `BadGatewayException` naming the policy id
-    and the contexts when matches come from offerings in more than one
-    context. Matches within one context keep today's "policies need to be
-    unique" error.
+    offerings, and throw `BadGatewayException` naming the policy id, the
+    offerings and their contexts when more than one offering matches.
   - Do not add a schema or a write path for policies.
 - `store/TMForumBackedCatalogProtocolService.getCatalog` / `getDataset`:
-  - fetch the offerings of `participantContext.getParticipantContextId()` only
-    (decision 3 for the default context); specs stay unfiltered;
+  - fetch the offerings that serve `participantContext.getParticipantContextId()`
+    only: tagged with it or with `*`, plus the untagged ones for the default
+    context (decisions 3 and 4); specs stay unfiltered;
+  - `TMFEdcMapper.datasetFromProductSpecification` takes the requesting context
+    and builds each offer id from the definition id `fromProductOffer` would
+    return in that context (plain or `ContextQualifiedId`);
   - no other change is needed: `TMFEdcMapper.datasetFromProductSpecification`
     already drops a spec that no given offering references, so a product
     appears in a dataspace's catalog only with that dataspace's offers, and
     `getDataset` returns not-found for a product that has no offering in the
     requesting context.
 - `TMFOfferResolverExtension` / `store/TMForumConsumerOfferResolver`: resolve
-  offers within the requesting context.
+  offers within the requesting context. Every caller that turns an offer id's
+  `definitionPart()` into an offering (this resolver, and
+  `TMFBackedContractNegotiationStore.getTmfOfferId`, Step 4) goes through
+  `ContextQualifiedId`, so a qualified definition id finds its offering.
 - Tests, parameterized over (context A, context B, legacy-no-context):
   - each mapper output has a non-null `participantContextId`;
   - the catalog service fetches only the requesting context's offerings, and
@@ -459,6 +532,17 @@ unchanged.
   - **one product offered in A and B** (one spec, two offerings): A's catalog
     and B's catalog both list the dataset, each with only its own offer id and
     policy; `getDataset` in each context returns its own offer;
+  - **one offering in several dataspaces**, parameterized over
+    `participantContextIds` (`["A","B"]`, `["*"]`) × requesting context
+    (A, B, C): the offering appears exactly where the decision 4 table says,
+    with offer id `<externalId>@<ctx>`; the contract-definition and policy
+    stores resolve that qualified id to a definition stamped with `<ctx>`;
+    an id qualified with a context the offering does not serve, or a
+    qualified id for a single-context offering, resolves to `null`;
+  - a single-context and an untagged offering keep their plain ids (the
+    classic offer ids are unchanged);
+  - an offering `externalId` that itself contains `@` still resolves as a plain
+    id;
   - a product offered only in A is missing from B's catalog, and `getDataset`
     in B returns not-found.
 - `TMFConfig` default-context resolution, parameterized over which of
@@ -477,7 +561,11 @@ Acceptance:
 - `store/TMFBackedContractNegotiationStore`:
   - persist the negotiation's `participantContextId` on the Quote (and its items)
     and on the Agreement and Usage. Products and ProductOrders stay untagged
-    (see Step 2);
+    (see Step 2). A negotiation on a multi-context offering carries the
+    context it ran in, never the offering's set (decision 4);
+  - `getTmfOfferId` resolves the offer's `definitionPart()` through
+    `ContextQualifiedId` (Step 3), so the Quote item references the right
+    ProductOffering for a qualified id;
   - `queryNegotiations`, `queryAgreements` and `nextNotLeased` honour context
     criteria. `queryAgreements` must match `(agreementId, participantContextId)`,
     which upstream `TransferProcessProtocolServiceImpl.findAgreement` relies on;
@@ -729,13 +817,15 @@ Acceptance:
   `controlplane-dcp` image with `config/multi-dataspace/edc.properties`, plus a
   static JWKS server for the management API JWT.
 - `scripts/init-tmforum-multi-dataspace.sh` seeds (decision 4):
-  - one **shared** ProductSpecification with one ProductOffering tagged A and
-    one tagged B, each with a different policy;
+  - one **shared** ProductSpecification with one ProductOffering tagged `["A"]`
+    and one tagged `["B"]`, each with a different policy;
   - one ProductSpecification offered only in A;
+  - one ProductSpecification with a single ProductOffering tagged `["*"]`
+    (offered in every dataspace);
   - one legacy ProductOffering without a context (default context).
 
-  Offering `externalId`s are distinct across contexts; the cross-context
-  duplicate case is covered by the Step 3 unit tests.
+  Offering `externalId`s are distinct; the duplicate case is covered by the
+  Step 3 unit tests.
 - `scripts/verify-multi-dataspace.sh` generates an admin JWT with
   `openssl`/`jq` and asserts the following, exiting non-zero on any failure:
   - `GET /v5beta/participants` lists both contexts;
@@ -752,7 +842,10 @@ Acceptance:
     that profile is not associated with A. If Step 1 found the token is
     checked first, use the fallback it recorded instead;
   - the DSP version endpoint answers at the path(s) Step 1 recorded for virtual
-    mode.
+    mode;
+  - the TMForum seed itself: listing offerings with the Step 1 query form for
+    A and for B both return the `*` offering, and only A's returns the A-only
+    one.
 
   A full DSP catalog exchange needs a real DCP wallet and is out of scope here.
   The unit tests of Steps 3–6 cover catalog isolation.
@@ -775,9 +868,12 @@ Acceptance:
   - management API v5 and OAuth2;
   - which TMForum entities carry `participantContextId` (the decision 2
     table), and the default-context rule for legacy data;
-  - how to offer one product in several dataspaces: one ProductSpecification,
-    one tagged ProductOffering per dataspace (decision 4); offering and policy
-    ids are globally unique;
+  - how to offer a product in one, several or all dataspaces: one
+    ProductSpecification, with either one offering whose
+    `participantContextIds` lists the dataspaces (or `*`), or one offering per
+    dataspace when the policies differ; untagged offerings stay in the default
+    context only; offering and policy ids are globally unique, and
+    multi-dataspace offerings appear under `<id>@<ctx>` (decision 4);
   - DCP scopes: upstream `edc.iam.dcp.scopes.*` for scopes on every request of
     a profile, `dcp.profiles.*.scopes.*` only for per-request-type scopes, and
     never the same scope in both (Step 6);
