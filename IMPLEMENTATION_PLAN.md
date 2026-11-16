@@ -444,9 +444,9 @@ unchanged.
   offers within the requesting context.
 - Tests, parameterized over (context A, context B, legacy-no-context):
   - each mapper output has a non-null `participantContextId`;
-  - the contract-definition store returns only the matching context's
-    offerings for a filtered `QuerySpec`, and the asset index returns every
-    product stamped with the queried context;
+  - the catalog service fetches only the requesting context's offerings, and
+    the asset index returns every product stamped with the queried context
+    (the contract-definition store's `findAll` keeps throwing, see above);
   - a default-context query returns the untagged legacy entities (and does not
     send `participantContextId=<default>` as a plain server-side filter);
   - `queryAssets` with `participantContextId = B AND id = <sharedSpec>` (the
@@ -518,12 +518,15 @@ Acceptance:
   `FDSCTransferControlExtension` (`:192`, `:201`):
   - `FDSCDcpEndpointDataReferenceService` resolves the issuer from the transfer
     process's `participantContextId` through `ParticipantIdentityResolver`;
-  - `dcp/OidConfigController` serves the OpenID configuration per context,
-    either with a context path segment or with a query by context id, as Step 1
-    decided. Keep the current path answering for the default context, so
-    classic deployments are unchanged;
-  - `dcp/JwksController`: keep a single signing key unless Step 1 decided
-    otherwise. The JWKS is not identity-bound.
+  - `dcp/OidConfigController` (decided here, not in Step 1): add
+    `GET /.well-known/openid-configuration/{participantContextId}`, which
+    returns that context's identity (via `ParticipantIdentityResolver`) as
+    `issuer` and 404 for an unknown context. The existing
+    `/.well-known/openid-configuration` keeps answering for the default
+    context, so classic deployments are unchanged. Both return the same
+    `jwks_uri`;
+  - `dcp/JwksController`: unchanged, one signing key for all contexts. The
+    JWKS is not identity-bound; only the `issuer` claim differs per context.
 - `DataPlaneInstance` registration: apply the Step 1 decision, either one
   instance per configured context or a context-less shared instance.
 - `transfer/FDSCDcpProvisioner` / `FDSCOID4VPProvisioner`: keep the
@@ -538,7 +541,8 @@ Acceptance:
     existing input shape has an obvious place for it. If it does not, record
     the decision in the PR and add nothing.
 - Tests: an EDR issuer is created for a transfer in each of two contexts; the
-  OID config is returned for each context and for the default path.
+  OID config is returned for each context and for the default path, and an
+  unknown context gets 404.
 
 Acceptance:
 - `mvn -pl policy-extension -am test` is green (it pulls in
