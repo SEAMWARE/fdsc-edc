@@ -17,6 +17,12 @@ configuration.
 - Target EDC **0.18.1**, which `main` already uses, so there is no version bump.
 - **Virtual mode applies only to `controlplane-dcp`.** `controlplane-oid4vc` and
   `controlplane-tck` keep `participant-context-connector-classic-core`.
+  - This is a breaking change for every existing DCP deployment (management API
+    v5 with OAuth2, DSP URLs gain `/{ctx}/{profile}`); Step 10 documents it and
+    the PR is labelled `major`.
+  - If a maintainer overrides this before Step 8, Step 8 adds a sibling
+    `controlplane-dcp-virtual` module instead and leaves `controlplane-dcp`
+    classic. Steps 2–7 work in both modes and are unaffected.
 - **One TMForum and one ODRL-PAP** serve all dataspaces.
 - **DCP identity is configured per dataspace:** DID, STS, scope mappings and the
   EBSI TIR.
@@ -110,18 +116,27 @@ configuration.
    QuoteItem, Agreement and Usage.
    - It is declared **optional** in the JSON schemas under `schemas/`, so
      existing data still validates.
-   - It is queried **server-side** with a `participantContextId=` query
-     parameter, the same way `ProductCatalogApiClient.getProductSpecByExternalId`
-     already queries `externalId`.
+   - For a **non-default** context it is queried **server-side** with a
+     `participantContextId=` query parameter, the same way
+     `ProductCatalogApiClient.getProductSpecByExternalId` already queries
+     `externalId`.
 3. **Legacy data with no context id** belongs to the *default context*.
    - The new setting is `tmfExtension.defaultParticipantContextId`.
    - In classic mode it defaults to the `SingleParticipantContextSupplier`
      context.
    - In virtual mode it must be configured, or such entities stay invisible and
      a startup warning is logged.
+   - **The default context is never pushed down as `participantContextId=<default>`**:
+     that filter returns only tagged entities and drops the untagged legacy
+     ones (all of the classic TCK data). For the default context the store
+     queries "equals default OR absent" if Step 1 finds the TMForum API supports
+     it, otherwise it fetches unfiltered. Either way it maps first (absent →
+     default) and filters in memory afterwards.
 4. **`externalId` must be unique per context, not globally.** Lookups by
    `externalId` also filter by the context, so the same asset id can be offered
-   in two dataspaces as two ProductSpecifications.
+   in two dataspaces as two ProductSpecifications. Decision 3's default-context
+   rule applies here too: an `externalId` lookup for the default context also
+   matches untagged entities.
 5. **Your own identity is resolved per context.** It is never read from
    `TMFConfig.getParticipantId()` on a code path that has a context: use
    `ParticipantContext.getIdentity()` or `ParticipantIdentityResolver`.
@@ -166,6 +181,10 @@ record the answer:
   - If (b) does not work, the fallback is fetch-all with in-memory filtering.
     Record the paging consequence for `TMForumBackedCatalogProtocolService.getCatalog`,
     which today pages specs by `QuerySpec` offset and limit.
+  - Record the query form for the default context (decision 3): can the API
+    express "`participantContextId` equals X OR is absent" in one request? If
+    not, the default context fetches unfiltered and filters in memory; record
+    the same paging consequence for that path.
 - **Data plane registration:**
   `FDSCTransferControlExtension` saves exactly one `DataPlaneInstance`. Does
   `EmbeddedDataPlaneSelectorService` filter it out for a context that does not
@@ -246,14 +265,23 @@ unchanged.
 
   This applies to every builder that sets it today (`:321`, `:512`, `:772`,
   `:935`). Rename the constructor parameter to `defaultParticipantContextId`.
-- `store/TMFBackedAssetIndex`, `TMFBackedContractDefinitionStore`,
-  `TMFBackedPolicyDefinitionStore`:
+- `store/TMFBackedAssetIndex`, `TMFBackedContractDefinitionStore`:
   - persist the entity's context on create and update;
   - when the `QuerySpec` holds a `participantContextId` criterion
-    (`ParticipantResource.filterByParticipantContextId`), push it down to the
-    Step 2 client overloads, and keep the in-memory `CriterionOperatorRegistry`
-    predicate as a second guard;
-  - `TMFBackedPolicyDefinitionStore` drops its own `participantContextId` field.
+    (`ParticipantResource.filterByParticipantContextId`) for a non-default
+    context, push it down to the Step 2 client overloads. For the default
+    context follow decision 3 (no plain push-down). Always keep the in-memory
+    `CriterionOperatorRegistry` predicate, applied after mapping, as the final
+    filter.
+- `store/TMFBackedPolicyDefinitionStore` is **read-only**: `create`, `update`,
+  `delete` and `findAll` throw `UnsupportedOperationException`, and `findById`
+  reads the policy out of its owning ProductOffering via
+  `ProductCatalogApiClient.getByPolicyId`. There is no TMForum policy entity and
+  no write path to add.
+  - The policy's context is the owning ProductOffering's `participantContextId`
+    (absent → default context), stamped by `TMFEdcMapper`.
+  - Drop the store's own `participantContextId` field. Do not add a schema or a
+    write path for policies.
 - `store/TMForumBackedCatalogProtocolService.getCatalog` / `getDataset`:
   - fetch specs and offerings for `participantContext.getParticipantContextId()`
     only;
@@ -264,6 +292,9 @@ unchanged.
   - each mapper output has a non-null `participantContextId`;
   - each store returns only the matching context's entities for a filtered
     `QuerySpec`;
+  - a default-context query returns the untagged legacy entities (and does not
+    send `participantContextId=<default>` as a plain server-side filter);
+  - `findById` on the policy store stamps the owning offering's context;
   - the catalog for context A never contains B's datasets.
 
 Acceptance:
@@ -384,7 +415,9 @@ contexts in `prepare()`:
   - the context, through `ParticipantContextService`;
   - its configuration, through the `ParticipantContextConfig` store. The
     profiles become the `edc.dataspace.profiles` entry.
-- It is idempotent across restarts, because the stores are in memory.
+- It upserts: a context or config entry that already exists (e.g. created
+  earlier through the management API v5, or persisted by a later SQL store) is
+  updated, not duplicated, and does not fail startup.
 - It fails startup with a clear message when a referenced profile is not
   registered in `DataspaceProfileContextRegistry`.
 - It is a no-op when no `fdsc.participants.*` keys are set, so it is harmless
@@ -394,7 +427,7 @@ The config class holds named constants for every key and has a one-line Javadoc.
 
 Tests (Mockito on the EDC SPIs):
 - two participants are seeded with their config and profiles;
-- re-running does not duplicate them;
+- re-running against already-seeded stores updates and does not duplicate them;
 - an unknown profile fails startup;
 - with no keys nothing is seeded.
 
