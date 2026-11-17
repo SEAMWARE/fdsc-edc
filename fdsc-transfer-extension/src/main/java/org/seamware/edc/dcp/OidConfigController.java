@@ -40,33 +40,70 @@ import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
 
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import java.util.Map;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.ObjectNotFoundException;
+import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.TransferConfig;
+import org.seamware.edc.store.OwnParticipantIdentity;
 
 /**
  * In order to properly resolve the jwks, apisix requires an oid-discovery endpoint. We only include
- * the issuer and jwk, since they are the only things required.
+ * the issuer and jwk, since they are the only things required. One document per participant
+ * context; the bare path serves the default context. All contexts share one JWKS.
  */
 @Produces(APPLICATION_JSON)
 @Path("/.well-known/openid-configuration")
 public class OidConfigController {
 
+  static final String ISSUER_KEY = "issuer";
+  static final String JWKS_URI_KEY = "jwks_uri";
+
   private final Monitor monitor;
   private final TransferConfig transferConfig;
-  private final String participantId;
+  private final OwnParticipantIdentity ownParticipantIdentity;
+  private final @Nullable String defaultParticipantContextId;
 
-  public OidConfigController(Monitor monitor, TransferConfig transferConfig, String participantId) {
+  public OidConfigController(
+      Monitor monitor,
+      TransferConfig transferConfig,
+      OwnParticipantIdentity ownParticipantIdentity,
+      @Nullable String defaultParticipantContextId) {
     this.monitor = monitor;
     this.transferConfig = transferConfig;
-    this.participantId = participantId;
+    this.ownParticipantIdentity = ownParticipantIdentity;
+    this.defaultParticipantContextId = defaultParticipantContextId;
   }
 
+  /**
+   * Throws {@link ObjectNotFoundException} (404) when no default context is resolvable, e.g. in
+   * virtual mode without one configured.
+   */
   @GET
   public Map<String, Object> getOIDConfiguration() {
+    return oidConfiguration(defaultParticipantContextId);
+  }
+
+  /** Throws {@link ObjectNotFoundException} (404) for a context without a known identity. */
+  @GET
+  @Path("/{participantContextId}")
+  public Map<String, Object> getOIDConfiguration(
+      @PathParam("participantContextId") String participantContextId) {
+    return oidConfiguration(participantContextId);
+  }
+
+  private Map<String, Object> oidConfiguration(@Nullable String participantContextId) {
+    String issuer;
+    try {
+      issuer = ownParticipantIdentity.participantId(participantContextId, null);
+    } catch (IllegalStateException e) {
+      monitor.debug("No openid-configuration for context " + participantContextId, e);
+      throw new ObjectNotFoundException(OidConfigController.class, participantContextId);
+    }
     String jwksUri =
         transferConfig.getDcp().oidConfig().host() + transferConfig.getDcp().oidConfig().jwksPath();
-    return Map.of("issuer", participantId, "jwks_uri", jwksUri);
+    return Map.of(ISSUER_KEY, issuer, JWKS_URI_KEY, jwksUri);
   }
 }

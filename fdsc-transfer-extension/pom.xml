@@ -99,6 +99,11 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
+            <artifactId>connector-participant-context-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
             <artifactId>query-lib</artifactId>
             <version>${edc.version}</version>
         </dependency>

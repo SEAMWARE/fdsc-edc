@@ -39,6 +39,7 @@ package org.seamware.edc.transfer;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.TransferConfig;
 import org.seamware.edc.apisix.*;
 
@@ -53,10 +54,20 @@ public class TransferMapper {
   private static final String WELL_KNOWN_ROUTE_ID = "%s-well-known";
   private static final String ROUTING_TYPE_ROUND_ROBIN = "roundrobin";
 
+  private static final String PATH_SEPARATOR = "/";
+
   private final TransferConfig transferConfig;
+  private final @Nullable String defaultParticipantContextId;
 
   public TransferMapper(TransferConfig transferConfig) {
+    this(transferConfig, null);
+  }
+
+  /** Routes of the default context keep the context-less discovery path. */
+  public TransferMapper(
+      TransferConfig transferConfig, @Nullable String defaultParticipantContextId) {
     this.transferConfig = transferConfig;
+    this.defaultParticipantContextId = defaultParticipantContextId;
   }
 
   public String toServiceRouteId(String transferProcessId) {
@@ -67,7 +78,13 @@ public class TransferMapper {
     return String.format(WELL_KNOWN_ROUTE_ID, transferProcessId);
   }
 
-  public Route toDcpServiceRoute(String transferProcessId, String upstreamAddress) {
+  /**
+   * The discovery document is the one of {@code participantContextId}, since APISIX checks the
+   * EDR's {@code iss} against its {@code issuer}. Null or the default context use the context-less
+   * path.
+   */
+  public Route toDcpServiceRoute(
+      String transferProcessId, String upstreamAddress, @Nullable String participantContextId) {
 
     // configure the route to the service
     Upstream upstream =
@@ -80,7 +97,8 @@ public class TransferMapper {
 
     String discoveryAddress =
         transferConfig.getDcp().oidConfig().host()
-            + transferConfig.getDcp().oidConfig().openIdPath();
+            + transferConfig.getDcp().oidConfig().openIdPath()
+            + discoveryContextSuffix(participantContextId);
 
     OpenidConnectPlugin openidConnectPlugin =
         new OpenidConnectPlugin()
@@ -184,5 +202,12 @@ public class TransferMapper {
         .setUpstream(upstream)
         .setUri("/" + transferProcessId + WELL_KOWN_OPEN_ID_CONFIGURATION)
         .setPlugins(Map.of(proxyRewritePlugin.getPluginName(), proxyRewritePlugin));
+  }
+
+  private String discoveryContextSuffix(@Nullable String participantContextId) {
+    if (participantContextId == null || participantContextId.equals(defaultParticipantContextId)) {
+      return "";
+    }
+    return PATH_SEPARATOR + participantContextId;
   }
 }
