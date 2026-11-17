@@ -200,23 +200,27 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
        with X. One shared helper `ContextQualifiedId` (in `store/`, separator
        constant `CONTEXT_QUALIFIER_SEPARATOR = "@"`) builds and parses these ids;
      - parsing tries the full id as a plain `externalId` first (one lookup, as
-       today). A plain hit resolves only if that offering serves exactly one
-       context; a plain id that names a multi-context or `*` offering returns
-       nothing, because it carries no context to stamp and the catalog never
-       issues it. Only if the plain lookup finds nothing and the id contains
-       the separator is it split at the **last** separator. The qualified form
-       resolves only if the prefix names a multi-context offering whose
-       `participantContextIds` contains X or `*`; otherwise the lookup returns
-       nothing. Policy ids follow the same rules;
-     - **ambiguous ids are a data error.** A single-context offering whose
-       `externalId` (or policy id) is literally `foo@X` collides with the
-       qualified id of a multi-context offering `foo` that serves X. When a
-       plain hit contains the separator, the lookup also checks the split form;
-       if both resolve, it logs `monitor.severe` naming both offerings and
-       returns nothing, the same outcome as a cross-context duplicate. The
-       catalog may still list the colliding offer, but negotiating it fails
-       until the data is fixed; Step 10's operator guide states the
-       restriction. With these rules each (offering, context) pair has exactly
+       today). A plain hit resolves only if its offering keeps a plain id
+       (single-context, or untagged with a default context); a plain id that
+       names a multi-context or `*` offering carries no context to stamp, and
+       the catalog never issues it. An id containing the separator is also
+       split at the **last** separator, whether or not the plain lookup hit.
+       The qualified form `foo@X` resolves only if X is a **known participant
+       context** (the default context, or one in the optional
+       `ParticipantContextStore`) and `foo` is exposed under a qualified id
+       in X: a multi-context offering whose `participantContextIds` contains
+       X or `*`, or an untagged offering when X is not the default. Requiring
+       a known context keeps legacy ids like `offer@v2` plain on a classic
+       runtime, whose only context is the default. Policy ids follow the
+       same rules;
+     - **ambiguous ids are a data error.** An offering whose `externalId` (or
+       policy id) is literally `foo@X` and resolves as a plain id collides
+       with the qualified id of an offering `foo` exposed as `foo@X`. If both
+       the plain and the split form resolve, the lookup logs `monitor.severe`
+       naming both offerings and returns nothing, the same outcome as a
+       cross-context duplicate. The catalog may still list the colliding
+       offer, but negotiating it fails until the data is fixed; Step 10's
+       operator guide states the restriction. With these rules each (offering, context) pair has exactly
        one id and every id resolves to at most one definition, and an id
        qualified with X can only produce a definition stamped X, which line 247
        rejects in any other context;

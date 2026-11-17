@@ -87,6 +87,8 @@ public class MultiContextStoresTest extends AbstractStoreTest {
   private static final String CONTEXT_A = "did:web:dataspace-a";
   private static final String CONTEXT_B = "did:web:dataspace-b";
   private static final String CONTEXT_C = "did:web:dataspace-c";
+  // a version suffix in a legacy external id, not a participant context
+  private static final String UNKNOWN_CONTEXT = "v2";
 
   private static final String OFFER_ID = "offer";
   private static final String OFFER_ID_A = "offer-a";
@@ -141,7 +143,8 @@ public class MultiContextStoresTest extends AbstractStoreTest {
             typeTransformerRegistry,
             jsonLd,
             Clock.systemUTC(),
-            DEFAULT_CONTEXT);
+            DEFAULT_CONTEXT,
+            ParticipantContextStores.holding(CONTEXT_A, CONTEXT_B, CONTEXT_C));
     contractDefinitionStore =
         new TMFBackedContractDefinitionStore(
             monitor,
@@ -171,6 +174,11 @@ public class MultiContextStoresTest extends AbstractStoreTest {
         Arguments.of("legacy, qualified A", null, qualifiedA, CONTEXT_A),
         Arguments.of("legacy, qualified C", null, qualifiedC, CONTEXT_C),
         Arguments.of(
+            "legacy, qualified unknown context",
+            null,
+            ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT),
+            null),
+        Arguments.of(
             "legacy, qualified default",
             null,
             ContextQualifiedId.qualify(OFFER_ID, DEFAULT_CONTEXT),
@@ -184,6 +192,11 @@ public class MultiContextStoresTest extends AbstractStoreTest {
         Arguments.of("A and B, plain id", A_AND_B, OFFER_ID, null),
         Arguments.of("all, qualified A", ALL, qualifiedA, CONTEXT_A),
         Arguments.of("all, qualified C", ALL, qualifiedC, CONTEXT_C),
+        Arguments.of(
+            "all, qualified unknown context",
+            ALL,
+            ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT),
+            null),
         Arguments.of("all, plain id", ALL, OFFER_ID, null));
   }
 
@@ -212,7 +225,7 @@ public class MultiContextStoresTest extends AbstractStoreTest {
 
   @Test
   public void testFindDefinition_externalIdContainingTheSeparatorResolvesAsPlainId() {
-    String externalId = ContextQualifiedId.qualify(OFFER_ID, "v2");
+    String externalId = ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT);
     offerings.add(offering(externalId, List.of(CONTEXT_A)));
 
     ContractDefinition definition = contractDefinitionStore.findById(externalId);
@@ -230,6 +243,20 @@ public class MultiContextStoresTest extends AbstractStoreTest {
 
     assertNull(contractDefinitionStore.findById(qualifiedA));
     verify(monitor).severe(contains("ambiguous"));
+  }
+
+  @Test
+  public void testFindDefinition_legacyIdWithAVersionSuffixIsNotAmbiguous() {
+    String versionedId = ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT);
+    offerings.add(offering(OFFER_ID, null));
+    offerings.add(offering(versionedId, null));
+
+    ContractDefinition definition = contractDefinitionStore.findById(versionedId);
+
+    assertNotNull(definition, "The untagged offering's own external id must resolve.");
+    assertEquals(versionedId, definition.getId());
+    assertEquals(DEFAULT_CONTEXT, definition.getParticipantContextId());
+    verify(monitor, never()).severe(anyString());
   }
 
   private static Stream<Arguments> unaddressablePlainHits() {

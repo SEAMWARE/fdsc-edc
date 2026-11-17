@@ -49,6 +49,7 @@ import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participant.spi.ParticipantAgent;
+import org.eclipse.edc.participantcontext.spi.store.ParticipantContextStore;
 import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.policy.model.PolicyType;
@@ -140,6 +141,8 @@ public class TMFEdcMapper {
   private final Clock clock;
   // owns the untagged TMForum entities (decision 3); null leaves them unresolvable
   private final String defaultParticipantContextId;
+  // knows the contexts besides the default one; null on runtimes without a context store
+  private final @Nullable ParticipantContextStore participantContextStore;
 
   public TMFEdcMapper(
       Monitor monitor,
@@ -148,7 +151,8 @@ public class TMFEdcMapper {
       TypeTransformerRegistry typeTransformerRegistry,
       JsonLd jsonLd,
       Clock clock,
-      @Nullable String defaultParticipantContextId) {
+      @Nullable String defaultParticipantContextId,
+      @Nullable ParticipantContextStore participantContextStore) {
     this.monitor = monitor;
     this.objectMapper = objectMapper;
     this.participantResolver = participantResolver;
@@ -156,6 +160,7 @@ public class TMFEdcMapper {
     this.jsonLd = jsonLd;
     this.clock = clock;
     this.defaultParticipantContextId = defaultParticipantContextId;
+    this.participantContextStore = participantContextStore;
     this.tmfObjectMapper = new TMFObjectMapperImpl();
   }
 
@@ -201,14 +206,16 @@ public class TMFEdcMapper {
 
   /**
    * Context of an offering looked up by id: for a plain id ({@code qualifier} null) the context it
-   * keeps its plain id in, for a qualified id the qualifier if the offering is exposed there under
-   * a qualified id. Empty in every other case, so each id resolves in at most one context.
+   * keeps its plain id in, for a qualified id the qualifier if it names an existing participant
+   * context the offering is exposed in under a qualified id. Empty in every other case, so each id
+   * resolves in at most one context.
    */
   public Optional<String> contextForId(
       @Nullable List<String> participantContextIds, @Nullable String qualifier) {
     if (qualifier != null) {
       return servesContext(participantContextIds, qualifier)
               && isQualifiedIn(participantContextIds, qualifier)
+              && isParticipantContext(qualifier)
           ? Optional.of(qualifier)
           : Optional.empty();
     }
@@ -233,6 +240,13 @@ public class TMFEdcMapper {
     return Optional.of(
         qualifyIfNeeded(
             offering.getExternalId(), offering.getParticipantContextIds(), participantContextId));
+  }
+
+  // keeps legacy ids like "offer@v2" plain on a classic runtime, whose only context is the default
+  private boolean isParticipantContext(String participantContextId) {
+    return participantContextId.equals(defaultParticipantContextId)
+        || (participantContextStore != null
+            && participantContextStore.findById(participantContextId).succeeded());
   }
 
   private String qualifyIfNeeded(
