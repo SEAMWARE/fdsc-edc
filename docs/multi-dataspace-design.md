@@ -471,11 +471,17 @@ per context, stamped with that context id. That is out of scope here.
 **Decision:** a two-layer check (the plan's second option):
 1. `EbsiTrustedIssuersRegistry` is backed by the **union** of the global
    `ebsiTir.tilAddress` and all `ebsiTir.profiles.<profile>.tilAddress`, so
-   `HasValidIssuer` passes for an issuer trusted in any dataspace.
-2. For each profile with its own TIL, Step 6 wraps that profile's id-extraction
-   function:
+   `HasValidIssuer` passes for an issuer trusted in any dataspace. A failing
+   profile TIL is skipped with a warning (its issuers are untrusted), so one
+   dataspace's TIL outage does not break the others; a failing global TIL
+   still fails the request.
+2. Once any profile has its own TIL, Step 6 wraps **every** profile's
+   id-extraction function:
    - it returns `null` (and therefore 401) unless every VC issuer in the `vc`
-     claim is trusted by **that** profile's TIL;
+     claim is trusted by **that** profile's TIL, or by the global
+     `ebsiTir.tilAddress` for a profile without its own TIL (otherwise the
+     union of layer 1 would let such a profile accept issuers trusted only
+     by another dataspace);
    - otherwise it delegates to the original function.
 
    Step 6 must confirm how `DataspaceProfileContextRegistry` allows replacing a
@@ -487,8 +493,15 @@ per context, stamped with that context id. That is out of scope here.
    only appends). Upstream's `DataspaceProfileContextRegistryImpl` is a
    `@Provider(isDefault = true)` (`ControlPlaneDefaultServicesExtension:101`),
    so `TirExtension` provides `ProfileTrustCheckingContextRegistry` instead,
-   which wraps the id-extraction function of each profile with its own TIL as
-   the profile is registered. Without `ebsiTir.profiles.*` it is not
+   which wraps the id-extraction function of each profile (with its own TIL,
+   or the global one) as the profile is registered.
+
+   - **Pitfall for Step 10 docs:** the profile name is part of the
+     `dcp.profiles.<profile>.*` / `ebsiTir.profiles.<profile>.*` keys. The
+     default profile `dataspace-protocol-http:2025-1` contains `:`, which must
+     be escaped (`\:`) in a `.properties` file and cannot be written as an
+     environment variable; the guide should recommend `:`-free profile names
+     for per-profile overrides. Without `ebsiTir.profiles.*` it is not
    registered and upstream's default stays in place.
 
 ### Management API auth for operators

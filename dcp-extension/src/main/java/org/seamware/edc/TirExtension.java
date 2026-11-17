@@ -53,8 +53,8 @@ import org.seamware.edc.tir.ProfileTrustCheckingContextRegistry;
 import org.seamware.edc.tir.TirClient;
 
 /**
- * Backs DCP issuer validation with EBSI TILs. Profiles with their own TIL ({@code
- * ebsiTir.profiles.*}) additionally get a profile registry that only trusts that TIL's issuers.
+ * Backs DCP issuer validation with EBSI TILs. Once any profile has its own TIL ({@code
+ * ebsiTir.profiles.*}), every profile only trusts its own TIL's issuers, or the global TIL's.
  */
 @Provides({TrustedIssuerRegistry.class, DataspaceProfileContextRegistry.class})
 public class TirExtension implements ServiceExtension {
@@ -80,6 +80,7 @@ public class TirExtension implements ServiceExtension {
             DataspaceProfileContextRegistry.class,
             new ProfileTrustCheckingContextRegistry(
                 monitor,
+                new EbsiTrustedIssuersRegistry(tirClient(context)),
                 profileClients.entrySet().stream()
                     .collect(
                         Collectors.toMap(
@@ -93,7 +94,7 @@ public class TirExtension implements ServiceExtension {
     if (trustedIssuerRegistry == null) {
       trustedIssuerRegistry =
           new EbsiTrustedIssuersRegistry(
-              tirClient(context), List.copyOf(profileTirClients(context).values()));
+              tirClient(context), List.copyOf(profileTirClients(context).values()), monitor);
     }
     return trustedIssuerRegistry;
   }

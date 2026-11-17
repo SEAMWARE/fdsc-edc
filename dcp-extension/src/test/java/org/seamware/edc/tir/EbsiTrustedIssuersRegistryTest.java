@@ -48,6 +48,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
+import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -115,11 +117,36 @@ public class EbsiTrustedIssuersRegistryTest {
     when(profileTirClient.getIssuer(eq(TEST_ISSUER)))
         .thenReturn(Optional.of(getIssuerVo(List.of("profile-credential"))));
     EbsiTrustedIssuersRegistry registry =
-        new EbsiTrustedIssuersRegistry(tirClient, List.of(profileTirClient));
+        new EbsiTrustedIssuersRegistry(tirClient, List.of(profileTirClient), mock(Monitor.class));
 
     assertEquals(
         Set.of("global-credential", "profile-credential"),
         registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+  }
+
+  @Test
+  public void testGetSupportedTypes_skips_failing_profile_til() {
+    TirClient failingProfileClient = mock(TirClient.class);
+    when(tirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("global-credential"))));
+    when(failingProfileClient.getIssuer(anyString()))
+        .thenThrow(new BadGatewayException("TIL unavailable"));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(
+            tirClient, List.of(failingProfileClient), mock(Monitor.class));
+
+    assertEquals(Set.of("global-credential"), registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+  }
+
+  @Test
+  public void testGetSupportedTypes_propagates_failing_primary_til() {
+    TirClient profileTirClient = mock(TirClient.class);
+    when(tirClient.getIssuer(anyString())).thenThrow(new BadGatewayException("TIL unavailable"));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(tirClient, List.of(profileTirClient), mock(Monitor.class));
+
+    assertThrows(
+        BadGatewayException.class, () -> registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
   }
 
   private static Stream<Arguments> getTypeSets() {

@@ -39,7 +39,6 @@ package org.seamware.edc.tir;
 import static org.eclipse.edc.iam.decentralizedclaims.core.DcpDefaultServicesExtension.CLAIMTOKEN_VC_KEY;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -61,6 +60,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.til.model.CredentialsVO;
 import org.seamware.til.model.TrustedIssuerVO;
 
@@ -70,6 +70,8 @@ public class ProfileTrustCheckingContextRegistryTest {
   private static final String PROFILE_B = "dataspace-b";
   private static final String PROFILE_WITHOUT_TIL = "dataspace-c";
   private static final String ISSUER_A = "did:web:issuer-a.org";
+  private static final String ISSUER_B = "did:web:issuer-b.org";
+  private static final String ISSUER_GLOBAL = "did:web:issuer-global.org";
   private static final String CREDENTIAL_TYPE = "MembershipCredential";
   private static final String PARTICIPANT_ID = "did:web:consumer.org";
 
@@ -83,6 +85,11 @@ public class ProfileTrustCheckingContextRegistryTest {
     when(tilA.getIssuer(ISSUER_A)).thenReturn(Optional.of(trustedIssuer(CREDENTIAL_TYPE)));
     TirClient tilB = mock(TirClient.class);
     when(tilB.getIssuer(any())).thenReturn(Optional.empty());
+    when(tilB.getIssuer(ISSUER_B)).thenReturn(Optional.of(trustedIssuer(CREDENTIAL_TYPE)));
+    TirClient globalTil = mock(TirClient.class);
+    when(globalTil.getIssuer(any())).thenReturn(Optional.empty());
+    when(globalTil.getIssuer(ISSUER_GLOBAL))
+        .thenReturn(Optional.of(trustedIssuer(CREDENTIAL_TYPE)));
 
     delegate = mock(ParticipantIdExtractionFunction.class);
     when(delegate.apply(any())).thenReturn(PARTICIPANT_ID);
@@ -90,6 +97,7 @@ public class ProfileTrustCheckingContextRegistryTest {
     registry =
         new ProfileTrustCheckingContextRegistry(
             mock(Monitor.class),
+            new EbsiTrustedIssuersRegistry(globalTil),
             Map.of(
                 PROFILE_A, new EbsiTrustedIssuersRegistry(tilA),
                 PROFILE_B, new EbsiTrustedIssuersRegistry(tilB)));
@@ -116,7 +124,11 @@ public class ProfileTrustCheckingContextRegistryTest {
         Arguments.of(PROFILE_A, ISSUER_A, PARTICIPANT_ID),
         Arguments.of(PROFILE_B, ISSUER_A, null),
         Arguments.of(PROFILE_A, "did:web:unknown-issuer.org", null),
-        Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_A, PARTICIPANT_ID));
+        Arguments.of(PROFILE_B, ISSUER_B, PARTICIPANT_ID),
+        Arguments.of(PROFILE_B, ISSUER_GLOBAL, null),
+        Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_GLOBAL, PARTICIPANT_ID),
+        Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_A, null),
+        Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_B, null));
   }
 
   @Test
@@ -129,11 +141,11 @@ public class ProfileTrustCheckingContextRegistryTest {
     assertNull(registry.getIdExtractionFunction(PROFILE_A).apply(claimToken));
   }
 
-  @Test
-  public void profileWithoutTilIsRegisteredUnchanged() {
-    assertSame(delegate, registry.getIdExtractionFunction(PROFILE_WITHOUT_TIL));
+  @ParameterizedTest
+  @ValueSource(strings = {PROFILE_A, PROFILE_B, PROFILE_WITHOUT_TIL})
+  public void everyProfileIsWrapped(String profile) {
     assertTrue(
-        registry.getIdExtractionFunction(PROFILE_A)
+        registry.getIdExtractionFunction(profile)
             instanceof ProfileTrustedIssuerIdExtractionFunction);
   }
 

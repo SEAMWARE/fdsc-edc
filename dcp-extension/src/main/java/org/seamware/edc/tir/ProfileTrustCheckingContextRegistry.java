@@ -43,18 +43,23 @@ import org.eclipse.edc.protocol.spi.DataspaceProfileContext;
 import org.eclipse.edc.spi.monitor.Monitor;
 
 /**
- * Profile registry that wraps the id extraction of every profile with its own TIL in a {@link
- * ProfileTrustedIssuerIdExtractionFunction}. The upstream registry resolves a name to the first
- * profile registered under it, so the wrapping has to happen at registration time.
+ * Profile registry that wraps every profile's id extraction in a {@link
+ * ProfileTrustedIssuerIdExtractionFunction}: its own TIL if configured, else the global TIL. The
+ * upstream registry resolves a name to the first profile registered under it, so the wrapping has
+ * to happen at registration time.
  */
 public class ProfileTrustCheckingContextRegistry extends DataspaceProfileContextRegistryImpl {
 
   private final Monitor monitor;
+  private final TrustedIssuerRegistry defaultIssuers;
   private final Map<String, TrustedIssuerRegistry> profileIssuers;
 
   public ProfileTrustCheckingContextRegistry(
-      Monitor monitor, Map<String, TrustedIssuerRegistry> profileIssuers) {
+      Monitor monitor,
+      TrustedIssuerRegistry defaultIssuers,
+      Map<String, TrustedIssuerRegistry> profileIssuers) {
     this.monitor = monitor;
+    this.defaultIssuers = defaultIssuers;
     this.profileIssuers = Map.copyOf(profileIssuers);
   }
 
@@ -69,10 +74,9 @@ public class ProfileTrustCheckingContextRegistry extends DataspaceProfileContext
   }
 
   private DataspaceProfileContext withTrustCheck(DataspaceProfileContext context) {
-    TrustedIssuerRegistry issuers = profileIssuers.get(context.name());
-    if (issuers == null) {
-      return context;
-    }
+    // The upstream issuer check runs against the union of all TILs, so without this a profile
+    // lacking its own TIL would accept issuers trusted only by another dataspace.
+    TrustedIssuerRegistry issuers = profileIssuers.getOrDefault(context.name(), defaultIssuers);
     return new DataspaceProfileContext(
         context.name(),
         context.protocolVersion(),

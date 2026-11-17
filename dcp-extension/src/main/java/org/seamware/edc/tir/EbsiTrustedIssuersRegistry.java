@@ -38,30 +38,36 @@ package org.seamware.edc.tir;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.validation.TrustedIssuerRegistry;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.seamware.til.model.CredentialsVO;
 import org.seamware.til.model.TrustedIssuerVO;
 
 /**
  * Trusted issuer registry backed by one or more EBSI TILs. Lookups return the union of all TILs;
- * registrations go to the first (primary) TIL only.
+ * registrations go to the first (primary) TIL only. A failing additional TIL is skipped (its
+ * issuers are untrusted) so it cannot break authentication in other dataspaces.
  */
 public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
 
   private final TirClient tirClient;
-  private final List<TirClient> lookupClients;
+  private final List<TirClient> additionalClients;
+  private final Monitor monitor;
 
   public EbsiTrustedIssuersRegistry(TirClient tirClient) {
-    this(tirClient, List.of());
+    this(tirClient, List.of(), null);
   }
 
-  public EbsiTrustedIssuersRegistry(TirClient tirClient, List<TirClient> additionalClients) {
+  public EbsiTrustedIssuersRegistry(
+      TirClient tirClient, List<TirClient> additionalClients, Monitor monitor) {
     this.tirClient = tirClient;
-    this.lookupClients = Stream.concat(Stream.of(tirClient), additionalClients.stream()).toList();
+    this.additionalClients = List.copyOf(additionalClients);
+    this.monitor = monitor;
   }
 
   @Override
@@ -82,12 +88,24 @@ public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
 
   @Override
   public Set<String> getSupportedTypes(Issuer issuer) {
-    return lookupClients.stream()
-        .flatMap(client -> client.getIssuer(issuer.id()).stream())
+    return Stream.concat(
+            tirClient.getIssuer(issuer.id()).stream(),
+            additionalClients.stream()
+                .flatMap(client -> lookupSkippingFailure(client, issuer.id()).stream()))
         .filter(trustedIssuer -> trustedIssuer.getCredentials() != null)
         .flatMap(trustedIssuer -> trustedIssuer.getCredentials().stream())
         .map(CredentialsVO::getCredentialsType)
         .filter(Objects::nonNull)
         .collect(Collectors.toSet());
+  }
+
+  private Optional<TrustedIssuerVO> lookupSkippingFailure(TirClient client, String issuerId) {
+    try {
+      return client.getIssuer(issuerId);
+    } catch (RuntimeException e) {
+      monitor.warning(
+          String.format("Skipping unavailable profile TIL for issuer %s.", issuerId), e);
+      return Optional.empty();
+    }
   }
 }
