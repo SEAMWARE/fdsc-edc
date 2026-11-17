@@ -35,7 +35,7 @@ All points below are settled.
 
 ### Upstream facts and design decisions
 
-Moved to [`docs/multi-dataspace-design.md`](docs/multi-dataspace-design.md), which also records the Step 1 open-item resolutions. "Decision N" in the steps below refers to that file.
+Moved to [`docs/multi-dataspace-design.md`](docs/multi-dataspace-design.md), which also records the Step 1 open-item resolutions. "Decision N" in the steps below refers to its "Design decisions" section, and "the verified facts" to its "Verified upstream facts" section.
 
 ### Working agreement
 
@@ -141,6 +141,9 @@ change.
 
   or add one shared schema, whichever Step 1 found the TMForum API accepts. Do
   not make it `required`. Existing offerings keep their `@schemaLocation`.
+- `ExtendableUsageCreateVO.getAtSchemaLocation` resolves
+  `CONTRACT_NEGOTIATION_SCHEMA`; point it at `USAGE_SCHEMA` like the other
+  Usage VOs (see the per-VO schema table in the design record).
 - `tmf-extension/src/main/java/org/seamware/edc/domain/`: add a
   `participantContextId` field with a getter and a fluent setter to these VOs
   (and only these):
@@ -248,7 +251,7 @@ unchanged.
     - This includes a `QuerySpec` that combines an `id` criterion with the
       context criterion. Management API v5 loads `GET /assets/{id}` exactly
       this way and then authorizes non-admin tokens against the asset's
-      context (see the verified facts). Do not route such id queries to
+      context (see "Verified upstream facts" in the design record). Do not route such id queries to
       `findById`: its default stamp would turn every non-default-context
       `GET /assets/{id}` into a 404 for non-admin tokens.
   - `TMFBackedContractDefinitionStore`:
@@ -483,7 +486,7 @@ Acceptance:
 ### Step 6: Per-dataspace DCP scopes and TIR in `dcp-extension`
 
 - **Two scope mechanisms, split by what each can express** (see the DCP
-  verified facts):
+  entries under "Verified upstream facts" in the design record):
   - a scope that a profile needs on **every** request (catalog, negotiation and
     transfer alike) uses the upstream keys
     `edc.iam.dcp.scopes.<k>.{id,type=DEFAULT,value,profile}`. Nothing is added
@@ -574,7 +577,9 @@ Acceptance: `mvn -pl participant-bootstrap-extension -am test` is green.
     BOMs bring (`dsp-virtual`, `management-api-v5`,
     `management-api-oauth2-authentication`);
   - add `participant-bootstrap-extension`;
-  - remove `test-extension` if Step 1 decided so.
+  - remove `test-extension` (Step 1 decided so) and `dsp-version-http-api`
+    (Step 1: virtual mode serves the version endpoint per context; the root
+    one would advertise every profile to every caller).
 - Resolve the full assembly with `mvn -pl controlplane-dcp -am dependency:tree`.
   Make sure exactly one `DataFlowController` is present and no duplicate
   providers (see `docs/migration/EDC-0.18.1-UPGRADE.md` §8.3).
@@ -583,8 +588,9 @@ Acceptance: `mvn -pl participant-bootstrap-extension -am test` is green.
     `http-dsp-profile-2025-1`;
   - two participants via `fdsc.participants.*`, each with its own DID, STS
     client and profile list;
-  - `web.http.protocol.virtual=true`;
-  - `edc.dsp.callback.address` containing `%s`;
+  - `edc.dsp.callback.address` containing `%s` (this makes
+    `web.http.protocol.virtual` unnecessary; do not set it, see the design
+    record);
   - management OAuth2 settings;
   - per-profile `dcp.profiles.*` / `ebsiTir.profiles.*`;
   - `tmfExtension.defaultParticipantContextId`.
@@ -605,7 +611,10 @@ Acceptance:
 - Add `docker-compose.multi-dataspace.yml`, which reuses the postgis, scorpio
   and tmforum services of `docker-compose.tck.yml`. It runs the
   `controlplane-dcp` image with `config/multi-dataspace/edc.properties`, plus a
-  static JWKS server for the management API JWT.
+  static JWKS server for the management API JWT and a static server for
+  `schemas/`. The seed's `@schemaLocation`s and the controlplane's
+  `tmfExtension.schemaBaseUri` both point at that schema server (see the
+  "published schema URL" pitfall in the design record).
 - `scripts/init-tmforum-multi-dataspace.sh` seeds (decision 4):
   - one **shared** ProductSpecification with one ProductOffering tagged `["A"]`
     and one tagged `["B"]`, each with a different policy;
@@ -655,6 +664,9 @@ Acceptance:
     scopes, TIR);
   - `fdsc.participants.*` reference;
   - `edc.dataspace.profiles.*` reference;
+  - TMForum schemas: `schemas/` must be published or self-hosted where
+    TMForum can reach it, with `tmfExtension.schemaBaseUri` pointing there
+    (the default is an external GitHub URL that lacks the new properties);
   - management API v5 and OAuth2;
   - which TMForum entities carry `participantContextId` (the decision 2
     table), and the default-context rule for legacy data;

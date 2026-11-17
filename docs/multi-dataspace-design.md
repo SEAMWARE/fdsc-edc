@@ -32,9 +32,11 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
   - It returns 404 unless the profile is associated with that context. The
     association comes from the per-context config entry `edc.dataspace.profiles`
     (CSV); `edc.dataspace.enable.profiles.all=true` bypasses it.
-  - `web.http.protocol.virtual=true` is required. An explicit
+  - The callback address must contain the context: an explicit
     `edc.dsp.callback.address` must contain `%s`, which is replaced by the
-    participant context id.
+    participant context id. `web.http.protocol.virtual=true` is needed only
+    when no explicit callback address is set; it then appends `/%s` to the
+    default one (see "DSP version endpoint in virtual mode").
 - **Virtual mode assembly:**
   - Use the `controlplane-virtual-base-bom` BOM. It contains `dsp-virtual`,
     `management-api-v5`, `management-api-authorization` and
@@ -232,7 +234,8 @@ request returned exactly the expected entities.
 
 | Question | Result |
 |---|---|
-| Optional string property `participantContextId` on ProductOffering, Quote and Agreement | **works**: creates with and without it both return 201. The schema is enforced: a number gives 400 `integer found, string expected` |
+| Optional string property `participantContextId` on ProductOffering, Quote and Agreement | **works**: creates with and without it both return 201. The schema is enforced: a number gives 400 `integer found, string expected` (when the schema declares the property; see "Undeclared properties" below) |
+| Optional `participantContextId` on Usage (`usage.json`), measured in the review round | **works**: create gives 201, and `GET …/usage?participantContextId=A` returns only A-tagged usages |
 | Optional array property `participantContextIds` on ProductOffering | **works**: `["A","B"]` gives 201; `"A"` or `[1]` gives 400 |
 | `GET …?participantContextId=A` (offering, quote, agreement) | **works**: only A-tagged entities are returned and untagged ones are excluded. `.eq=A` is equivalent |
 | OR across values | **works**: `participantContextId=A,B` (or `participantContextId=A;participantContextId=B`) |
@@ -257,21 +260,59 @@ Further behaviour that later steps must respect:
   body has properties outside the base model, and an extension property
   without `@schemaLocation` gives 400.
   - An entity has exactly one `@schemaLocation`, so Step 2 adds the optional
-    property to the schema each tagged entity already references
-    (`external-id.json` for offerings, `agreement.json`, `quote-item.json`,
-    `usage.json`, …) instead of a separate schema.
-  - **Pitfall:** `init-tmforum.sh` points at
-    `raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/…`.
+    property to the schema each tagged VO already references, instead of a
+    separate schema. Per VO (`getAtSchemaLocation` in `tmf-extension/.../domain/`):
+
+    | VO | Schema it writes | Step 2 adds |
+    |---|---|---|
+    | `ExtendableProductOffering` | `external-id.json` (shared with spec, Product, ProductCreate, SpecRef) | `participantContextIds` (array) |
+    | `ExtendableQuoteVO` / `…CreateVO` / `…UpdateVO` | `contract-negotiation.json` | `participantContextId` |
+    | `ExtendableQuoteItemVO` | `quote-item.json` | `participantContextId` |
+    | `ExtendableAgreementVO` / `…CreateVO` / `…UpdateVO` | `agreement.json` | `participantContextId` |
+    | `ExtendableUsageVO` / `…UpdateVO` | `usage.json` | `participantContextId` |
+    | `ExtendableUsageCreateVO` | **`contract-negotiation.json`** (a bug: it resolves `CONTRACT_NEGOTIATION_SCHEMA`, not `USAGE_SCHEMA`) | — (Step 2 points it at `usage.json`) |
+    | `ExtendableProductOfferingTerm` | `contract-definition.json` | `participantContextId` (the plan lists it; nothing reads it, because the term is embedded in the offering, whose tag governs) |
+
+  - **Undeclared properties are accepted without a type check** (measured,
+    same stack): with a schema that does not declare `participantContextId`,
+    a create carrying it as a string *or a number* passes validation, and
+    TMForum stores it and filters on it. Only a schema with
+    `additionalProperties: false` rejects it (400 `property … is not defined in
+    the schema`). No schema under `schemas/` sets that, so:
+    - tagged writes against an old schema (e.g. the published one below)
+      **succeed**, but the value is not type-checked;
+    - the `ExtendableUsageCreateVO` mismatch is therefore not a rejection,
+      it is a silent loss of validation: a Usage create against
+      `contract-negotiation.json` was accepted with `transferState:
+      "NOT_A_STATE"`, which `usage.json` rejects with 400. Step 2 fixes the VO
+      rather than duplicating the property into `contract-negotiation.json`
+      for it.
+  - **Pitfall: published schema URL.** Both the seed and the runtime write
+    `@schemaLocation`s under
+    `https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/`:
+    - `init-tmforum.sh` hard-codes that URL;
+    - the EDC runtime resolves every VO's schema against
+      `TMFConfig.DEFAULT_SCHEMA_BASE_URI` (the same URL) unless
+      `tmfExtension.schemaBaseUri` is set. From Step 4 on, every Quote,
+      Agreement and Usage the runtime writes carries `participantContextId`.
+
     Schema changes in this repository are not visible at that URL until they
-    are published there. Step 9's seed must reference schemas that contain the
-    new properties: serve `schemas/` from a static container in the compose
-    file and point `@schemaLocation` at it.
+    are published there. Per the measurement above, writes still succeed, but
+    without type checking of the new properties, and a TMForum that cannot
+    reach GitHub rejects every extended write with 400. Consequences:
+    - Step 9's compose file serves `schemas/` from a static container,
+      points the seed's `@schemaLocation`s at it **and** sets
+      `tmfExtension.schemaBaseUri` for the controlplane to the same base;
+    - Step 10's operator guide states that the schemas must be published or
+      self-hosted at a URL TMForum can reach, and that
+      `tmfExtension.schemaBaseUri` must point there.
 
 **Decision: query forms**
 
 | Store / context | Query | Filtering |
 |---|---|---|
-| Quote, Agreement, Usage in non-default context X | `?participantContextId=X` | server-side, so paging stays server-side |
+| Quote, Agreement in non-default context X | `?participantContextId=X` | server-side, so paging stays server-side |
+| Usage in non-default context X | `?participantContextId=X` | server-side. Measured on create and list only (in the review round): nothing in the runtime writes or lists Usage today (no Usage client; `TMFEdcMapper.toCreate`/`toUpdate` for Usage have no callers), so no store depends on it yet |
 | Offerings in non-default context X | `?participantContextIds=X,*` | server-side, so paging stays server-side |
 | Any entity in the **default** context | unfiltered | in memory: map (absent → default), then filter |
 | By-id lookups (`externalId`, policy id, quote id) | unchanged, context-less | the mapped entity carries its context |
@@ -442,18 +483,41 @@ per context, stamped with that context id. That is out of scope here.
 - Virtual mode serves it at `<protocol>/{participantContextId}/.well-known/dspace-version`
   (`DspVirtualMetadataApiController:41`). It returns 404 for an unknown
   context and lists only that context's associated profiles (`:57-67`).
-- The root `/.well-known/dspace-version` (`DspVersionApiController:33`) exists
-  only with the non-virtual `dsp-version` module. The virtual BOM brings only
-  `dsp-virtual` (`controlplane-virtual-base-bom/build.gradle.kts:37`).
+- The root `/.well-known/dspace-version` (`DspVersionApiController:33`) comes
+  only from the non-virtual `dsp-version-http-api` module. The virtual BOM does
+  not bring it (`controlplane-virtual-base-bom/build.gradle.kts:37` brings only
+  `dsp-virtual`), but `controlplane-dcp/pom.xml:252-255` declares it
+  explicitly.
+  - It **would start** in virtual mode: `DspVersionApiExtension` injects only
+    `WebService`, `TypeTransformerRegistry`, `VersionProtocolService`, `JsonLd`
+    and `TypeManager`. `VersionProtocolService` comes from
+    `ControlPlaneServicesExtension:256`, in `control-plane-aggregate-services`,
+    which the virtual BOM pulls in via `control-plane-core`.
+  - It would then answer at the root, without a context, with **every**
+    registered profile's versions (`VersionProtocolServiceImpl.getAll` reads
+    the whole `DataspaceProfileContextRegistry`). That ignores the per-context
+    profile association, so it advertises profiles a caller cannot use.
 - `web.http.protocol.virtual` changes no routes. It only appends `/%s` to the
-  default callback address (`DspApiBaseConfigurationExtension:91-103`).
+  callback address when **no** explicit `edc.dsp.callback.address` is set
+  (`DspApiBaseConfigurationExtension:85-103`; the setting is read nowhere
+  else). An explicit callback address with `%s` makes it redundant.
 
-**Decision (Step 9 asserts):**
+**Decision:**
+- Step 8 **removes `dsp-version-http-api`** from `controlplane-dcp/pom.xml`
+  together with the other classic DSP modules. `controlplane-oid4vc` and
+  `controlplane-tck` keep it (classic mode).
+- Step 8's example config sets an explicit `edc.dsp.callback.address` with
+  `%s` and does **not** set `web.http.protocol.virtual`; the Step 10 guide
+  explains that the flag is only a fallback for deployments without an
+  explicit callback address.
+
+**Step 9 asserts:**
 - `GET <protocol>/{A}/.well-known/dspace-version` returns 200 and lists A's
   profiles only;
 - `GET <protocol>/{unknown}/.well-known/dspace-version` returns 404;
-- there is no per-`{ctx}/{profile}` version path, and the root path is absent
-  in the virtual assembly.
+- there is no per-`{ctx}/{profile}` version path, and the root
+  `GET <protocol>/.well-known/dspace-version` returns 404. That holds only
+  once Step 8 has removed `dsp-version-http-api`.
 
 ### DSP request without a token in virtual mode
 
