@@ -44,6 +44,9 @@ public class ExtendableQuoteCreateVO extends QuoteCreateVO {
   @JsonProperty("contractNegotiation")
   private ContractNegotiationState contractNegotiationState;
 
+  @JsonProperty("participantContextId")
+  private String participantContextId;
+
   @javax.annotation.Nonnull private List<ExtendableQuoteItemVO> quoteItem = new ArrayList<>();
 
   @javax.annotation.Nonnull
@@ -67,6 +70,16 @@ public class ExtendableQuoteCreateVO extends QuoteCreateVO {
   public ExtendableQuoteCreateVO setContractNegotiationState(
       ContractNegotiationState contractNegotiationState) {
     this.contractNegotiationState = contractNegotiationState;
+    return this;
+  }
+
+  /** Participant context (dataspace) the entity belongs to; null means the default context. */
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
+  public ExtendableQuoteCreateVO setParticipantContextId(String participantContextId) {
+    this.participantContextId = participantContextId;
     return this;
   }
 }

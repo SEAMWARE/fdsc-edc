@@ -25,6 +25,7 @@ import java.util.Optional;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
+import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.domain.*;
 import org.seamware.edc.store.TMFBackedContractNegotiationStore;
 
@@ -57,10 +58,23 @@ public class AgreementApiClient extends ApiClient {
   }
 
   public List<ExtendableAgreementVO> getAgreements(int offset, int limit) {
+    return getAgreements(offset, limit, null);
+  }
+
+  /**
+   * Returns the agreements tagged with the given context, paged. A null context applies no filter;
+   * a context containing {@code ,} or {@code ;} throws {@link IllegalArgumentException}.
+   */
+  public List<ExtendableAgreementVO> getAgreements(
+      int offset, int limit, @Nullable String participantContextId) {
     HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
     urlBuilder.addPathSegment(AGREEMENT_PATH);
     urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
     urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(limit));
+    if (participantContextId != null) {
+      urlBuilder.addQueryParameter(
+          PARTICIPANT_CONTEXT_ID_QUERY_PARAM, requireFilterableContextId(participantContextId));
+    }
     Request request = new Request.Builder().url(urlBuilder.build()).build();
     try (ResponseBody responseBody = executeRequest(request)) {
       return objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {});

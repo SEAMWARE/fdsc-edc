@@ -48,6 +48,9 @@ public class ExtendableQuoteVO extends QuoteVO {
   @JsonProperty("contractNegotiation")
   private ContractNegotiationState contractNegotiationState;
 
+  @JsonProperty("participantContextId")
+  private String participantContextId;
+
   @javax.annotation.Nonnull
   @JsonProperty(JSON_PROPERTY_QUOTE_ITEM)
   @JsonInclude(value = JsonInclude.Include.ALWAYS)
@@ -72,6 +75,16 @@ public class ExtendableQuoteVO extends QuoteVO {
     return this;
   }
 
+  /** Participant context (dataspace) the entity belongs to; null means the default context. */
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
+  public ExtendableQuoteVO setParticipantContextId(String participantContextId) {
+    this.participantContextId = participantContextId;
+    return this;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -79,11 +92,13 @@ public class ExtendableQuoteVO extends QuoteVO {
     if (!super.equals(o)) return false;
     ExtendableQuoteVO quoteVO = (ExtendableQuoteVO) o;
     return Objects.equals(quoteItem, quoteVO.quoteItem)
+        && Objects.equals(participantContextId, quoteVO.participantContextId)
         && Objects.equals(contractNegotiationState, quoteVO.contractNegotiationState);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), quoteItem, contractNegotiationState);
+    return Objects.hash(
+        super.hashCode(), participantContextId, quoteItem, contractNegotiationState);
   }
 }

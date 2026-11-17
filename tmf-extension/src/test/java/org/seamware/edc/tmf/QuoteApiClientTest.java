@@ -28,6 +28,7 @@ import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.edc.domain.ExtendableQuoteCreateVO;
@@ -57,6 +58,32 @@ public class QuoteApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals("/quote?offset=0&limit=5", recordedRequest.getPath());
+  }
+
+  @ParameterizedTest(name = "context {0}")
+  @CsvSource(
+      value = {"did:web:dataspace-a; did:web:dataspace-a", "NULL; NULL"},
+      delimiter = ';',
+      nullValues = "NULL")
+  public void testGetQuotes_participantContext(String context, String expectedFilter)
+      throws Exception {
+    List<ExtendableQuoteVO> testQuotes = getQuotes(2);
+    mockResponse(200, testQuotes);
+
+    assertEquals(testQuotes, quoteApiClient.getQuotes(0, 5, context));
+
+    RecordedRequest recordedRequest = mockWebServer.takeRequest();
+    assertEquals("/quote", recordedRequest.getRequestUrl().encodedPath());
+    assertEquals("5", recordedRequest.getRequestUrl().queryParameter("limit"));
+    assertEquals(
+        expectedFilter, recordedRequest.getRequestUrl().queryParameter("participantContextId"));
+  }
+
+  @ParameterizedTest(name = "context {0}")
+  @ValueSource(strings = {"ctx-a,ctx-b", "ctx-a;ctx-b", ","})
+  public void testGetQuotes_rejectsContextThatWidensTheFilter(String context) {
+    assertThrows(IllegalArgumentException.class, () -> quoteApiClient.getQuotes(0, 5, context));
+    assertEquals(0, mockWebServer.getRequestCount(), "No request may be sent.");
   }
 
   @Test

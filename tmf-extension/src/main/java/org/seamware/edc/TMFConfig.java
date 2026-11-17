@@ -43,6 +43,9 @@ public class TMFConfig {
    */
   public static final String EDC_PARTICIPANT_CONTEXT_ID_SETTING = "edc.participant.context.id";
 
+  /** Entry of a ProductOffering's {@code participantContextIds} that offers it in every context. */
+  public static final String ALL_PARTICIPANT_CONTEXTS = "*";
+
   private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";
   private static final String TMF_EXTENSION_CATALOG_CONFIG_PATH = "tmfExtension.catalog";
   private static final URI DEFAULT_SCHEMA_BASE_URI =
