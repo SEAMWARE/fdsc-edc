@@ -28,6 +28,8 @@ import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.jwk.KeyUse;
 import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
 import com.nimbusds.jwt.SignedJWT;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Map;
 import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
@@ -71,12 +73,13 @@ class EdrIssuerMatchesDiscoveryTest {
 
   @ParameterizedTest(name = "transfer in {1}")
   @CsvSource({
-    "transfer-a, context-a",
-    "transfer-b, context-b",
-    "transfer-default, default-context",
+    "transfer-a, context-a, did:web:a.example",
+    "transfer-b, context-b, did:web:b.example",
+    "transfer-port, did:web:a.example%3A8443, did:web:a.example%3A8443",
+    "transfer-default, default-context, did:web:default.example",
   })
-  void edrIssuerEqualsIssuerOfRouteDiscovery(String flowId, String participantContextId)
-      throws Exception {
+  void edrIssuerEqualsIssuerOfRouteDiscovery(
+      String flowId, String participantContextId, String identity) throws Exception {
     TransferProcessStore transferProcessStore = mock(TransferProcessStore.class);
     when(transferProcessStore.findById(flowId))
         .thenReturn(
@@ -85,10 +88,7 @@ class EdrIssuerMatchesDiscoveryTest {
                 .participantContextId(participantContextId)
                 .build());
     ParticipantIdentityResolver identityResolver = mock(ParticipantIdentityResolver.class);
-    when(identityResolver.getParticipantId(eq("context-a"), any())).thenReturn("did:web:a.example");
-    when(identityResolver.getParticipantId(eq("context-b"), any())).thenReturn("did:web:b.example");
-    when(identityResolver.getParticipantId(eq(DEFAULT_CONTEXT), any()))
-        .thenReturn(DEFAULT_IDENTITY);
+    when(identityResolver.getParticipantId(eq(participantContextId), any())).thenReturn(identity);
     OwnParticipantIdentity ownIdentity =
         new OwnParticipantIdentity(() -> identityResolver, DEFAULT_IDENTITY, DEFAULT_CONTEXT);
     TransferContextResolver contextResolver =
@@ -122,7 +122,9 @@ class EdrIssuerMatchesDiscoveryTest {
     Map<String, Object> oidConfig =
         contextSuffix.isEmpty()
             ? oidConfigController.getOIDConfiguration()
-            : oidConfigController.getOIDConfiguration(contextSuffix.substring(1));
+            // JAX-RS hands the controller the URL-decoded path segment.
+            : oidConfigController.getOIDConfiguration(
+                URLDecoder.decode(contextSuffix.substring(1), StandardCharsets.UTF_8));
 
     assertEquals(edrIssuer, oidConfig.get("issuer"), "Discovery: " + discovery);
   }

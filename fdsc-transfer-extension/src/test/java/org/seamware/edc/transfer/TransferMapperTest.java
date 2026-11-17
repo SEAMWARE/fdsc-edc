@@ -46,6 +46,8 @@ class TransferMapperTest {
   @CsvSource(
       value = {
         "context-b, /context-b",
+        "did:web:a.example%3A8443, /did%3Aweb%3Aa.example%253A8443",
+        "ctx/with space, /ctx%2Fwith%20space",
         "default-context, ''",
         "null, ''",
       },
