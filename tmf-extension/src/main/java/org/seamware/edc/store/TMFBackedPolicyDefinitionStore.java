@@ -16,6 +16,7 @@
  */
 package org.seamware.edc.store;
 
+import java.util.Optional;
 import java.util.logging.Logger;
 import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.policy.spi.PolicyDefinition;
@@ -24,6 +25,7 @@ import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.StoreResult;
+import org.seamware.edc.tmf.OfferingPolicy;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
 public class TMFBackedPolicyDefinitionStore implements PolicyDefinitionStore {
@@ -34,35 +36,50 @@ public class TMFBackedPolicyDefinitionStore implements PolicyDefinitionStore {
 
   private final ProductCatalogApiClient productCatalogApiClient;
 
-  private final String participantContextId;
+  private final TMFEdcMapper tmfEdcMapper;
 
   public TMFBackedPolicyDefinitionStore(
-      Monitor monitor,
-      ProductCatalogApiClient productCatalogApiClient,
-      String participantContextId) {
+      Monitor monitor, ProductCatalogApiClient productCatalogApiClient, TMFEdcMapper tmfEdcMapper) {
     this.monitor = monitor;
     this.productCatalogApiClient = productCatalogApiClient;
-    this.participantContextId = participantContextId;
+    this.tmfEdcMapper = tmfEdcMapper;
   }
 
+  /** Resolves a plain or {@link ContextQualifiedId} policy id the way contract definitions are. */
   @Override
   public PolicyDefinition findById(String policyDefinitionId) {
     try {
-      return productCatalogApiClient
-          .getByPolicyId(policyDefinitionId)
-          .map(
-              p ->
-                  PolicyDefinition.Builder.newInstance()
-                      .policy(p)
-                      .id(TMFEdcMapper.getIdFromPolicy(p))
-                      .participantContextId(participantContextId)
-                      .build())
-          .orElse(null);
+      Optional<OfferingPolicy> plainHit = productCatalogApiClient.getByPolicyId(policyDefinitionId);
+      if (plainHit.isEmpty()) {
+        return resolveQualified(policyDefinitionId).orElse(null);
+      }
+      Optional<PolicyDefinition> plain = tmfEdcMapper.toPolicyDefinition(plainHit.get(), null);
+      if (plain.isPresent() && resolveQualified(policyDefinitionId).isPresent()) {
+        monitor.severe(
+            String.format(
+                "Policy id %s is ambiguous: it is a plain policy id and the context-qualified id"
+                    + " of another offering's policy. Neither resolves until one is renamed.",
+                policyDefinitionId));
+        return null;
+      }
+      return plain.orElse(null);
     } catch (RuntimeException e) {
       monitor.warning("Was not able to find the requested policy.", e);
       throw new EdcPersistenceException(
           String.format("Was not able to find policy with id %s.", policyDefinitionId), e);
     }
+  }
+
+  private Optional<PolicyDefinition> resolveQualified(String policyDefinitionId) {
+    return ContextQualifiedId.parse(policyDefinitionId)
+        .flatMap(
+            qualified ->
+                productCatalogApiClient
+                    .getByPolicyId(qualified.id())
+                    .flatMap(
+                        offeringPolicy ->
+                            tmfEdcMapper.toPolicyDefinition(
+                                offeringPolicy, qualified.participantContextId())));
   }
 
   @Override

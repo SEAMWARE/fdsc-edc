@@ -63,7 +63,6 @@ import org.seamware.edc.domain.*;
 import org.seamware.edc.tmf.AgreementApiClient;
 import org.seamware.edc.tmf.ParticipantResolver;
 import org.seamware.edc.util.NoopMonitor;
-import org.seamware.tmforum.agreement.model.AgreementVO;
 import org.seamware.tmforum.agreement.model.CharacteristicVO;
 import org.seamware.tmforum.party.model.OrganizationVO;
 import org.seamware.tmforum.productcatalog.model.ProductOfferingTermVO;
@@ -120,7 +119,9 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     when(participantResolver.getTmfId(eq(TEST_PROVIDER_DID))).thenReturn(TEST_PROVIDER_TMF_ID);
 
     ContractAgreement contractAgreement = getValidContractAgreement();
-    AgreementVO extendableAgreementVO = getTestAgreement();
+    ExtendableAgreementVO extendableAgreementVO = getTestAgreement();
+    // the EDC->TMForum direction writes the entity's own context
+    extendableAgreementVO.setParticipantContextId(contractAgreement.getParticipantContextId());
 
     when(typeTransformerRegistry.transform(any(), eq(JsonObject.class)))
         .thenReturn(Result.success(getEmptyOdrlContract()));
@@ -664,7 +665,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
   public void assetFromProductSpec_success(
       ExtendableProductSpecification productSpecification, Asset expectedAsset)
       throws JsonProcessingException {
-    Optional<Asset> asset = tmfEdcMapper.assetFromProductSpec(productSpecification);
+    Optional<Asset> asset =
+        tmfEdcMapper.assetFromProductSpec(productSpecification, TEST_PARTICIPANT_CONTEXT_ID);
     assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
 
     assertEquals(
@@ -684,7 +686,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
-                    Optional.empty()))
+                    Optional.empty()),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "Without an upstream, the product cannot be supported.");
   }
@@ -700,7 +703,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
-                    Optional.of("upstream")))
+                    Optional.of("upstream")),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "Without an external Id, the product cannot be supported.");
   }
@@ -711,7 +715,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper.assetFromProductSpec(
             withTransferPath(
                 getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))),
-                "/ngsi-ld/v1/entities?type=CrowdFlowObserved"));
+                "/ngsi-ld/v1/entities?type=CrowdFlowObserved"),
+            TEST_PARTICIPANT_CONTEXT_ID);
 
     assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
     assertEquals(
@@ -724,7 +729,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
   public void assetFromProductSpec_omitsTransferPathWhenAbsent() {
     Optional<Asset> asset =
         tmfEdcMapper.assetFromProductSpec(
-            getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))));
+            getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))),
+            TEST_PARTICIPANT_CONTEXT_ID);
 
     assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
     assertNull(
@@ -739,7 +745,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     // a characteristic with no valueType must not crash the string switch
     spec.addProductSpecCharacteristicItem(new ProductSpecificationCharacteristicVO().id("orphan"));
 
-    Optional<Asset> asset = tmfEdcMapper.assetFromProductSpec(spec);
+    Optional<Asset> asset = tmfEdcMapper.assetFromProductSpec(spec, TEST_PARTICIPANT_CONTEXT_ID);
 
     assertTrue(asset.isPresent(), "A null valueType characteristic should be skipped, not fatal.");
   }
@@ -787,7 +793,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     getExtendableProductOffering(
                         TEST_OFFER_ID,
                         Optional.of(getTestOdrlPolicy()),
-                        Optional.of(getTestOdrlPolicy())))
+                        Optional.of(getTestOdrlPolicy())),
+                    TEST_PARTICIPANT_CONTEXT_ID)
                 .get()));
   }
 
@@ -802,7 +809,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper
             .fromProductOffer(
                 getExtendableProductOffering(
-                    TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()))
+                    TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "A contract policy is required.");
   }
@@ -818,7 +826,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper
             .fromProductOffer(
                 getExtendableProductOffering(
-                    TEST_OFFER_ID, Optional.empty(), Optional.of(getTestOdrlPolicy())))
+                    TEST_OFFER_ID, Optional.empty(), Optional.of(getTestOdrlPolicy())),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "A contract policy is required.");
   }
@@ -834,7 +843,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper
             .fromProductOffer(
                 getExtendableProductOffering(
-                    null, Optional.of(getTestOdrlPolicy()), Optional.of(getTestOdrlPolicy())))
+                    null, Optional.of(getTestOdrlPolicy()), Optional.of(getTestOdrlPolicy())),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "An external id is required.");
   }
@@ -855,7 +865,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper.consumerOfferFromProductOffering(
             getExtendableProductOffering(
                 TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.of(getTestOdrlPolicy())),
-            contractOfferId);
+            contractOfferId,
+            TEST_PARTICIPANT_CONTEXT_ID);
     assertTrue(optionalValidatableConsumerOffer.isPresent(), "The offer should have been returned");
 
     ValidatableConsumerOffer expectedOffer =
@@ -900,7 +911,9 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     assertTrue(
         tmfEdcMapper
             .consumerOfferFromProductOffering(
-                getNonCDProductOffering(), ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                getNonCDProductOffering(),
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out a term containing the contract definition, no offering should be returned");
   }
@@ -920,7 +933,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .consumerOfferFromProductOffering(
                 getExtendableProductOffering(
                     TEST_OFFER_ID, Optional.empty(), Optional.of(getTestOdrlPolicy())),
-                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out an access policy, no offering should be returned");
   }
@@ -940,7 +954,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .consumerOfferFromProductOffering(
                 getExtendableProductOffering(
                     TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()),
-                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out a contract policy, no offering should be returned");
   }
@@ -959,7 +974,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .consumerOfferFromProductOffering(
                 getExtendableProductOffering(
                     TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()),
-                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out a valid policy, no offering should be returned");
   }

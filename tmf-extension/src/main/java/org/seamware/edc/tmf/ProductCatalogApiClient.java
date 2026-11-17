@@ -22,6 +22,7 @@ import static org.seamware.edc.store.TMFEdcMapper.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -46,6 +47,8 @@ public class ProductCatalogApiClient extends ApiClient {
   private static final String PRODUCT_OFFERING_ID_PREFIX = "urn:ngsi-ld:product-offering";
   private static final String PRODUCT_OFFERING_PATH = "productOffering";
   private static final String PRODUCT_SPECIFICATION_PATH = "productSpecification";
+  private static final String PRODUCT_OFFERING_TERM_NAME_PARAM = "productOfferingTerm.name";
+  private static final int POLICY_SCAN_PAGE_SIZE = 100;
 
   private final String baseUrl;
   private final ObjectMapper objectMapper;
@@ -127,50 +130,74 @@ public class ProductCatalogApiClient extends ApiClient {
     }
   }
 
-  /** Get the policy by its id. Policies are stored inside product-offerings */
-  public Optional<Policy> getByPolicyId(String policyId) {
-
-    Optional<Policy> optionalPolicy = Optional.empty();
+  /**
+   * Get the policy by its plain id, with the contexts of the offering holding it. Policies are
+   * stored inside product-offerings, so every offering is scanned; a policy id held by more than
+   * one offering throws {@link BadGatewayException}.
+   */
+  public Optional<OfferingPolicy> getByPolicyId(String policyId) {
+    List<OfferingWithPolicy> matches = new ArrayList<>();
     boolean posAvailable = true;
     int offset = 0;
-    while (optionalPolicy.isEmpty() && posAvailable) {
+    while (posAvailable) {
       HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
       urlBuilder.addPathSegment(PRODUCT_OFFERING_PATH);
-      urlBuilder.addQueryParameter("productOfferingTerm.name", "edc:contractDefinition");
-      urlBuilder.addQueryParameter("offset", String.valueOf(offset));
-      urlBuilder.addQueryParameter("limit", "100");
+      urlBuilder.addQueryParameter(PRODUCT_OFFERING_TERM_NAME_PARAM, POT_NAME_CONTRACT_DEFINITION);
+      urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
+      urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(POLICY_SCAN_PAGE_SIZE));
 
       Request request = new Request.Builder().url(urlBuilder.build()).build();
       try (ResponseBody responseBody = executeRequest(request)) {
         List<ExtendableProductOffering> extendableProductOfferings =
             objectMapper.readValue(responseBody.bytes(), new TypeReference<>() {});
-        List<Policy> policies =
-            extendableProductOfferings.stream()
-                .map(ExtendableProductOffering::getExtendableProductOfferingTerm)
-                .filter(Objects::nonNull)
-                .flatMap(List::stream)
-                .filter(
-                    extendableProductOfferingTerm ->
-                        Optional.ofNullable(extendableProductOfferingTerm.getName())
-                            .filter(n -> n.equals(POT_NAME_CONTRACT_DEFINITION))
-                            .isPresent())
-                .map(epot -> getFromOfferingTerm(epot, policyId).orElse(null))
-                .filter(Objects::nonNull)
-                .toList();
-        if (policies.size() > 1) {
-          throw new BadGatewayException("The policies need to be unique.");
-        }
-        if (!policies.isEmpty()) {
-          optionalPolicy = Optional.of(policies.getFirst());
-        }
-        posAvailable = extendableProductOfferings.size() == 100;
-        offset += 100;
+        extendableProductOfferings.forEach(
+            offering ->
+                getFromOffering(offering, policyId)
+                    .ifPresent(policy -> matches.add(new OfferingWithPolicy(offering, policy))));
+        posAvailable = extendableProductOfferings.size() == POLICY_SCAN_PAGE_SIZE;
+        offset += POLICY_SCAN_PAGE_SIZE;
       } catch (IOException e) {
         monitor.warning("Was not able to get the policy by id.", e);
         throw new BadGatewayException("Was not able to get the policy by id.");
       }
     }
-    return optionalPolicy;
+    if (matches.size() > 1) {
+      String matchContexts =
+          matches.stream()
+              .map(
+                  m ->
+                      String.format(
+                          "%s %s", m.offering().getId(), m.offering().getParticipantContextIds()))
+              .collect(Collectors.joining(", "));
+      throw new DuplicateIdException(
+          String.format(
+              "Policy %s is used by multiple offerings (participant contexts: %s). Policy ids need"
+                  + " to be unique.",
+              policyId, matchContexts));
+    }
+    return matches.stream()
+        .findFirst()
+        .map(m -> new OfferingPolicy(m.policy(), m.offering().getParticipantContextIds()));
+  }
+
+  private record OfferingWithPolicy(ExtendableProductOffering offering, Policy policy) {}
+
+  private Optional<Policy> getFromOffering(ExtendableProductOffering offering, String policyId) {
+    List<Policy> policies =
+        Optional.ofNullable(offering.getExtendableProductOfferingTerm()).orElse(List.of()).stream()
+            .filter(
+                extendableProductOfferingTerm ->
+                    Optional.ofNullable(extendableProductOfferingTerm.getName())
+                        .filter(n -> n.equals(POT_NAME_CONTRACT_DEFINITION))
+                        .isPresent())
+            .map(epot -> getFromOfferingTerm(epot, policyId).orElse(null))
+            .filter(Objects::nonNull)
+            .toList();
+    if (policies.size() > 1) {
+      throw new BadGatewayException(
+          String.format("Offering %s holds policy %s more than once.", offering.getId(), policyId));
+    }
+    return policies.stream().findFirst();
   }
 
   private Optional<Policy> getFromOfferingTerm(
@@ -249,7 +276,7 @@ public class ProductCatalogApiClient extends ApiClient {
             extendableProductOfferings.stream()
                 .map(o -> String.format("%s %s", o.getId(), o.getParticipantContextIds()))
                 .collect(Collectors.joining(", "));
-        throw new BadGatewayException(
+        throw new DuplicateIdException(
             String.format(
                 "Multiple offerings for id %s exist (participant contexts: %s). External Ids need"
                     + " to be unique.",

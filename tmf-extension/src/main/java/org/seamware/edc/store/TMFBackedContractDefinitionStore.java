@@ -23,18 +23,20 @@ import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.StoreResult;
 import org.jetbrains.annotations.NotNull;
-import org.seamware.edc.tmf.ProductCatalogApiClient;
+import org.seamware.edc.tmf.DuplicateIdException;
 
 public class TMFBackedContractDefinitionStore implements ContractDefinitionStore {
 
   private final Monitor monitor;
-  private final ProductCatalogApiClient productCatalogApi;
+  private final ContractDefinitionIdResolver contractDefinitionIdResolver;
   private final TMFEdcMapper tmfEdcMapper;
 
   public TMFBackedContractDefinitionStore(
-      Monitor monitor, ProductCatalogApiClient productCatalogApi, TMFEdcMapper tmfEdcMapper) {
+      Monitor monitor,
+      ContractDefinitionIdResolver contractDefinitionIdResolver,
+      TMFEdcMapper tmfEdcMapper) {
     this.monitor = monitor;
-    this.productCatalogApi = productCatalogApi;
+    this.contractDefinitionIdResolver = contractDefinitionIdResolver;
     this.tmfEdcMapper = tmfEdcMapper;
   }
 
@@ -47,10 +49,17 @@ public class TMFBackedContractDefinitionStore implements ContractDefinitionStore
   @Override
   public ContractDefinition findById(String s) {
     try {
-      return productCatalogApi
-          .getProductOfferingByExternalId(s)
-          .flatMap(tmfEdcMapper::fromProductOffer)
+      return contractDefinitionIdResolver
+          .resolve(s)
+          .flatMap(
+              resolved ->
+                  tmfEdcMapper.fromProductOffer(
+                      resolved.offering(), resolved.participantContextId()))
           .orElse(null);
+    } catch (DuplicateIdException e) {
+      // hides the offering in every dataspace until the data is fixed
+      monitor.severe(String.format("Contract definition %s cannot be resolved.", s), e);
+      return null;
     } catch (RuntimeException e) {
       monitor.warning("Was not able to successfully resolve the product offer.", e);
       return null;

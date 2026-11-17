@@ -71,7 +71,8 @@ public class TMFBackedAssetIndexTest {
   public void testFindById_success() {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestSpec()));
-    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()))).thenReturn(Optional.of(TEST_ASSET));
+    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()), any()))
+        .thenReturn(Optional.of(TEST_ASSET));
 
     assertEquals(
         TEST_ASSET,
@@ -103,7 +104,7 @@ public class TMFBackedAssetIndexTest {
   public void testFindById_mapping_error() {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestSpec()));
-    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec())))
+    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()), any()))
         .thenThrow(new RuntimeException("Something bad happened"));
 
     assertNull(
@@ -115,7 +116,7 @@ public class TMFBackedAssetIndexTest {
   public void testFindById_unmappable_spec() {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestSpec()));
-    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()))).thenReturn(Optional.empty());
+    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()), any())).thenReturn(Optional.empty());
 
     assertNull(
         tmfBackedAssetIndex.findById(TEST_ID),
@@ -166,7 +167,7 @@ public class TMFBackedAssetIndexTest {
             });
     testSpecs.forEach(
         ah ->
-            when(tmfEdcMapper.assetFromProductSpec(eq(ah.productSpecification())))
+            when(tmfEdcMapper.assetFromProductSpec(eq(ah.productSpecification()), any()))
                 .thenReturn(Optional.of(ah.asset())));
 
     List<Criterion> criteria = testPredicates.stream().map(CriterionHolder::criterion).toList();
@@ -189,7 +190,7 @@ public class TMFBackedAssetIndexTest {
     List<AssetHolder> assetHolders = getTestAssets("pre", "v1", 50);
     when(productCatalogApiClient.getProductSpecifications(anyInt(), anyInt()))
         .thenReturn(assetHolders.stream().map(AssetHolder::productSpecification).toList());
-    when(tmfEdcMapper.assetFromProductSpec(any()))
+    when(tmfEdcMapper.assetFromProductSpec(any(), any()))
         .thenThrow(new RuntimeException("Something failed."));
     assertEquals(0, tmfBackedAssetIndex.countAssets(List.of()), "0 should be returned on errors.");
   }
@@ -198,7 +199,8 @@ public class TMFBackedAssetIndexTest {
   public void testResolveForAsset_success() {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestSpec()));
-    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()))).thenReturn(Optional.of(TEST_ASSET));
+    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()), any()))
+        .thenReturn(Optional.of(TEST_ASSET));
     assertEquals(
         TEST_DATA_ADDRESS,
         tmfBackedAssetIndex.resolveForAsset(TEST_ID),
@@ -229,7 +231,7 @@ public class TMFBackedAssetIndexTest {
   public void testResolveForAsset_mapping_error() {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestSpec()));
-    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec())))
+    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()), any()))
         .thenThrow(new RuntimeException("Something bad happened"));
 
     assertNull(
@@ -241,7 +243,7 @@ public class TMFBackedAssetIndexTest {
   public void testResolveForAsset_unmappable_spec() {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestSpec()));
-    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()))).thenReturn(Optional.empty());
+    when(tmfEdcMapper.assetFromProductSpec(eq(getTestSpec()), any())).thenReturn(Optional.empty());
 
     assertNull(
         tmfBackedAssetIndex.resolveForAsset(TEST_ID),

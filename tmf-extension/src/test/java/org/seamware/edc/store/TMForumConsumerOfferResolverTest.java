@@ -32,26 +32,28 @@ import org.eclipse.edc.spi.result.ServiceResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.seamware.edc.domain.ExtendableProductOffering;
-import org.seamware.edc.tmf.ProductCatalogApiClient;
+import org.seamware.edc.store.ContractDefinitionIdResolver.ResolvedOffering;
 
 public class TMForumConsumerOfferResolverTest {
 
   private static final String TEST_OFFER_ID = "test-def:test-asset:123";
+  private static final String TEST_DEFINITION_ID = "test-def";
+  private static final String TEST_CONTEXT_ID = "test-context";
   private static final ContractOfferId TEST_CONTRACT_OFFER_ID =
-      ContractOfferId.create("test-def", "test-asset");
+      ContractOfferId.create(TEST_DEFINITION_ID, "test-asset");
 
-  private ProductCatalogApiClient productCatalogApiClient;
+  private ContractDefinitionIdResolver contractDefinitionIdResolver;
   private TMFEdcMapper tmfEdcMapper;
   private TMForumConsumerOfferResolver tmForumConsumerOfferResolver;
 
   @BeforeEach
   public void setup() {
-    productCatalogApiClient = mock(ProductCatalogApiClient.class);
+    contractDefinitionIdResolver = mock(ContractDefinitionIdResolver.class);
     tmfEdcMapper = mock(TMFEdcMapper.class);
 
     tmForumConsumerOfferResolver =
         new TMForumConsumerOfferResolver(
-            mock(Monitor.class), productCatalogApiClient, tmfEdcMapper);
+            mock(Monitor.class), contractDefinitionIdResolver, tmfEdcMapper);
   }
 
   @Test
@@ -64,9 +66,9 @@ public class TMForumConsumerOfferResolverTest {
             .accessPolicy(testPolicy())
             .contractDefinition(testContractDefinition())
             .build();
-    when(productCatalogApiClient.getProductOfferingByExternalId(eq(TEST_OFFER_ID)))
-        .thenReturn(Optional.of(testOffer));
-    when(tmfEdcMapper.consumerOfferFromProductOffering(eq(testOffer), any()))
+    when(contractDefinitionIdResolver.resolve(TEST_DEFINITION_ID))
+        .thenReturn(Optional.of(new ResolvedOffering(testOffer, TEST_CONTEXT_ID)));
+    when(tmfEdcMapper.consumerOfferFromProductOffering(eq(testOffer), any(), eq(TEST_CONTEXT_ID)))
         .thenReturn(Optional.of(expectedOffer));
 
     ServiceResult<ValidatableConsumerOffer> serviceResult =
@@ -78,8 +80,7 @@ public class TMForumConsumerOfferResolverTest {
 
   @Test
   public void testResolveOffer_no_such_offer() {
-    when(productCatalogApiClient.getProductOfferingByExternalId(eq(TEST_OFFER_ID)))
-        .thenReturn(Optional.empty());
+    when(contractDefinitionIdResolver.resolve(TEST_DEFINITION_ID)).thenReturn(Optional.empty());
     assertTrue(
         tmForumConsumerOfferResolver.resolveOffer(TEST_OFFER_ID).failed(),
         "If no such offer exists, the result should be a failure.");
@@ -87,9 +88,9 @@ public class TMForumConsumerOfferResolverTest {
 
   @Test
   public void testResolveOffer_no_offer_from_tmf() {
-    when(productCatalogApiClient.getProductOfferingByExternalId(eq(TEST_OFFER_ID)))
-        .thenReturn(Optional.of(getTestOffer()));
-    when(tmfEdcMapper.consumerOfferFromProductOffering(eq(getTestOffer()), any()))
+    when(contractDefinitionIdResolver.resolve(TEST_DEFINITION_ID))
+        .thenReturn(Optional.of(new ResolvedOffering(getTestOffer(), TEST_CONTEXT_ID)));
+    when(tmfEdcMapper.consumerOfferFromProductOffering(eq(getTestOffer()), any(), any()))
         .thenReturn(Optional.empty());
     assertTrue(
         tmForumConsumerOfferResolver.resolveOffer(TEST_OFFER_ID).failed(),
@@ -98,7 +99,7 @@ public class TMForumConsumerOfferResolverTest {
 
   @Test
   public void testResolveOffer_retrieval_error() {
-    when(productCatalogApiClient.getProductOfferingByExternalId(TEST_OFFER_ID))
+    when(contractDefinitionIdResolver.resolve(TEST_DEFINITION_ID))
         .thenThrow(new RuntimeException("Something bad happened."));
     assertTrue(
         tmForumConsumerOfferResolver.resolveOffer(TEST_OFFER_ID).failed(),
@@ -107,9 +108,9 @@ public class TMForumConsumerOfferResolverTest {
 
   @Test
   public void testResolveOffer_mapping_error() {
-    when(productCatalogApiClient.getProductOfferingByExternalId(TEST_OFFER_ID))
-        .thenReturn(Optional.of(getTestOffer()));
-    when(tmfEdcMapper.consumerOfferFromProductOffering(eq(getTestOffer()), any()))
+    when(contractDefinitionIdResolver.resolve(TEST_DEFINITION_ID))
+        .thenReturn(Optional.of(new ResolvedOffering(getTestOffer(), TEST_CONTEXT_ID)));
+    when(tmfEdcMapper.consumerOfferFromProductOffering(eq(getTestOffer()), any(), any()))
         .thenThrow(new RuntimeException("Something bad happened."));
     assertTrue(
         tmForumConsumerOfferResolver.resolveOffer(TEST_OFFER_ID).failed(),
