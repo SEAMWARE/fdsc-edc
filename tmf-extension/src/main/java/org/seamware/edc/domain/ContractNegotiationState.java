@@ -114,6 +114,20 @@ public class ContractNegotiationState {
     return this;
   }
 
+  /** Field-by-field copy, so a partial PATCH of the state cannot drop a field it did not touch. */
+  public ContractNegotiationState copy() {
+    return new ContractNegotiationState()
+        .setPending(isPending)
+        .setLeased(isLeased)
+        .setLeasedBy(leasedBy)
+        .setLeaseExpiry(leaseExpiry)
+        .setControlplane(controlplane)
+        .setState(state)
+        .setCorrelationId(correlationId)
+        .setCounterPartyAddress(counterPartyAddress)
+        .setProtocol(protocol);
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
