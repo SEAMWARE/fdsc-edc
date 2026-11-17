@@ -260,8 +260,9 @@ unchanged.
   - `TMFBackedContractDefinitionStore`:
     - `findById` stays context-less (decision 4): it resolves a plain or
       context-qualified id through `ContextQualifiedId` and maps it with the
-      context from the qualifier (or the offering's single context). Its
-      `catch (RuntimeException)`
+      context from the qualifier (or the offering's single context), applying
+      decision 4's rules for plain ids of multi-context offerings and for
+      ambiguous ids. Its `catch (RuntimeException)`
       keeps returning `null` as the interface requires, but logs a
       cross-context duplicate with `monitor.severe` instead of `warning`, since
       it hides the offering in every dataspace until the data is fixed.
@@ -333,12 +334,16 @@ unchanged.
     (A, B, C): the offering appears exactly where the decision 4 table says,
     with offer id `<externalId>@<ctx>`; the contract-definition and policy
     stores resolve that qualified id to a definition stamped with `<ctx>`;
-    an id qualified with a context the offering does not serve, or a
-    qualified id for a single-context offering, resolves to `null`;
+    an id qualified with a context the offering does not serve, a
+    qualified id for a single-context offering, or the **plain** id of a
+    multi-context or `*` offering resolves to `null`;
   - a single-context and an untagged offering keep their plain ids (the
     classic offer ids are unchanged);
   - an offering `externalId` that itself contains `@` still resolves as a plain
     id;
+  - an ambiguous id (a single-context offering `foo@A` next to a
+    multi-context offering `foo` serving A) resolves to `null` in both stores
+    and is logged severe;
   - a product offered only in A is missing from B's catalog, and `getDataset`
     in B returns not-found.
 - `TMFConfig` default-context resolution, parameterized over which of
@@ -686,7 +691,8 @@ Acceptance:
     `participantContextIds` lists the dataspaces (or `*`), or one offering per
     dataspace when the policies differ; untagged offerings stay in the default
     context only; offering and policy ids are globally unique, and
-    multi-dataspace offerings appear under `<id>@<ctx>` (decision 4);
+    multi-dataspace offerings appear under `<id>@<ctx>` (decision 4), so no
+    other offering or policy id may equal `<multi-context id>@<ctx>`;
   - DCP scopes: upstream `edc.iam.dcp.scopes.*` for scopes on every request of
     a profile, `dcp.profiles.*.scopes.*` only for per-request-type scopes, and
     never the same scope in both (Step 6);

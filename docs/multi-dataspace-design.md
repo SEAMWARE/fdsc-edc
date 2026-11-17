@@ -191,13 +191,26 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
        with X. One shared helper `ContextQualifiedId` (in `store/`, separator
        constant `CONTEXT_QUALIFIER_SEPARATOR = "@"`) builds and parses these ids;
      - parsing tries the full id as a plain `externalId` first (one lookup, as
-       today). Only if that finds nothing and the id contains the separator is
-       it split at the **last** separator. The qualified form resolves only if
-       the prefix names a multi-context offering whose `participantContextIds`
-       contains X or `*`; otherwise the lookup returns nothing. Each
-       (offering, context) pair thus has exactly one id, and an id qualified
-       with X can only produce a definition stamped X, which line 247 rejects
-       in any other context;
+       today). A plain hit resolves only if that offering serves exactly one
+       context; a plain id that names a multi-context or `*` offering returns
+       nothing, because it carries no context to stamp and the catalog never
+       issues it. Only if the plain lookup finds nothing and the id contains
+       the separator is it split at the **last** separator. The qualified form
+       resolves only if the prefix names a multi-context offering whose
+       `participantContextIds` contains X or `*`; otherwise the lookup returns
+       nothing. Policy ids follow the same rules;
+     - **ambiguous ids are a data error.** A single-context offering whose
+       `externalId` (or policy id) is literally `foo@X` collides with the
+       qualified id of a multi-context offering `foo` that serves X. When a
+       plain hit contains the separator, the lookup also checks the split form;
+       if both resolve, it logs `monitor.severe` naming both offerings and
+       returns nothing, the same outcome as a cross-context duplicate. The
+       catalog may still list the colliding offer, but negotiating it fails
+       until the data is fixed; Step 10's operator guide states the
+       restriction. With these rules each (offering, context) pair has exactly
+       one id and every id resolves to at most one definition, and an id
+       qualified with X can only produce a definition stamped X, which line 247
+       rejects in any other context;
      - offering `externalId`s and policy ids stay globally unique. By-id
        lookups (`getProductOfferingByExternalId`, `getByPolicyId`) stay
        context-less. A duplicate is a data error, raised by the existing
@@ -380,7 +393,8 @@ upstream change, and `:` is **not** restricted in context ids or offering
 - **The real constraint is the separator.** `ContextQualifiedId` splits at the
   **last** `@`, so a context id must not contain `@`: `CD@X@Y` for context
   `X@Y` would parse as offering `CD@X` in context `Y`. An `externalId` may
-  contain `@`, because the full id is tried as a plain id first. The bootstrap
+  contain `@`, because the full id is tried as a plain id first, unless it
+  equals another offering's qualified id (decision 4, ambiguous ids). The bootstrap
   (Step 7) rejects context ids containing `@`. A classic runtime has no
   bootstrap, so nothing enforces it there; `edc.participant.context.id` is
   operator-chosen and the TCK value contains no `@`. Step 3 needs no
