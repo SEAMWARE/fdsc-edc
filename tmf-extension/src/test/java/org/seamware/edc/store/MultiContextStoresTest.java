@@ -25,7 +25,6 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -169,6 +168,13 @@ public class MultiContextStoresTest extends AbstractStoreTest {
     String qualifiedC = ContextQualifiedId.qualify(OFFER_ID, CONTEXT_C);
     return Stream.of(
         Arguments.of("legacy, plain id", null, OFFER_ID, DEFAULT_CONTEXT),
+        Arguments.of("legacy, qualified A", null, qualifiedA, CONTEXT_A),
+        Arguments.of("legacy, qualified C", null, qualifiedC, CONTEXT_C),
+        Arguments.of(
+            "legacy, qualified default",
+            null,
+            ContextQualifiedId.qualify(OFFER_ID, DEFAULT_CONTEXT),
+            null),
         Arguments.of("context A, plain id", List.of(CONTEXT_A), OFFER_ID, CONTEXT_A),
         Arguments.of("context B, plain id", List.of(CONTEXT_B), OFFER_ID, CONTEXT_B),
         Arguments.of("single context, qualified id", List.of(CONTEXT_A), qualifiedA, null),
@@ -365,23 +371,26 @@ public class MultiContextStoresTest extends AbstractStoreTest {
         });
   }
 
-  @Test
-  public void testCatalog_defaultContextServesLegacyOfferingsWithoutAServerSideFilter() {
-    givenSpecs();
-    offerings.add(offering(OFFER_ID, null));
-    offerings.add(offering(OFFER_ID_A, List.of(CONTEXT_A)));
-
-    assertOffers(DEFAULT_CONTEXT, Optional.of(OFFER_ID));
-    verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), eq(DEFAULT_CONTEXT));
+  private static Stream<Arguments> legacyOfferingInEveryContext() {
+    return Stream.of(
+        Arguments.of(DEFAULT_CONTEXT, OFFER_ID),
+        Arguments.of(CONTEXT_A, ContextQualifiedId.qualify(OFFER_ID, CONTEXT_A)),
+        Arguments.of(CONTEXT_B, ContextQualifiedId.qualify(OFFER_ID, CONTEXT_B)));
   }
 
-  @Test
-  public void testCatalog_namedContextIsFilteredServerSide() {
+  @ParameterizedTest(name = "requested in {0}")
+  @MethodSource("legacyOfferingInEveryContext")
+  public void testCatalog_untaggedOfferingIsOfferedInEveryContext(
+      String context, String expectedDefinitionId) {
     givenSpecs();
-    offerings.add(offering(OFFER_ID_A, List.of(CONTEXT_A)));
+    offerings.add(offering(OFFER_ID, null));
 
-    assertOffers(CONTEXT_A, Optional.of(OFFER_ID_A));
-    verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), isNull());
+    assertOffers(context, Optional.of(expectedDefinitionId));
+    ContractDefinition definition = contractDefinitionStore.findById(expectedDefinitionId);
+    assertNotNull(definition, "The issued offer id must resolve in the store.");
+    assertEquals(context, definition.getParticipantContextId());
+    // TMForum cannot express "tagged with the context or untagged"
+    verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), any());
   }
 
   /** Asserts the catalog and the dataset lookup in the context show exactly the expected offer. */
@@ -429,22 +438,10 @@ public class MultiContextStoresTest extends AbstractStoreTest {
 
   // ---- FIXTURES ----
 
-  /** Emulates TMForum's {@code participantContextIds} filter: the context or {@code *}. */
+  /** TMForum lists every offering; the catalog filters by context in memory. */
   private void givenTMForumServesOfferings() {
-    when(productCatalogApi.getProductOfferings(anyInt(), anyInt(), any()))
-        .thenAnswer(
-            invocation -> {
-              String filter = invocation.getArgument(2);
-              return offerings.stream()
-                  .filter(
-                      o ->
-                          filter == null
-                              || (o.getParticipantContextIds() != null
-                                  && (o.getParticipantContextIds().contains(filter)
-                                      || o.getParticipantContextIds()
-                                          .contains(ALL_PARTICIPANT_CONTEXTS))))
-                  .toList();
-            });
+    when(productCatalogApi.getProductOfferings(anyInt(), anyInt()))
+        .thenAnswer(invocation -> List.copyOf(offerings));
     when(productCatalogApi.getProductOfferingByExternalId(anyString()))
         .thenAnswer(
             invocation ->

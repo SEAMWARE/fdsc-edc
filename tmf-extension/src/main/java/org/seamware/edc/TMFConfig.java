@@ -141,8 +141,9 @@ public class TMFConfig {
     if (suppliedContextId == null) {
       monitor.warning(
           String.format(
-              "Neither %s nor a single participant context is available. TMForum entities without"
-                  + " a participant context stay invisible.",
+              "Neither %s nor a single participant context is available. Quotes and agreements"
+                  + " without a participant context stay invisible; offerings without one are"
+                  + " offered under context-qualified ids only.",
               DEFAULT_PARTICIPANT_CONTEXT_ID_SETTING));
     }
     return suppliedContextId;

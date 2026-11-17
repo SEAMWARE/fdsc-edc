@@ -85,6 +85,13 @@ public class TMFBackedPolicyDefinitionStoreTest {
     List<String> all = List.of(TMFConfig.ALL_PARTICIPANT_CONTEXTS);
     return Stream.of(
         Arguments.of("legacy, plain id", null, TEST_ID, TEST_ID, DEFAULT_CONTEXT),
+        Arguments.of("legacy, qualified A", null, qualifiedA, qualifiedA, CONTEXT_A),
+        Arguments.of(
+            "legacy, qualified default",
+            null,
+            ContextQualifiedId.qualify(TEST_ID, DEFAULT_CONTEXT),
+            null,
+            null),
         Arguments.of("context A, plain id", List.of(CONTEXT_A), TEST_ID, TEST_ID, CONTEXT_A),
         Arguments.of("context B, plain id", List.of(CONTEXT_B), TEST_ID, TEST_ID, CONTEXT_B),
         Arguments.of("single context, qualified id", List.of(CONTEXT_A), qualifiedA, null, null),

@@ -769,6 +769,40 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         defaultContext);
   }
 
+  private static Stream<Arguments> untaggedOfferingIds() {
+    String qualifiedA = ContextQualifiedId.qualify(TEST_OFFER_ID, CONTEXT_A);
+    String qualifiedB = ContextQualifiedId.qualify(TEST_OFFER_ID, CONTEXT_B);
+    return Stream.of(
+        Arguments.of("default A, requested in A", CONTEXT_A, CONTEXT_A, TEST_OFFER_ID),
+        Arguments.of("default A, requested in B", CONTEXT_A, CONTEXT_B, qualifiedB),
+        Arguments.of("no default, requested in A", null, CONTEXT_A, qualifiedA),
+        Arguments.of("no default, requested in B", null, CONTEXT_B, qualifiedB));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("untaggedOfferingIds")
+  public void untaggedOffering_isOfferedInEveryContextAndItsIdResolvesBack(
+      String name, String defaultContext, String requestingContext, String expectedId) {
+    TMFEdcMapper mapper = mapperWithDefault(defaultContext);
+    ExtendableProductOffering offering = new ExtendableProductOffering();
+    offering.setExternalId(TEST_OFFER_ID);
+
+    assertEquals(Optional.of(expectedId), mapper.contractDefinitionId(offering, requestingContext));
+    String qualifier =
+        ContextQualifiedId.parse(expectedId)
+            .map(ContextQualifiedId::participantContextId)
+            .orElse(null);
+    assertEquals(
+        Optional.of(requestingContext),
+        mapper.contextForId(null, TEST_OFFER_ID.equals(expectedId) ? null : qualifier),
+        "The issued id must resolve back to the requesting context.");
+  }
+
+  @Test
+  public void untaggedOffering_plainIdIsUnresolvableWithoutADefaultContext() {
+    assertEquals(Optional.empty(), mapperWithDefault(null).contextForId(null, null));
+  }
+
   // ---- FROM CONTRACT OFFERS ----
 
   @ParameterizedTest

@@ -139,6 +139,9 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
      `participantContextId=X` for Quote, Agreement and Usage, and
      `participantContextIds=X,*` (array contains X or `*`) for the
      ProductOffering. `participantContextId=` matches no offering property.
+     The catalog does not use the offering filter, because it would drop the
+     untagged offerings that serve every context (decision 4); see "query
+     forms" below.
 3. **Legacy data with no context id** belongs to the *default context*.
    - The new setting is `tmfExtension.defaultParticipantContextId`.
    - In classic mode it defaults to the `SingleParticipantContextSupplier`
@@ -156,14 +159,19 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
 
    | `participantContextIds` | Offered in |
    |---|---|
-   | absent or empty | the default context only (decision 3; legacy data) |
+   | absent or empty | every context (legacy data; see below) |
    | `["A"]` | dataspace A only |
    | `["A", "B"]` | dataspaces A and B |
    | `["*"]` | every context, including ones added later |
 
-   Absent deliberately does **not** mean "all": an existing single-dataspace
-   deployment that adds a second dataspace must not expose its existing offers
-   there without an explicit tag. An offer that needs *different* policies per
+   Absent means "all" for backward compatibility (maintainer decision, PR #10
+   review): existing offerings stay offered when a dataspace is added. To keep
+   an existing offer out of a new dataspace, tag it with the dataspaces it is
+   meant for. Unlike `*`, an untagged offering keeps its plain id in the
+   default context (so classic and TCK offer ids are unchanged) and is
+   qualified only in the other contexts. Decision 3 still applies to Quotes,
+   Agreements and Usage: each ran in one dataspace, so an untagged one belongs
+   to the default context. An offer that needs *different* policies per
    dataspace is modelled as one offering per dataspace, all referencing the same
    ProductSpecification. The wildcard is the named constant
    `ALL_PARTICIPANT_CONTEXTS = "*"`.
@@ -181,11 +189,12 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
      *does* compare the definition's context with the negotiation's
      (`ContractNegotiationProtocolServiceImpl:247`). A by-id lookup therefore
      has to learn the context from the id itself:
-     - an offering that serves **exactly one** context (absent, or one id) keeps
-       its plain `externalId` as contract definition id and its plain policy
-       ids, stamped with that context. Classic and TCK data are therefore
-       unchanged;
-     - an offering that serves **several or all** contexts is exposed in
+     - an offering that serves **exactly one** context (one id) keeps its
+       plain `externalId` as contract definition id and its plain policy ids,
+       stamped with that context. An untagged offering does the same in the
+       default context. Classic and TCK data are therefore unchanged;
+     - an offering that serves **several or all** contexts, and an untagged
+       offering in any context other than the default, is exposed in
        context X under the *context-qualified* contract definition id
        `<offeringExternalId>@X`, and its policies under `<policyId>@X`, stamped
        with X. One shared helper `ContextQualifiedId` (in `store/`, separator
@@ -329,7 +338,7 @@ Further behaviour that later steps must respect:
 |---|---|---|
 | Quote, Agreement in non-default context X | `?participantContextId=X` | server-side, so paging stays server-side |
 | Usage in non-default context X | `?participantContextId=X` | server-side. Measured on create and list only (in the review round): nothing in the runtime writes or lists Usage today (no Usage client; `TMFEdcMapper.toCreate`/`toUpdate` for Usage have no callers), so no store depends on it yet |
-| Offerings in non-default context X | `?participantContextIds=X,*` | server-side, so paging stays server-side |
+| Offerings in any context X | unfiltered | in memory: untagged offerings serve every context, and TMForum cannot express "contains X or `*` OR absent". `?participantContextIds=X,*` stays available in `ProductCatalogApiClient` but the catalog does not use it |
 | Any entity in the **default** context | unfiltered | in memory: map (absent → default), then filter |
 | By-id lookups (`externalId`, policy id, quote id) | unchanged, context-less | the mapped entity carries its context |
 
@@ -343,10 +352,10 @@ Further behaviour that later steps must respect:
 **Catalog (`TMForumBackedCatalogProtocolService.getCatalog`):**
 - specs stay shared and keep their server-side `QuerySpec` paging;
 - offerings, fetched today with `getProductOfferings(0, MAX_OFFERINGS = 100)`,
-  use `participantContextIds=X,*` for a non-default context;
-- for the default context they are fetched unfiltered and filtered in memory.
+  are fetched unfiltered in every context and filtered in memory, because
+  untagged offerings serve every context.
   The existing 100-offering cap then applies **before** the context filter, so
-  Step 3 must page offerings to exhaustion on that path instead of relying on
+  Step 3 pages offerings to exhaustion instead of relying on
   one `MAX_OFFERINGS` call;
 - an offering tagged with the default context explicitly
   (`participantContextIds` contains the default, or `*`) is handled by the

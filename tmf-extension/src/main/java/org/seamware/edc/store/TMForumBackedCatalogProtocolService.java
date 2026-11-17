@@ -19,7 +19,6 @@ package org.seamware.edc.store;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Catalog;
 import org.eclipse.edc.connector.controlplane.catalog.spi.CatalogRequestMessage;
@@ -164,19 +163,15 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
   }
 
   /**
-   * The offerings made in the context. The default context is fetched unfiltered and filtered in
-   * memory: TMForum cannot express "tagged with it or untagged" (decision 3).
+   * The offerings made in the context. Fetched unfiltered and filtered in memory: untagged
+   * offerings serve every context, and TMForum cannot express "tagged with it or untagged".
    */
   private List<ExtendableProductOffering> offeringsServing(String participantContextId) {
-    String serverSideFilter =
-        Objects.equals(participantContextId, tmfEdcMapper.getDefaultParticipantContextId())
-            ? null
-            : participantContextId;
     List<ExtendableProductOffering> offerings = new ArrayList<>();
     int offset = 0;
     List<ExtendableProductOffering> page;
     do {
-      page = productCatalogApi.getProductOfferings(offset, OFFERINGS_PAGE_SIZE, serverSideFilter);
+      page = productCatalogApi.getProductOfferings(offset, OFFERINGS_PAGE_SIZE);
       page.stream()
           .filter(
               o -> tmfEdcMapper.servesContext(o.getParticipantContextIds(), participantContextId))
