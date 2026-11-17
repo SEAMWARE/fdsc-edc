@@ -26,6 +26,7 @@ import okhttp3.mockwebserver.RecordedRequest;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.edc.domain.ExtendableAgreementCreateVO;
 import org.seamware.edc.domain.ExtendableAgreementUpdateVO;
@@ -90,6 +91,25 @@ public class AgreementApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals("/agreement?offset=0&limit=5", recordedRequest.getPath());
+  }
+
+  @ParameterizedTest(name = "context {0}")
+  @CsvSource(
+      value = {"did:web:dataspace-a; did:web:dataspace-a", "NULL; NULL"},
+      delimiter = ';',
+      nullValues = "NULL")
+  public void testGetAgreements_participantContext(String context, String expectedFilter)
+      throws Exception {
+    List<ExtendableAgreementVO> testAgreements = getValidAgreements(2);
+    mockResponse(200, testAgreements);
+
+    assertEquals(testAgreements, agreementApiClient.getAgreements(0, 5, context));
+
+    RecordedRequest recordedRequest = mockWebServer.takeRequest();
+    assertEquals("/agreement", recordedRequest.getRequestUrl().encodedPath());
+    assertEquals("5", recordedRequest.getRequestUrl().queryParameter("limit"));
+    assertEquals(
+        expectedFilter, recordedRequest.getRequestUrl().queryParameter("participantContextId"));
   }
 
   @Test

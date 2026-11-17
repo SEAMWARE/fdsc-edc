@@ -33,6 +33,7 @@ import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.edc.domain.ExtendableProductOffering;
@@ -68,6 +69,25 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals("/productOffering?offset=0&limit=5", recordedRequest.getPath());
+  }
+
+  @ParameterizedTest(name = "context {0}")
+  @CsvSource(
+      value = {"did:web:dataspace-a; did:web:dataspace-a,*", "NULL; NULL"},
+      delimiter = ';',
+      nullValues = "NULL")
+  public void testGetProductOfferings_participantContext(String context, String expectedFilter)
+      throws Exception {
+    List<ExtendableProductOffering> testOfferings = getOfferings(2);
+    mockResponse(200, testOfferings);
+
+    assertEquals(testOfferings, productCatalogApiClient.getProductOfferings(0, 5, context));
+
+    RecordedRequest recordedRequest = mockWebServer.takeRequest();
+    assertEquals("/productOffering", recordedRequest.getRequestUrl().encodedPath());
+    assertEquals("5", recordedRequest.getRequestUrl().queryParameter("limit"));
+    assertEquals(
+        expectedFilter, recordedRequest.getRequestUrl().queryParameter("participantContextIds"));
   }
 
   @Test
@@ -390,6 +410,22 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
         BadGatewayException.class,
         () -> productCatalogApiClient.getProductOfferingByExternalId(TEST_ASSET_ID),
         "If the server returns something invalid, a BadGateWay should be thrown.");
+  }
+
+  @Test
+  public void testGetProductOfferingByExternalId_duplicateNamesContexts() throws Exception {
+    List<ExtendableProductOffering> offerings = getOfferings(2);
+    offerings.get(0).setParticipantContextIds(List.of("did:web:dataspace-a"));
+    offerings.get(1).setParticipantContextIds(List.of("did:web:dataspace-b"));
+    mockResponse(200, offerings);
+
+    BadGatewayException exception =
+        assertThrows(
+            BadGatewayException.class,
+            () -> productCatalogApiClient.getProductOfferingByExternalId(TEST_ASSET_ID));
+
+    assertTrue(exception.getMessage().contains("did:web:dataspace-a"));
+    assertTrue(exception.getMessage().contains("did:web:dataspace-b"));
   }
 
   @Test

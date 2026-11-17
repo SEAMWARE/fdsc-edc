@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 import okhttp3.*;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
+import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.domain.ExtendableQuoteUpdateVO;
 import org.seamware.edc.domain.ExtendableQuoteVO;
 import org.seamware.tmforum.quote.model.QuoteCreateVO;
@@ -56,10 +57,19 @@ public class QuoteApiClient extends ApiClient {
 
   /** Returns a list of quotes, supporting pagination */
   public List<ExtendableQuoteVO> getQuotes(int offset, int limit) {
+    return getQuotes(offset, limit, null);
+  }
+
+  /** Returns the quotes tagged with the given context, paged. A null context applies no filter. */
+  public List<ExtendableQuoteVO> getQuotes(
+      int offset, int limit, @Nullable String participantContextId) {
     HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
     urlBuilder.addPathSegment(QUOTE_PATH);
     urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
     urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(limit));
+    if (participantContextId != null) {
+      urlBuilder.addQueryParameter(PARTICIPANT_CONTEXT_ID_QUERY_PARAM, participantContextId);
+    }
     //    only get quotes that we are responsible for
     //    urlBuilder.addQueryParameter(CONTROL_PLANE_ID_PARAM, controlPlaneId);
     Request request = new Request.Builder().url(urlBuilder.build()).build();

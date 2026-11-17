@@ -48,6 +48,11 @@ public class ExtendableProductOffering extends ProductOfferingVO {
   @JsonProperty("externalId")
   private String externalId;
 
+  // never serialized as [], TMForum stores that but reads it back as [{}]
+  @JsonProperty("participantContextIds")
+  @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  private List<String> participantContextIds;
+
   private ExtendableProductSpecificationRef productSpecification;
 
   private List<ExtendableProductOfferingTerm> productOfferingTerm = new ArrayList<>();
@@ -89,6 +94,19 @@ public class ExtendableProductOffering extends ProductOfferingVO {
     return this;
   }
 
+  /**
+   * Contexts (dataspaces) the offering is made in; the wildcard {@code "*"} means all of them. Null
+   * or empty means the default context only.
+   */
+  public List<String> getParticipantContextIds() {
+    return participantContextIds;
+  }
+
+  public ExtendableProductOffering setParticipantContextIds(List<String> participantContextIds) {
+    this.participantContextIds = participantContextIds;
+    return this;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -96,12 +114,18 @@ public class ExtendableProductOffering extends ProductOfferingVO {
     if (!super.equals(o)) return false;
     ExtendableProductOffering that = (ExtendableProductOffering) o;
     return Objects.equals(externalId, that.externalId)
+        && Objects.equals(participantContextIds, that.participantContextIds)
         && Objects.equals(productSpecification, that.productSpecification)
         && Objects.equals(productOfferingTerm, that.productOfferingTerm);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), externalId, productSpecification, productOfferingTerm);
+    return Objects.hash(
+        super.hashCode(),
+        externalId,
+        participantContextIds,
+        productSpecification,
+        productOfferingTerm);
   }
 }
