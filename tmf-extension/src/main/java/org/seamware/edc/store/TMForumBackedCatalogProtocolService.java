@@ -17,7 +17,9 @@
 package org.seamware.edc.store;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import org.eclipse.edc.connector.controlplane.catalog.spi.Catalog;
 import org.eclipse.edc.connector.controlplane.catalog.spi.CatalogRequestMessage;
@@ -76,11 +78,8 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
     this.objectMapper = objectMapper;
   }
 
-  /**
-   * Maximum number of ProductOfferings (contract definitions) to fetch. ProductOfferings represent
-   * contract definitions in the TMF model, and there are typically few of them.
-   */
-  private static final int MAX_OFFERINGS = 100;
+  /** Page size when fetching ProductOfferings (contract definitions). */
+  private static final int OFFERINGS_PAGE_SIZE = 100;
 
   @Override
   public @NotNull ServiceResult<Catalog> getCatalog(
@@ -103,11 +102,10 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
         productCatalogApi.getProductSpecifications(
             catalogRequestMessage.getQuerySpec().getOffset(),
             catalogRequestMessage.getQuerySpec().getLimit());
-    List<ExtendableProductOffering> offerings =
-        productCatalogApi.getProductOfferings(0, MAX_OFFERINGS);
-
+    String participantContextId = participantContext.getParticipantContextId();
     List<ExtendableProductOffering> accessibleOfferings =
-        tmfEdcMapper.filterByAccessPolicy(offerings, policyEngine, participantAgent);
+        tmfEdcMapper.filterByAccessPolicy(
+            offeringsServing(participantContextId), policyEngine, participantAgent);
 
     Catalog.Builder catalogBuilder = Catalog.Builder.newInstance();
     catalogBuilder.participantId(participantContext.getIdentity());
@@ -119,7 +117,10 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
         .forEach(catalogBuilder::dataService);
 
     specs.stream()
-        .map(spec -> tmfEdcMapper.datasetFromProductSpecification(spec, accessibleOfferings))
+        .map(
+            spec ->
+                tmfEdcMapper.datasetFromProductSpecification(
+                    spec, accessibleOfferings, participantContextId))
         .filter(Optional::isPresent)
         .map(Optional::get)
         .forEach(catalogBuilder::dataset);
@@ -151,15 +152,37 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
       return ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId));
     }
 
+    String participantContextId = participantContext.getParticipantContextId();
     List<ExtendableProductOffering> accessibleOfferings =
         tmfEdcMapper.filterByAccessPolicy(
-            productCatalogApi.getProductOfferings(0, MAX_OFFERINGS),
-            policyEngine,
-            validatedToken.getContent());
+            offeringsServing(participantContextId), policyEngine, validatedToken.getContent());
 
     return tmfEdcMapper
-        .datasetFromProductSpecification(spec.get(), accessibleOfferings)
+        .datasetFromProductSpecification(spec.get(), accessibleOfferings, participantContextId)
         .map(ServiceResult::success)
         .orElse(ServiceResult.notFound(String.format("No dataset with id %s exists.", datasetId)));
+  }
+
+  /**
+   * The offerings made in the context. The default context is fetched unfiltered and filtered in
+   * memory: TMForum cannot express "tagged with it or untagged" (decision 3).
+   */
+  private List<ExtendableProductOffering> offeringsServing(String participantContextId) {
+    String serverSideFilter =
+        Objects.equals(participantContextId, tmfEdcMapper.getDefaultParticipantContextId())
+            ? null
+            : participantContextId;
+    List<ExtendableProductOffering> offerings = new ArrayList<>();
+    int offset = 0;
+    List<ExtendableProductOffering> page;
+    do {
+      page = productCatalogApi.getProductOfferings(offset, OFFERINGS_PAGE_SIZE, serverSideFilter);
+      page.stream()
+          .filter(
+              o -> tmfEdcMapper.servesContext(o.getParticipantContextIds(), participantContextId))
+          .forEach(offerings::add);
+      offset += OFFERINGS_PAGE_SIZE;
+    } while (page.size() == OFFERINGS_PAGE_SIZE);
+    return offerings;
   }
 }

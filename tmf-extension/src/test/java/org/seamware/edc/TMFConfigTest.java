@@ -19,12 +19,21 @@ package org.seamware.edc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.stream.Stream;
+import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.configuration.Config;
 import org.eclipse.edc.spi.system.configuration.ConfigFactory;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -37,14 +46,59 @@ public class TMFConfigTest {
   // ServiceExtensionContext.ANONYMOUS_PARTICIPANT.
   private static final String ANONYMOUS_PARTICIPANT = "anonymous";
   private static final String TEST_PARTICIPANT_ID = "test-participant";
-  private static final String TEST_PARTICIPANT_CONTEXT_ID = "test-participant-context";
+  private static final String EXPLICIT_CONTEXT_ID = "explicit-context";
+  private static final String SUPPLIED_CONTEXT_ID = "supplied-context";
+
+  @ParameterizedTest(name = "explicit={0}, supplied={1}, edc.participant.id={2}")
+  @MethodSource("getDefaultContextCases")
+  public void testDefaultParticipantContextResolution(
+      String explicitContextId,
+      String suppliedContextId,
+      String edcParticipantId,
+      String expectedDefault,
+      boolean expectWarning) {
+    Map<String, String> settings = new HashMap<>();
+    Optional.ofNullable(explicitContextId)
+        .ifPresent(id -> settings.put(TMFConfig.DEFAULT_PARTICIPANT_CONTEXT_ID_SETTING, id));
+    Optional.ofNullable(edcParticipantId)
+        .ifPresent(id -> settings.put(TMFConfig.EDC_PARTICIPANT_ID_SETTING, id));
+    ParticipantContext participantContext =
+        Optional.ofNullable(suppliedContextId)
+            .map(
+                id ->
+                    ParticipantContext.Builder.newInstance()
+                        .participantContextId(id)
+                        .identity(TEST_PARTICIPANT_ID)
+                        .build())
+            .orElse(null);
+    Monitor monitor = mock(Monitor.class);
+
+    TMFConfig tmfConfig =
+        TMFConfig.fromConfig(ConfigFactory.fromMap(settings), participantContext, monitor);
+
+    assertEquals(expectedDefault, tmfConfig.getDefaultParticipantContextId());
+    assertEquals(expectedDefault, tmfConfig.getParticipantContextId());
+    verify(monitor, times(expectWarning ? 1 : 0)).warning(anyString());
+  }
+
+  private static Stream<Arguments> getDefaultContextCases() {
+    return Stream.of(
+        Arguments.of(EXPLICIT_CONTEXT_ID, null, null, EXPLICIT_CONTEXT_ID, false),
+        Arguments.of(EXPLICIT_CONTEXT_ID, EXPLICIT_CONTEXT_ID, null, EXPLICIT_CONTEXT_ID, false),
+        Arguments.of(EXPLICIT_CONTEXT_ID, SUPPLIED_CONTEXT_ID, null, EXPLICIT_CONTEXT_ID, true),
+        Arguments.of(null, SUPPLIED_CONTEXT_ID, null, SUPPLIED_CONTEXT_ID, false),
+        Arguments.of(null, SUPPLIED_CONTEXT_ID, TEST_PARTICIPANT_ID, SUPPLIED_CONTEXT_ID, false),
+        Arguments.of(" ", SUPPLIED_CONTEXT_ID, null, SUPPLIED_CONTEXT_ID, false),
+        Arguments.of(null, null, TEST_PARTICIPANT_ID, null, true),
+        Arguments.of(null, null, null, null, true));
+  }
 
   @ParameterizedTest(name = "Config from {0}")
   @MethodSource("getValidConfig")
   public void testValidConfig(String testFile, TMFConfig expectedConfig) throws IOException {
     Config testConfig = fromFile(testFile);
     assertEquals(
-        TMFConfig.fromConfig(testConfig, null),
+        TMFConfig.fromConfig(testConfig, null, mock(Monitor.class)),
         expectedConfig,
         "The config should have successfully been read.");
   }
@@ -59,7 +113,7 @@ public class TMFConfigTest {
 
     assertNull(
         tmfConfig.getParticipantId(), "A settings-derived identity could diverge unnoticed.");
-    assertNull(tmfConfig.getParticipantContextId());
+    assertNull(tmfConfig.getDefaultParticipantContextId());
   }
 
   @ParameterizedTest(name = "Config from {0}")
@@ -101,7 +155,6 @@ public class TMFConfigTest {
         TMFConfig.Builder.newInstance()
             .enabled(true)
             .participantId(ANONYMOUS_PARTICIPANT)
-            .participantContextId(ANONYMOUS_PARTICIPANT)
             .quoteApi("http://quote-api.de")
             .agreementApi("http://agreement-api.de")
             .productOrderApi("http://product-order-api.de")
@@ -118,7 +171,6 @@ public class TMFConfigTest {
         TMFConfig.Builder.newInstance()
             .enabled(true)
             .participantId(ANONYMOUS_PARTICIPANT)
-            .participantContextId(ANONYMOUS_PARTICIPANT)
             .quoteApi("http://quote-api.de")
             .agreementApi("http://agreement-api.de")
             .productOrderApi("http://product-order-api.de")
@@ -135,7 +187,6 @@ public class TMFConfigTest {
         TMFConfig.Builder.newInstance()
             .enabled(false)
             .participantId(ANONYMOUS_PARTICIPANT)
-            .participantContextId(ANONYMOUS_PARTICIPANT)
             .catalogConfig(new TMFConfig.CatalogConfig.Builder().enabled(false).build())
             .build();
     arguments.add(Arguments.of("valid/3.properties", tmfConfig3));
@@ -144,7 +195,6 @@ public class TMFConfigTest {
         TMFConfig.Builder.newInstance()
             .enabled(true)
             .participantId(ANONYMOUS_PARTICIPANT)
-            .participantContextId(ANONYMOUS_PARTICIPANT)
             .quoteApi("http://quote-api.de")
             .agreementApi("http://agreement-api.de")
             .productOrderApi("http://product-order-api.de")
@@ -158,22 +208,20 @@ public class TMFConfigTest {
             .build();
     arguments.add(Arguments.of("valid/4.properties", tmfConfig4));
 
-    // edc.participant.id set, edc.participant.context.id unset: the context id falls back.
+    // Without a supplier, edc.participant.* never yields a default context (decision 3).
     TMFConfig tmfConfig5 =
         TMFConfig.Builder.newInstance()
             .enabled(false)
             .participantId(TEST_PARTICIPANT_ID)
-            .participantContextId(TEST_PARTICIPANT_ID)
             .catalogConfig(new TMFConfig.CatalogConfig.Builder().enabled(false).build())
             .build();
     arguments.add(Arguments.of("valid/5.properties", tmfConfig5));
 
-    // both set: the explicit context id wins over the participant id.
+    // edc.participant.context.id is a per-context entry in virtual mode, so it is ignored too.
     TMFConfig tmfConfig6 =
         TMFConfig.Builder.newInstance()
             .enabled(false)
             .participantId(TEST_PARTICIPANT_ID)
-            .participantContextId(TEST_PARTICIPANT_CONTEXT_ID)
             .catalogConfig(new TMFConfig.CatalogConfig.Builder().enabled(false).build())
             .build();
     arguments.add(Arguments.of("valid/6.properties", tmfConfig6));

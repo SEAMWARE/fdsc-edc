@@ -22,6 +22,7 @@ import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.seamware.edc.store.ContractDefinitionIdResolver;
 import org.seamware.edc.store.TMFEdcMapper;
 import org.seamware.edc.store.TMForumConsumerOfferResolver;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
@@ -46,7 +47,10 @@ public class TMFOfferResolverExtension implements ServiceExtension {
     if (TMFConfig.fromConfig(context.getConfig()).isEnabled()) {
       context.registerService(
           ConsumerOfferResolver.class,
-          new TMForumConsumerOfferResolver(monitor, productCatalogApiClient, tmfEdcMapper));
+          new TMForumConsumerOfferResolver(
+              monitor,
+              new ContractDefinitionIdResolver(monitor, productCatalogApiClient, tmfEdcMapper),
+              tmfEdcMapper));
     } else {
       monitor.info(
           "TMFExtension is not enabled, TMForumConsumerOfferResolver will not be registered.");

@@ -19,6 +19,7 @@ package org.seamware.edc.store;
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.CONSUMER;
 import static org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess.Type.PROVIDER;
 import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
+import static org.seamware.edc.TMFConfig.ALL_PARTICIPANT_CONTEXTS;
 import static org.seamware.edc.tmf.ParticipantResolver.CONSUMER_ROLE;
 import static org.seamware.edc.tmf.ParticipantResolver.PROVIDER_ROLE;
 
@@ -43,6 +44,7 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.Con
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractOffer;
 import org.eclipse.edc.connector.controlplane.contract.spi.validation.ValidatableConsumerOffer;
+import org.eclipse.edc.connector.controlplane.policy.spi.PolicyDefinition;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
@@ -54,8 +56,10 @@ import org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
+import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.domain.*;
 import org.seamware.edc.tmf.AgreementApiClient;
+import org.seamware.edc.tmf.OfferingPolicy;
 import org.seamware.edc.tmf.ParticipantResolver;
 import org.seamware.tmforum.agreement.model.CharacteristicVO;
 import org.seamware.tmforum.agreement.model.RelatedPartyVO;
@@ -134,7 +138,8 @@ public class TMFEdcMapper {
   private final TypeTransformerRegistry typeTransformerRegistry;
   private final JsonLd jsonLd;
   private final Clock clock;
-  private final String participantContextId;
+  // owns the untagged TMForum entities (decision 3); null leaves them unresolvable
+  private final String defaultParticipantContextId;
 
   public TMFEdcMapper(
       Monitor monitor,
@@ -143,15 +148,101 @@ public class TMFEdcMapper {
       TypeTransformerRegistry typeTransformerRegistry,
       JsonLd jsonLd,
       Clock clock,
-      String participantContextId) {
+      @Nullable String defaultParticipantContextId) {
     this.monitor = monitor;
     this.objectMapper = objectMapper;
     this.participantResolver = participantResolver;
     this.typeTransformerRegistry = typeTransformerRegistry;
     this.jsonLd = jsonLd;
     this.clock = clock;
-    this.participantContextId = participantContextId;
+    this.defaultParticipantContextId = defaultParticipantContextId;
     this.tmfObjectMapper = new TMFObjectMapperImpl();
+  }
+
+  public @Nullable String getDefaultParticipantContextId() {
+    return defaultParticipantContextId;
+  }
+
+  /** Context of a tagged entity: its own tag, or the default context when it carries none. */
+  public @Nullable String contextOrDefault(@Nullable String participantContextId) {
+    return participantContextId == null || participantContextId.isBlank()
+        ? defaultParticipantContextId
+        : participantContextId;
+  }
+
+  /** Whether an offering with these tags is made in the context (decision 4 table). */
+  public boolean servesContext(
+      @Nullable List<String> participantContextIds, @Nullable String participantContextId) {
+    if (participantContextId == null) {
+      return false;
+    }
+    Set<String> tags = contextTags(participantContextIds);
+    if (tags.isEmpty()) {
+      return participantContextId.equals(defaultParticipantContextId);
+    }
+    return tags.contains(participantContextId) || tags.contains(ALL_PARTICIPANT_CONTEXTS);
+  }
+
+  /** Whether an offering with these tags is exposed under {@link ContextQualifiedId}s. */
+  public static boolean isMultiContext(@Nullable List<String> participantContextIds) {
+    Set<String> tags = contextTags(participantContextIds);
+    return tags.size() > 1 || tags.contains(ALL_PARTICIPANT_CONTEXTS);
+  }
+
+  /**
+   * Context of an offering looked up by id: for a plain id ({@code qualifier} null) the single
+   * context it serves, for a qualified id the qualifier if the offering is multi-context and serves
+   * it. Empty in every other case, so each id resolves in at most one context.
+   */
+  public Optional<String> contextForId(
+      @Nullable List<String> participantContextIds, @Nullable String qualifier) {
+    if (qualifier != null) {
+      return isMultiContext(participantContextIds)
+              && servesContext(participantContextIds, qualifier)
+          ? Optional.of(qualifier)
+          : Optional.empty();
+    }
+    if (isMultiContext(participantContextIds)) {
+      return Optional.empty();
+    }
+    return contextTags(participantContextIds).stream()
+        .findFirst()
+        .or(() -> Optional.ofNullable(defaultParticipantContextId));
+  }
+
+  /**
+   * Contract definition id of the offering in the requesting context: its plain external id, or a
+   * {@link ContextQualifiedId} when it serves several contexts. Empty if it does not serve it.
+   */
+  public Optional<String> contractDefinitionId(
+      ExtendableProductOffering offering, @Nullable String participantContextId) {
+    if (offering.getExternalId() == null
+        || !servesContext(offering.getParticipantContextIds(), participantContextId)) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        qualifyIfMultiContext(
+            offering.getExternalId(), offering.getParticipantContextIds(), participantContextId));
+  }
+
+  private static String qualifyIfMultiContext(
+      String id, @Nullable List<String> participantContextIds, String participantContextId) {
+    return isMultiContext(participantContextIds)
+        ? ContextQualifiedId.qualify(id, participantContextId)
+        : id;
+  }
+
+  // TMForum may return blank entries, see LenientStringListDeserializer
+  private static Set<String> contextTags(@Nullable List<String> participantContextIds) {
+    if (participantContextIds == null) {
+      return Set.of();
+    }
+    Set<String> tags = new LinkedHashSet<>();
+    participantContextIds.stream()
+        .filter(Objects::nonNull)
+        .filter(tag -> !tag.isBlank())
+        .forEach(tags::add);
+    return tags;
   }
 
   public ExtendableAgreementVO toAgreement(
@@ -159,6 +250,7 @@ public class TMFEdcMapper {
     ExtendableAgreementVO agreementVO = new ExtendableAgreementVO();
     agreementVO.setExternalId(contractAgreement.getId());
     agreementVO.setNegotiationId(negotiationId);
+    agreementVO.setParticipantContextId(contractAgreement.getParticipantContextId());
     agreementVO.agreementType(AGREEMENT_TYPE_DSP);
     agreementVO.name(
         String.format(
@@ -318,7 +410,7 @@ public class TMFEdcMapper {
     agreementBuilder
         .id(agreementVO.getExternalId())
         .agreementId(readAgreementId(agreementVO))
-        .participantContextId(participantContextId);
+        .participantContextId(contextOrDefault(agreementVO.getParticipantContextId()));
     return agreementBuilder.build();
   }
 
@@ -372,11 +464,13 @@ public class TMFEdcMapper {
    *
    * @param productSpecification the ProductSpecification representing the EDC asset
    * @param productOfferings the list of ProductOfferings representing EDC contract definitions
+   * @param participantContextId the requesting context; offerings not made in it are skipped
    * @return an {@link Optional} containing the dataset, or empty if no valid offers were found
    */
   public Optional<Dataset> datasetFromProductSpecification(
       ExtendableProductSpecification productSpecification,
-      List<ExtendableProductOffering> productOfferings) {
+      List<ExtendableProductOffering> productOfferings,
+      @Nullable String participantContextId) {
     try {
       Dataset.Builder datasetBuilder =
           Dataset.Builder.newInstance().id(productSpecification.getExternalId());
@@ -387,12 +481,12 @@ public class TMFEdcMapper {
         if (!referencesSpecification(offering, productSpecification)) {
           continue;
         }
+        Optional<String> definitionId = contractDefinitionId(offering, participantContextId);
         Optional<ExtendableProductOfferingTerm> optionalTerm = getContractDefinitionTerm(offering);
-        if (optionalTerm.isPresent()) {
+        if (definitionId.isPresent() && optionalTerm.isPresent()) {
           Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
           ContractOfferId offerId =
-              ContractOfferId.create(
-                  offering.getExternalId(), productSpecification.getExternalId());
+              ContractOfferId.create(definitionId.get(), productSpecification.getExternalId());
           datasetBuilder.offer(
               offerId.toString(), contractPolicy.toBuilder().type(PolicyType.OFFER).build());
           hasOffers = true;
@@ -506,11 +600,6 @@ public class TMFEdcMapper {
       ParticipantResolver participantResolver,
       String participantId) {
 
-    ContractNegotiation.Builder contractNegotiationBuilder =
-        ContractNegotiation.Builder.newInstance()
-            .clock(clock)
-            .participantContextId(participantContextId);
-
     if (quoteVOs.isEmpty()) {
       monitor.warning("Tried to map an empty list to a contract negotiation.");
       return null;
@@ -518,6 +607,10 @@ public class TMFEdcMapper {
 
     // the newest one represents the current state of the negotiation
     ExtendableQuoteVO newestQuoteVo = getNewest(quoteVOs);
+    ContractNegotiation.Builder contractNegotiationBuilder =
+        ContractNegotiation.Builder.newInstance()
+            .clock(clock)
+            .participantContextId(contextOrDefault(newestQuoteVo.getParticipantContextId()));
     ContractNegotiationStates cnState = getContractNegotiationState(newestQuoteVo);
 
     String externalId =
@@ -727,7 +820,12 @@ public class TMFEdcMapper {
     return Optional.empty();
   }
 
-  public Optional<Asset> assetFromProductSpec(ExtendableProductSpecification productSpecification) {
+  /**
+   * Maps a shared product to an asset stamped with {@code participantContextId}: the queried
+   * context, or the default one (decision 4).
+   */
+  public Optional<Asset> assetFromProductSpec(
+      ExtendableProductSpecification productSpecification, @Nullable String participantContextId) {
     DataAddress.Builder dataAddressBuilder =
         DataAddress.Builder.newInstance().type(FDSC_DATA_ADDRESS_TYPE);
     List<ProductSpecificationCharacteristicVO> specChars =
@@ -923,15 +1021,21 @@ public class TMFEdcMapper {
         .orElseThrow(() -> new IllegalArgumentException("Policy does not contain a uid."));
   }
 
+  /**
+   * Maps the offering as seen from the requesting context; empty if it is not made there. A
+   * multi-context offering gets {@link ContextQualifiedId} definition and policy ids.
+   */
   public Optional<ContractDefinition> fromProductOffer(
-      ExtendableProductOffering productOfferingVO) {
-    if (productOfferingVO.getExternalId() == null) {
+      ExtendableProductOffering productOfferingVO, @Nullable String participantContextId) {
+    Optional<String> definitionId = contractDefinitionId(productOfferingVO, participantContextId);
+    if (definitionId.isEmpty()) {
       return Optional.empty();
     }
+    List<String> offeringContexts = productOfferingVO.getParticipantContextIds();
     ContractDefinition.Builder contractDefinitionBuilder =
         ContractDefinition.Builder.newInstance()
             .clock(clock)
-            .id(productOfferingVO.getExternalId())
+            .id(definitionId.get())
             .participantContextId(participantContextId);
 
     Optional<ExtendableProductOfferingTerm> optionalTerm =
@@ -942,10 +1046,14 @@ public class TMFEdcMapper {
     try {
 
       Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
-      contractDefinitionBuilder.contractPolicyId(getIdFromPolicy(contractPolicy));
+      contractDefinitionBuilder.contractPolicyId(
+          qualifyIfMultiContext(
+              getIdFromPolicy(contractPolicy), offeringContexts, participantContextId));
 
       Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
-      contractDefinitionBuilder.accessPolicyId(getIdFromPolicy(accessPolicy));
+      contractDefinitionBuilder.accessPolicyId(
+          qualifyIfMultiContext(
+              getIdFromPolicy(accessPolicy), offeringContexts, participantContextId));
 
       return Optional.of(contractDefinitionBuilder.build());
     } catch (IllegalArgumentException e) {
@@ -954,12 +1062,35 @@ public class TMFEdcMapper {
     }
   }
 
+  /**
+   * Builds the policy definition of an offering's policy looked up by its plain id ({@code
+   * qualifier} null) or by a {@link ContextQualifiedId}; empty when that id does not resolve.
+   */
+  public Optional<PolicyDefinition> toPolicyDefinition(
+      OfferingPolicy offeringPolicy, @Nullable String qualifier) {
+    return contextForId(offeringPolicy.participantContextIds(), qualifier)
+        .map(
+            participantContextId ->
+                PolicyDefinition.Builder.newInstance()
+                    .policy(offeringPolicy.policy())
+                    .id(
+                        qualifyIfMultiContext(
+                            getIdFromPolicy(offeringPolicy.policy()),
+                            offeringPolicy.participantContextIds(),
+                            participantContextId))
+                    .participantContextId(participantContextId)
+                    .build());
+  }
+
   public Optional<ValidatableConsumerOffer> consumerOfferFromProductOffering(
-      ExtendableProductOffering productOfferingVO, ContractOfferId offerId) {
+      ExtendableProductOffering productOfferingVO,
+      ContractOfferId offerId,
+      @Nullable String participantContextId) {
     ValidatableConsumerOffer.Builder consumerOfferBuilder =
         ValidatableConsumerOffer.Builder.newInstance();
 
-    Optional<ContractDefinition> optionalContractDefinition = fromProductOffer(productOfferingVO);
+    Optional<ContractDefinition> optionalContractDefinition =
+        fromProductOffer(productOfferingVO, participantContextId);
     if (optionalContractDefinition.isEmpty()) {
       return Optional.empty();
     }
@@ -1055,6 +1186,7 @@ public class TMFEdcMapper {
     usageVO
         .setTransferState(transferProcess.stateAsString())
         .setExternalId(transferProcess.getId())
+        .setParticipantContextId(transferProcess.getParticipantContextId())
         .addUsageCharacteristicItem(toUsageCharacteristic(USAGE_CHARACTERISTIC_ASSET_ID, assetId))
         .addUsageCharacteristicItem(
             toUsageCharacteristic(

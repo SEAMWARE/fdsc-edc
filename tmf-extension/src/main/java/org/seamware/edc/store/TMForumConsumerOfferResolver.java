@@ -23,22 +23,23 @@ import org.eclipse.edc.connector.controlplane.contract.spi.validation.Validatabl
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.jetbrains.annotations.NotNull;
-import org.seamware.edc.tmf.ProductCatalogApiClient;
 
 /**
  * Offer resolver to extract the TMForum entities for a given ID and translates them to a {@link
- * ValidatableConsumerOffer}
+ * ValidatableConsumerOffer}. The offer's definition part selects the context (decision 4).
  */
 public class TMForumConsumerOfferResolver implements ConsumerOfferResolver {
 
   private final Monitor monitor;
-  private final ProductCatalogApiClient productCatalogApiClient;
+  private final ContractDefinitionIdResolver contractDefinitionIdResolver;
   private final TMFEdcMapper tmfEdcMapper;
 
   public TMForumConsumerOfferResolver(
-      Monitor monitor, ProductCatalogApiClient productCatalogApiClient, TMFEdcMapper tmfEdcMapper) {
+      Monitor monitor,
+      ContractDefinitionIdResolver contractDefinitionIdResolver,
+      TMFEdcMapper tmfEdcMapper) {
     this.monitor = monitor;
-    this.productCatalogApiClient = productCatalogApiClient;
+    this.contractDefinitionIdResolver = contractDefinitionIdResolver;
     this.tmfEdcMapper = tmfEdcMapper;
   }
 
@@ -51,11 +52,14 @@ public class TMForumConsumerOfferResolver implements ConsumerOfferResolver {
       return optionalContractOfferId
           .map(
               contractOfferId ->
-                  productCatalogApiClient
-                      .getProductOfferingByExternalId(offeringId)
+                  contractDefinitionIdResolver
+                      .resolve(contractOfferId.definitionPart())
                       .flatMap(
-                          epo ->
-                              tmfEdcMapper.consumerOfferFromProductOffering(epo, contractOfferId))
+                          resolved ->
+                              tmfEdcMapper.consumerOfferFromProductOffering(
+                                  resolved.offering(),
+                                  contractOfferId,
+                                  resolved.participantContextId()))
                       .map(ServiceResult::success)
                       .orElse(
                           ServiceResult.notFound(

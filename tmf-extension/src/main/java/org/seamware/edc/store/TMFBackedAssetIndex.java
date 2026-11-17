@@ -33,7 +33,15 @@ import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.seamware.edc.domain.ExtendableProductSpecification;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
+/**
+ * Read-only asset index over the shared TMForum ProductSpecifications. Assets carry the context a
+ * query asks for, so every product is listed in every context (decision 4).
+ */
 public class TMFBackedAssetIndex implements AssetIndex {
+
+  // left operand and operator of ParticipantResource.filterByParticipantContextId
+  private static final String PARTICIPANT_CONTEXT_ID_PROPERTY = "participantContextId";
+  private static final String EQUALS_OPERATOR = "=";
 
   private final Monitor monitor;
   private final ProductCatalogApiClient productCatalogApiClient;
@@ -96,7 +104,10 @@ public class TMFBackedAssetIndex implements AssetIndex {
     try {
       return productCatalogApiClient
           .getProductSpecByExternalId(s)
-          .map(tmfEdcMapper::assetFromProductSpec)
+          .map(
+              spec ->
+                  tmfEdcMapper.assetFromProductSpec(
+                      spec, tmfEdcMapper.getDefaultParticipantContextId()))
           .filter(Optional::isPresent)
           .map(Optional::get)
           // according to the interface doc, null should be returned
@@ -129,6 +140,16 @@ public class TMFBackedAssetIndex implements AssetIndex {
   }
 
   private List<Asset> queryAssets(List<Criterion> criteria) {
+    // stamped before the predicate runs, so a context criterion matches the shared products
+    String participantContextId =
+        criteria.stream()
+            .filter(c -> PARTICIPANT_CONTEXT_ID_PROPERTY.equals(c.getOperandLeft()))
+            .filter(c -> EQUALS_OPERATOR.equals(c.getOperator()))
+            .map(Criterion::getOperandRight)
+            .filter(String.class::isInstance)
+            .map(String.class::cast)
+            .findFirst()
+            .orElse(tmfEdcMapper.getDefaultParticipantContextId());
     Predicate<Asset> predicate =
         criteria.stream()
             .map(criterionOperatorRegistry::<Asset>toPredicate)
@@ -142,7 +163,7 @@ public class TMFBackedAssetIndex implements AssetIndex {
           productCatalogApiClient.getProductSpecifications(offset, 100);
 
       productSpecifications.stream()
-          .map(tmfEdcMapper::assetFromProductSpec)
+          .map(spec -> tmfEdcMapper.assetFromProductSpec(spec, participantContextId))
           .filter(Optional::isPresent)
           .map(Optional::get)
           .filter(predicate)

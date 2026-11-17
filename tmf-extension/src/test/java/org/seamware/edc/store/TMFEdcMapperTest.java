@@ -46,6 +46,8 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.Con
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractOffer;
 import org.eclipse.edc.connector.controlplane.contract.spi.validation.ValidatableConsumerOffer;
+import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
+import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -63,7 +65,6 @@ import org.seamware.edc.domain.*;
 import org.seamware.edc.tmf.AgreementApiClient;
 import org.seamware.edc.tmf.ParticipantResolver;
 import org.seamware.edc.util.NoopMonitor;
-import org.seamware.tmforum.agreement.model.AgreementVO;
 import org.seamware.tmforum.agreement.model.CharacteristicVO;
 import org.seamware.tmforum.party.model.OrganizationVO;
 import org.seamware.tmforum.productcatalog.model.ProductOfferingTermVO;
@@ -78,6 +79,13 @@ class TMFEdcMapperTest extends AbstractStoreTest {
           .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
           .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
           .build();
+
+  private static final String CONTEXT_A = "did:web:dataspace-a";
+  private static final String CONTEXT_B = "did:web:dataspace-b";
+  private static final String TEST_TRANSFER_ID = "test-transfer";
+  private static final String TEST_PRODUCT_ID = "test-product";
+  private static final String TEST_TRANSFER_TYPE = "HttpData-PULL";
+  private static final String TEST_PROTOCOL = "dataspace-protocol-http";
 
   public TMFEdcMapper tmfEdcMapper;
   public ParticipantResolver participantResolver;
@@ -120,7 +128,9 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     when(participantResolver.getTmfId(eq(TEST_PROVIDER_DID))).thenReturn(TEST_PROVIDER_TMF_ID);
 
     ContractAgreement contractAgreement = getValidContractAgreement();
-    AgreementVO extendableAgreementVO = getTestAgreement();
+    ExtendableAgreementVO extendableAgreementVO = getTestAgreement();
+    // the EDC->TMForum direction writes the entity's own context
+    extendableAgreementVO.setParticipantContextId(contractAgreement.getParticipantContextId());
 
     when(typeTransformerRegistry.transform(any(), eq(JsonObject.class)))
         .thenReturn(Result.success(getEmptyOdrlContract()));
@@ -534,24 +544,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
     when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
         .thenReturn(Result.success(getTestPolicy()));
-    when(participantResolver.getOrganization(eq(TEST_CONSUMER_TMF_ID)))
-        .thenReturn(
-            Optional.of(
-                new OrganizationVO()
-                    .partyCharacteristic(
-                        List.of(
-                            new org.seamware.tmforum.party.model.CharacteristicVO()
-                                .name("did")
-                                .value(TEST_CONSUMER_DID)))));
-    when(participantResolver.getOrganization(eq(TEST_PROVIDER_TMF_ID)))
-        .thenReturn(
-            Optional.of(
-                new OrganizationVO()
-                    .partyCharacteristic(
-                        List.of(
-                            new org.seamware.tmforum.party.model.CharacteristicVO()
-                                .name("did")
-                                .value(TEST_PROVIDER_DID)))));
+    givenOrganizationsResolveToDids();
 
     AgreementApiClient agreementApiClient = mock(AgreementApiClient.class);
     when(agreementApiClient.findByNegotiationId(any())).thenReturn(inputAgreement);
@@ -611,6 +604,171 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         "If no negotiation state is contained, an exception should be thrown.");
   }
 
+  // ---- PARTICIPANT CONTEXT OF TAGGED ENTITIES ----
+
+  /** Mapper default, newest quote's tag, older quote's tag, expected negotiation context. */
+  private static Stream<Arguments> negotiationContexts() {
+    return Stream.of(
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_A, null, CONTEXT_A),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_B, null, CONTEXT_B),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, null, null, TEST_PARTICIPANT_CONTEXT_ID),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, null, CONTEXT_A, TEST_PARTICIPANT_CONTEXT_ID),
+        Arguments.of(null, CONTEXT_A, null, CONTEXT_A),
+        Arguments.of(null, null, null, null));
+  }
+
+  @ParameterizedTest(name = "default {0}, newest quote {1}, older quote {2} -> {3}")
+  @MethodSource("negotiationContexts")
+  public void toContractNegotiation_stampsTheNewestQuotesContext(
+      String defaultContext, String newestTag, String olderTag, String expectedContext) {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+    givenOrganizationsResolveToDids();
+    AgreementApiClient agreementApiClient = mock(AgreementApiClient.class);
+    when(agreementApiClient.findByNegotiationId(any())).thenReturn(Optional.empty());
+    String offerId = String.format("%s:%s:%s", TEST_OFFER_ID, TEST_ASSET_ID, "1");
+    ExtendableQuoteVO older =
+        getExtendableQuoteVo(
+            negotiationState("INITIAL", true),
+            QuoteStateTypeVO.IN_PROGRESS,
+            TEST_CONSUMER_TMF_ID,
+            TEST_PROVIDER_TMF_ID,
+            1,
+            List.of(offerId));
+    older.setParticipantContextId(olderTag);
+    ExtendableQuoteVO newest =
+        getExtendableQuoteVo(
+            negotiationState("REQUESTED", true),
+            QuoteStateTypeVO.IN_PROGRESS,
+            TEST_CONSUMER_TMF_ID,
+            TEST_PROVIDER_TMF_ID,
+            2,
+            List.of(offerId));
+    newest.setParticipantContextId(newestTag);
+
+    ContractNegotiation negotiation =
+        mapperWithDefault(defaultContext)
+            .toContractNegotiation(
+                new ArrayList<>(List.of(newest, older)),
+                agreementApiClient,
+                participantResolver,
+                TEST_CONSUMER_DID);
+
+    assertEquals(expectedContext, negotiation.getParticipantContextId());
+  }
+
+  /** Mapper default, agreement's tag, expected agreement context. */
+  private static Stream<Arguments> agreementContexts() {
+    return Stream.of(
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_A, CONTEXT_A),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_B, CONTEXT_B),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, null, TEST_PARTICIPANT_CONTEXT_ID),
+        Arguments.of(null, CONTEXT_A, CONTEXT_A),
+        Arguments.of(null, null, null));
+  }
+
+  @ParameterizedTest(name = "default {0}, agreement {1} -> {2}")
+  @MethodSource("agreementContexts")
+  public void toContractAgreement_stampsTheAgreementsContext(
+      String defaultContext, String agreementTag, String expectedContext) {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+    ExtendableAgreementVO agreementVO = getTestAgreement();
+    agreementVO.setParticipantContextId(agreementTag);
+
+    ContractAgreement agreement =
+        mapperWithDefault(defaultContext).toContractAgreement(agreementVO);
+
+    assertEquals(expectedContext, agreement.getParticipantContextId());
+  }
+
+  private static Stream<String> writtenContexts() {
+    return Stream.of(CONTEXT_A, CONTEXT_B, null);
+  }
+
+  @ParameterizedTest(name = "agreement in {0}")
+  @MethodSource("writtenContexts")
+  public void toAgreement_writesTheAgreementsOwnContext(String context) {
+    when(participantResolver.getTmfId(eq(TEST_CONSUMER_DID))).thenReturn(TEST_CONSUMER_TMF_ID);
+    when(participantResolver.getTmfId(eq(TEST_PROVIDER_DID))).thenReturn(TEST_PROVIDER_TMF_ID);
+    when(typeTransformerRegistry.transform(any(), eq(JsonObject.class)))
+        .thenReturn(Result.success(getEmptyOdrlContract()));
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    ContractAgreement agreement =
+        ContractAgreement.Builder.newInstance()
+            .id(TEST_AGREEMENT_ID)
+            .agreementId(TEST_DSP_AGREEMENT_ID)
+            .participantContextId(context)
+            .assetId(TEST_ASSET_ID)
+            .consumerId(TEST_CONSUMER_DID)
+            .providerId(TEST_PROVIDER_DID)
+            .contractSigningDate(1)
+            .policy(getTestPolicy())
+            .build();
+
+    assertEquals(
+        context,
+        tmfEdcMapper.toAgreement(TEST_NEGOTIATION_ID, agreement).getParticipantContextId(),
+        "The entity's own context is written, never the mapper default.");
+  }
+
+  @ParameterizedTest(name = "transfer in {0}")
+  @MethodSource("writtenContexts")
+  public void fromTransferProcess_writesTheTransfersOwnContext(String context) {
+    TransferProcess transferProcess =
+        TransferProcess.Builder.newInstance()
+            .id(TEST_TRANSFER_ID)
+            .participantContextId(context)
+            .type(TransferProcess.Type.PROVIDER)
+            .state(TransferProcessStates.REQUESTED.code())
+            .protocol(TEST_PROTOCOL)
+            .counterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
+            .contractId(TEST_AGREEMENT_ID)
+            .transferType(TEST_TRANSFER_TYPE)
+            .build();
+
+    assertEquals(
+        context,
+        tmfEdcMapper
+            .fromTransferProcess(transferProcess, TEST_ASSET_ID, TEST_PRODUCT_ID)
+            .getParticipantContextId(),
+        "The entity's own context is written, never the mapper default.");
+  }
+
+  private void givenOrganizationsResolveToDids() {
+    when(participantResolver.getOrganization(eq(TEST_CONSUMER_TMF_ID)))
+        .thenReturn(
+            Optional.of(
+                new OrganizationVO()
+                    .partyCharacteristic(
+                        List.of(
+                            new org.seamware.tmforum.party.model.CharacteristicVO()
+                                .name("did")
+                                .value(TEST_CONSUMER_DID)))));
+    when(participantResolver.getOrganization(eq(TEST_PROVIDER_TMF_ID)))
+        .thenReturn(
+            Optional.of(
+                new OrganizationVO()
+                    .partyCharacteristic(
+                        List.of(
+                            new org.seamware.tmforum.party.model.CharacteristicVO()
+                                .name("did")
+                                .value(TEST_PROVIDER_DID)))));
+  }
+
+  private TMFEdcMapper mapperWithDefault(String defaultContext) {
+    return new TMFEdcMapper(
+        new NoopMonitor(),
+        objectMapper,
+        participantResolver,
+        typeTransformerRegistry,
+        jsonLd,
+        clock,
+        defaultContext);
+  }
+
   // ---- FROM CONTRACT OFFERS ----
 
   @ParameterizedTest
@@ -664,7 +822,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
   public void assetFromProductSpec_success(
       ExtendableProductSpecification productSpecification, Asset expectedAsset)
       throws JsonProcessingException {
-    Optional<Asset> asset = tmfEdcMapper.assetFromProductSpec(productSpecification);
+    Optional<Asset> asset =
+        tmfEdcMapper.assetFromProductSpec(productSpecification, TEST_PARTICIPANT_CONTEXT_ID);
     assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
 
     assertEquals(
@@ -684,7 +843,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
-                    Optional.empty()))
+                    Optional.empty()),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "Without an upstream, the product cannot be supported.");
   }
@@ -700,7 +860,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     Optional.empty(),
                     Optional.empty(),
                     Optional.empty(),
-                    Optional.of("upstream")))
+                    Optional.of("upstream")),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "Without an external Id, the product cannot be supported.");
   }
@@ -711,7 +872,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper.assetFromProductSpec(
             withTransferPath(
                 getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))),
-                "/ngsi-ld/v1/entities?type=CrowdFlowObserved"));
+                "/ngsi-ld/v1/entities?type=CrowdFlowObserved"),
+            TEST_PARTICIPANT_CONTEXT_ID);
 
     assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
     assertEquals(
@@ -724,7 +886,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
   public void assetFromProductSpec_omitsTransferPathWhenAbsent() {
     Optional<Asset> asset =
         tmfEdcMapper.assetFromProductSpec(
-            getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))));
+            getTestProductSpec(List.of(new Endpoint("test-1", "http://end.point"))),
+            TEST_PARTICIPANT_CONTEXT_ID);
 
     assertTrue(asset.isPresent(), "The asset should have been extracted from the product spec.");
     assertNull(
@@ -739,7 +902,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     // a characteristic with no valueType must not crash the string switch
     spec.addProductSpecCharacteristicItem(new ProductSpecificationCharacteristicVO().id("orphan"));
 
-    Optional<Asset> asset = tmfEdcMapper.assetFromProductSpec(spec);
+    Optional<Asset> asset = tmfEdcMapper.assetFromProductSpec(spec, TEST_PARTICIPANT_CONTEXT_ID);
 
     assertTrue(asset.isPresent(), "A null valueType characteristic should be skipped, not fatal.");
   }
@@ -787,7 +950,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                     getExtendableProductOffering(
                         TEST_OFFER_ID,
                         Optional.of(getTestOdrlPolicy()),
-                        Optional.of(getTestOdrlPolicy())))
+                        Optional.of(getTestOdrlPolicy())),
+                    TEST_PARTICIPANT_CONTEXT_ID)
                 .get()));
   }
 
@@ -802,7 +966,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper
             .fromProductOffer(
                 getExtendableProductOffering(
-                    TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()))
+                    TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "A contract policy is required.");
   }
@@ -818,7 +983,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper
             .fromProductOffer(
                 getExtendableProductOffering(
-                    TEST_OFFER_ID, Optional.empty(), Optional.of(getTestOdrlPolicy())))
+                    TEST_OFFER_ID, Optional.empty(), Optional.of(getTestOdrlPolicy())),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "A contract policy is required.");
   }
@@ -834,7 +1000,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper
             .fromProductOffer(
                 getExtendableProductOffering(
-                    null, Optional.of(getTestOdrlPolicy()), Optional.of(getTestOdrlPolicy())))
+                    null, Optional.of(getTestOdrlPolicy()), Optional.of(getTestOdrlPolicy())),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "An external id is required.");
   }
@@ -855,7 +1022,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         tmfEdcMapper.consumerOfferFromProductOffering(
             getExtendableProductOffering(
                 TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.of(getTestOdrlPolicy())),
-            contractOfferId);
+            contractOfferId,
+            TEST_PARTICIPANT_CONTEXT_ID);
     assertTrue(optionalValidatableConsumerOffer.isPresent(), "The offer should have been returned");
 
     ValidatableConsumerOffer expectedOffer =
@@ -900,7 +1068,9 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     assertTrue(
         tmfEdcMapper
             .consumerOfferFromProductOffering(
-                getNonCDProductOffering(), ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                getNonCDProductOffering(),
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out a term containing the contract definition, no offering should be returned");
   }
@@ -920,7 +1090,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .consumerOfferFromProductOffering(
                 getExtendableProductOffering(
                     TEST_OFFER_ID, Optional.empty(), Optional.of(getTestOdrlPolicy())),
-                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out an access policy, no offering should be returned");
   }
@@ -940,7 +1111,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .consumerOfferFromProductOffering(
                 getExtendableProductOffering(
                     TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()),
-                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out a contract policy, no offering should be returned");
   }
@@ -959,7 +1131,8 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             .consumerOfferFromProductOffering(
                 getExtendableProductOffering(
                     TEST_OFFER_ID, Optional.of(getTestOdrlPolicy()), Optional.empty()),
-                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID))
+                ContractOfferId.create(TEST_OFFER_ID, TEST_ASSET_ID),
+                TEST_PARTICIPANT_CONTEXT_ID)
             .isEmpty(),
         "With out a valid policy, no offering should be returned");
   }

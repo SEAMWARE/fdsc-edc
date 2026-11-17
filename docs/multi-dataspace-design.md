@@ -194,11 +194,12 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
        today). A plain hit resolves only if that offering serves exactly one
        context; a plain id that names a multi-context or `*` offering returns
        nothing, because it carries no context to stamp and the catalog never
-       issues it. Only if the plain lookup finds nothing and the id contains
-       the separator is it split at the **last** separator. The qualified form
-       resolves only if the prefix names a multi-context offering whose
-       `participantContextIds` contains X or `*`; otherwise the lookup returns
-       nothing. Policy ids follow the same rules;
+       issues it. When the plain lookup finds nothing, or finds an offering
+       that its plain id cannot address, the id is split at the **last**
+       separator. The qualified form resolves only if the prefix names a
+       multi-context offering whose `participantContextIds` contains X or
+       `*`; an untagged or single-context offering never resolves qualified.
+       Otherwise the lookup returns nothing. Policy ids follow the same rules;
      - **ambiguous ids are a data error.** A single-context offering whose
        `externalId` (or policy id) is literally `foo@X` collides with the
        qualified id of a multi-context offering `foo` that serves X. When a
