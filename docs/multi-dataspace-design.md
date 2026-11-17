@@ -293,8 +293,10 @@ Further behaviour that later steps must respect:
     - `init-tmforum.sh` hard-codes that URL;
     - the EDC runtime resolves every VO's schema against
       `TMFConfig.DEFAULT_SCHEMA_BASE_URI` (the same URL) unless
-      `tmfExtension.schemaBaseUri` is set. From Step 4 on, every Quote,
-      Agreement and Usage the runtime writes carries `participantContextId`.
+      `tmfExtension.schemaBaseUri` is set. From Step 4 on, every Quote and
+      Agreement the runtime writes carries `participantContextId` (Usage only
+      once a Usage write path exists; there is none today, see the query-form
+      table below).
 
     Schema changes in this repository are not visible at that URL until they
     are published there. Per the measurement above, writes still succeed, but
@@ -359,9 +361,29 @@ Further behaviour that later steps must respect:
   The policy ids are passed verbatim.
 
 **Decision:** decision 4's context-qualified ids (`<id>@<ctx>`) need no
-upstream change. Constraint for Step 3: a context id and an offering
-`externalId` must not contain `:`, because it would break `ContractOfferId`
-parsing. The bootstrap (Step 7) rejects such context ids.
+upstream change, and `:` is **not** restricted in context ids or offering
+`externalId`s:
+
+- **Encoded offer ids** (every id EDC or our mapper builds via
+  `ContractOfferId.create`): each part is Base64-encoded before the `:` join,
+  so a `:` inside the definition id never reaches the split.
+  `CD123@urn:connector:fdsc-edc` round-trips, so the classic default context
+  (`config/tck/edc.properties:26`) and DID- or URN-shaped context ids work in
+  plain and qualified ids alike.
+- **Unencoded offer ids** (hand-written by a counter-party or the TCK): an
+  `externalId` containing `:` already fails `ContractOfferId` parsing today
+  (wrong part count; `ContractOfferIdParser` then treats the whole raw id as
+  the definition). That is unchanged and not made worse. A qualified id is
+  never issued unencoded, because only multi-context offerings get one and
+  they appear only in catalogs we build.
+- **The real constraint is the separator.** `ContextQualifiedId` splits at the
+  **last** `@`, so a context id must not contain `@`: `CD@X@Y` for context
+  `X@Y` would parse as offering `CD@X` in context `Y`. An `externalId` may
+  contain `@`, because the full id is tried as a plain id first. The bootstrap
+  (Step 7) rejects context ids containing `@`. A classic runtime has no
+  bootstrap, so nothing enforces it there; `edc.participant.context.id` is
+  operator-chosen and the TCK value contains no `@`. Step 3 needs no
+  data-validation pass over existing `externalId`s.
 
 ### Data plane registration
 

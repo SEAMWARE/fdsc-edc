@@ -353,8 +353,11 @@ Acceptance:
 
 - `store/TMFBackedContractNegotiationStore`:
   - persist the negotiation's `participantContextId` on the Quote (and its items)
-    and on the Agreement and Usage. Products and ProductOrders stay untagged
-    (see Step 2). A negotiation on a multi-context offering carries the
+    and on the Agreement. Products and ProductOrders stay untagged
+    (see Step 2). Usage is not written today (no Usage client, and the
+    mapper's Usage `toCreate`/`toUpdate` have no callers), so there is nothing
+    to change for it here; whatever adds a Usage write path later must stamp
+    the context (the Step 2 VO field is ready for it). A negotiation on a multi-context offering carries the
     context it ran in, never the offering's set (decision 4);
   - `getTmfOfferId` resolves the offer's `definitionPart()` through
     `ContextQualifiedId` (Step 3), so the Quote item references the right
@@ -553,6 +556,9 @@ contexts in `prepare()`:
   updated, not duplicated, and does not fail startup.
 - It fails startup with a clear message when a referenced profile is not
   registered in `DataspaceProfileContextRegistry`.
+- It fails startup when a context id (`.id`) contains `@`, the
+  `ContextQualifiedId` separator (see "DSP-path callers" in the design
+  record). `:` is allowed, so DID- and URN-shaped ids work.
 - It is a no-op when no `fdsc.participants.*` keys are set, so it is harmless
   on the classic classpath. It is added only to `controlplane-dcp`.
 
@@ -563,6 +569,8 @@ Tests (Mockito on the EDC SPIs):
 - re-running against already-seeded stores updates and does not duplicate them;
 - an unknown profile fails startup;
 - a `.config.` DID entry that differs from `.identity` fails startup;
+- parameterized over context ids: `ctx-a` and `did:web:a.example` are seeded,
+  `a@b` fails startup;
 - with no keys nothing is seeded.
 
 Acceptance: `mvn -pl participant-bootstrap-extension -am test` is green.
