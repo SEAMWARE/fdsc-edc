@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -64,5 +65,18 @@ class OwnParticipantIdentityTest {
         new OwnParticipantIdentity(mock(ParticipantIdentityResolver.class), CONFIGURED_ID);
 
     assertThrows(IllegalStateException.class, () -> identity.participantId(CONTEXT_A, PROTOCOL));
+  }
+
+  @Test
+  void participantId_picksUpAResolverRegisteredAfterConstruction() {
+    AtomicReference<ParticipantIdentityResolver> registry = new AtomicReference<>();
+    OwnParticipantIdentity identity = new OwnParticipantIdentity(registry::get, CONFIGURED_ID);
+    assertEquals(CONFIGURED_ID, identity.participantId(CONTEXT_A, PROTOCOL));
+
+    ParticipantIdentityResolver resolver = mock(ParticipantIdentityResolver.class);
+    when(resolver.getParticipantId(eq(CONTEXT_A), eq(PROTOCOL))).thenReturn(DID_A);
+    registry.set(resolver);
+
+    assertEquals(DID_A, identity.participantId(CONTEXT_A, PROTOCOL));
   }
 }

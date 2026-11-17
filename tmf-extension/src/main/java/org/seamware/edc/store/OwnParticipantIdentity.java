@@ -16,6 +16,7 @@
  */
 package org.seamware.edc.store;
 
+import java.util.function.Supplier;
 import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
 import org.jetbrains.annotations.Nullable;
 
@@ -26,11 +27,21 @@ import org.jetbrains.annotations.Nullable;
  */
 public class OwnParticipantIdentity {
 
-  private final @Nullable ParticipantIdentityResolver participantIdentityResolver;
+  private final Supplier<@Nullable ParticipantIdentityResolver> participantIdentityResolver;
   private final String fallbackParticipantId;
 
   public OwnParticipantIdentity(
       @Nullable ParticipantIdentityResolver participantIdentityResolver,
+      String fallbackParticipantId) {
+    this(() -> participantIdentityResolver, fallbackParticipantId);
+  }
+
+  /**
+   * Looks the resolver up on every call, so it can come from the service registry after boot: an
+   * {@code @Inject} would close a dependency cycle through the connector participant-context core.
+   */
+  public OwnParticipantIdentity(
+      Supplier<@Nullable ParticipantIdentityResolver> participantIdentityResolver,
       String fallbackParticipantId) {
     this.participantIdentityResolver = participantIdentityResolver;
     this.fallbackParticipantId = fallbackParticipantId;
@@ -38,18 +49,19 @@ public class OwnParticipantIdentity {
 
   /** The same id in every context, as on a classic runtime without the connector core. */
   public static OwnParticipantIdentity fixed(String participantId) {
-    return new OwnParticipantIdentity(null, participantId);
+    return new OwnParticipantIdentity((ParticipantIdentityResolver) null, participantId);
   }
 
   /** Throws {@link IllegalStateException} when the resolver knows no identity for the context. */
   public String participantId(@Nullable String participantContextId, @Nullable String protocol) {
-    if (participantIdentityResolver == null) {
+    ParticipantIdentityResolver resolver = participantIdentityResolver.get();
+    if (resolver == null) {
       return fallbackParticipantId;
     }
     String participantId =
         participantContextId == null
             ? null
-            : participantIdentityResolver.getParticipantId(participantContextId, protocol);
+            : resolver.getParticipantId(participantContextId, protocol);
     if (participantId == null) {
       throw new IllegalStateException(
           String.format("No own participant id is known for context %s.", participantContextId));

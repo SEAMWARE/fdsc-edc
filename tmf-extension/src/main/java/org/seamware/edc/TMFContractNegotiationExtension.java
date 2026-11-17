@@ -125,10 +125,6 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   @Inject(required = false)
   private SingleParticipantContextSupplier participantContextSupplier;
 
-  // absent only on a classic runtime without the connector core; then the configured id is used
-  @Inject(required = false)
-  private ParticipantIdentityResolver participantIdentityResolver;
-
   @Override
   public String name() {
     return NAME;
@@ -362,7 +358,11 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               productInventoryApi(tmfConfig),
               participantResolver(tmfConfig),
               tmfEdcMapper(tmfConfig),
-              new OwnParticipantIdentity(participantIdentityResolver, tmfConfig.getParticipantId()),
+              // looked up lazily: injecting it closes a boot cycle via the participant-context
+              // core; absent only on a classic runtime without that core (configured id is used)
+              new OwnParticipantIdentity(
+                  () -> serviceExtensionContext.getService(ParticipantIdentityResolver.class, true),
+                  tmfConfig.getParticipantId()),
               controlplane,
               criterionOperatorRegistry,
               new TMFBackedLeaseHolder(
