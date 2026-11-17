@@ -594,11 +594,12 @@ public class TMFEdcMapper {
     return Optional.of(transferType);
   }
 
+  /** The own party, and so the negotiation's type, is matched against the context's own id. */
   public ContractNegotiation toContractNegotiation(
       List<ExtendableQuoteVO> quoteVOs,
       AgreementApiClient agreementApiClient,
       ParticipantResolver participantResolver,
-      String participantId) {
+      OwnParticipantIdentity ownParticipantIdentity) {
 
     if (quoteVOs.isEmpty()) {
       monitor.warning("Tried to map an empty list to a contract negotiation.");
@@ -607,10 +608,17 @@ public class TMFEdcMapper {
 
     // the newest one represents the current state of the negotiation
     ExtendableQuoteVO newestQuoteVo = getNewest(quoteVOs);
+    String participantContextId = contextOrDefault(newestQuoteVo.getParticipantContextId());
+    // legacy quotes did not store the protocol; they were all negotiated over DSP 2025-1
+    String protocol =
+        Optional.ofNullable(newestQuoteVo.getContractNegotiationState())
+            .map(ContractNegotiationState::getProtocol)
+            .orElse(Dsp2025Constants.DATASPACE_PROTOCOL_HTTP_V_2025_1);
+    String participantId = ownParticipantIdentity.participantId(participantContextId, protocol);
     ContractNegotiation.Builder contractNegotiationBuilder =
         ContractNegotiation.Builder.newInstance()
             .clock(clock)
-            .participantContextId(contextOrDefault(newestQuoteVo.getParticipantContextId()));
+            .participantContextId(participantContextId);
     ContractNegotiationStates cnState = getContractNegotiationState(newestQuoteVo);
 
     String externalId =
@@ -664,8 +672,7 @@ public class TMFEdcMapper {
                   case CONSUMER_ROLE -> negotiationParticipants.consumerId(did);
                 }
                 if (role.equals(PROVIDER_ROLE) || role.equals(CONSUMER_ROLE)) {
-                  contractNegotiationBuilder.protocol(
-                      Dsp2025Constants.DATASPACE_PROTOCOL_HTTP_V_2025_1);
+                  contractNegotiationBuilder.protocol(protocol);
                   contractNegotiationBuilder.counterPartyId(did);
                   contractNegotiationBuilder.counterPartyAddress(
                       newestQuoteVo.getContractNegotiationState().getCounterPartyAddress());

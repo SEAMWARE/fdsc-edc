@@ -1441,7 +1441,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             productInventoryApiClient,
             participantResolver,
             tmfEdcMapper,
-            participantId,
+            OwnParticipantIdentity.fixed(participantId),
             TEST_CONTROL_PLANE_ID,
             criterionOperatorRegistry,
             leaseHolder,
@@ -1558,7 +1558,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             productInventoryApiClient,
             participantResolver,
             tmfEdcMapper,
-            TEST_PROVIDER_ID,
+            OwnParticipantIdentity.fixed(TEST_PROVIDER_ID),
             TEST_CONTROL_PLANE_ID,
             criterionOperatorRegistry,
             leaseHolder,
@@ -2511,6 +2511,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             .setState(state)
             .setControlplane(TEST_CONTROL_PLANE)
             .setCounterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
+            .setProtocol(TEST_PROTOCOL)
             .setLeased(false)
             .setPending(false);
 
@@ -2528,6 +2529,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             .setState(state)
             .setControlplane(TEST_CONTROL_PLANE)
             .setCounterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
+            .setProtocol(TEST_PROTOCOL)
             .setLeased(false)
             .setPending(false);
 

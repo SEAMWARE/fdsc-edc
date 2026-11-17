@@ -39,10 +39,6 @@ import org.seamware.edc.tmf.ProductCatalogApiClient;
  */
 public class TMFBackedAssetIndex implements AssetIndex {
 
-  // left operand and operator of ParticipantResource.filterByParticipantContextId
-  private static final String PARTICIPANT_CONTEXT_ID_PROPERTY = "participantContextId";
-  private static final String EQUALS_OPERATOR = "=";
-
   private final Monitor monitor;
   private final ProductCatalogApiClient productCatalogApiClient;
   private final TMFEdcMapper tmfEdcMapper;
@@ -142,13 +138,7 @@ public class TMFBackedAssetIndex implements AssetIndex {
   private List<Asset> queryAssets(List<Criterion> criteria) {
     // stamped before the predicate runs, so a context criterion matches the shared products
     String participantContextId =
-        criteria.stream()
-            .filter(c -> PARTICIPANT_CONTEXT_ID_PROPERTY.equals(c.getOperandLeft()))
-            .filter(c -> EQUALS_OPERATOR.equals(c.getOperator()))
-            .map(Criterion::getOperandRight)
-            .filter(String.class::isInstance)
-            .map(String.class::cast)
-            .findFirst()
+        ContextCriteria.requestedContext(criteria)
             .orElse(tmfEdcMapper.getDefaultParticipantContextId());
     Predicate<Asset> predicate =
         criteria.stream()

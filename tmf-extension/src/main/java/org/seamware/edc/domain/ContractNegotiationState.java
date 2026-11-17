@@ -28,6 +28,7 @@ public class ContractNegotiationState {
   private String state;
   private String correlationId;
   private String counterPartyAddress;
+  private String protocol;
 
   public boolean isPending() {
     return isPending;
@@ -101,6 +102,32 @@ public class ContractNegotiationState {
     return this;
   }
 
+  /**
+   * The negotiation's dataspace protocol (profile name in virtual mode); absent on legacy quotes.
+   */
+  public String getProtocol() {
+    return protocol;
+  }
+
+  public ContractNegotiationState setProtocol(String protocol) {
+    this.protocol = protocol;
+    return this;
+  }
+
+  /** Field-by-field copy, so a partial PATCH of the state cannot drop a field it did not touch. */
+  public ContractNegotiationState copy() {
+    return new ContractNegotiationState()
+        .setPending(isPending)
+        .setLeased(isLeased)
+        .setLeasedBy(leasedBy)
+        .setLeaseExpiry(leaseExpiry)
+        .setControlplane(controlplane)
+        .setState(state)
+        .setCorrelationId(correlationId)
+        .setCounterPartyAddress(counterPartyAddress)
+        .setProtocol(protocol);
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -113,7 +140,8 @@ public class ContractNegotiationState {
         && Objects.equals(controlplane, that.controlplane)
         && Objects.equals(state, that.state)
         && Objects.equals(correlationId, that.correlationId)
-        && Objects.equals(counterPartyAddress, that.counterPartyAddress);
+        && Objects.equals(counterPartyAddress, that.counterPartyAddress)
+        && Objects.equals(protocol, that.protocol);
   }
 
   @Override
@@ -126,6 +154,7 @@ public class ContractNegotiationState {
         controlplane,
         state,
         correlationId,
-        counterPartyAddress);
+        counterPartyAddress,
+        protocol);
   }
 }

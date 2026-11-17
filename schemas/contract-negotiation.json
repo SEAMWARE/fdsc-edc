@@ -23,6 +23,10 @@
         "counterPartyAddress": {
           "type": "string"
         },
+        "protocol": {
+          "type": "string",
+          "description": "Dataspace protocol (profile name in virtual mode) of the negotiation."
+        },
         "state": {
           "type": "string",
           "enum": [

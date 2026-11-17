@@ -85,16 +85,19 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   private static final long OWN_LEASE_POLL_INTERVAL_MS = 100;
 
+  /** Page size for listing Quotes and Agreements from TMForum. */
+  private static final int TMF_PAGE_SIZE = 100;
+
   private final Monitor monitor;
   private final ObjectMapper objectMapper;
   private final QuoteApiClient quoteApi;
   private final AgreementApiClient agreementApi;
   private final ProductOrderApiClient productOrderApi;
-  private final ProductCatalogApiClient productCatalogApi;
+  private final ContractDefinitionIdResolver contractDefinitionIdResolver;
   private final ProductInventoryApiClient productInventoryApi;
   private final ParticipantResolver participantResolver;
   private final TMFEdcMapper tmfEdcMapper;
-  private final String participantId;
+  private final OwnParticipantIdentity ownParticipantIdentity;
   private final String controlplane;
 
   private final CriterionOperatorRegistry criterionOperatorRegistry;
@@ -126,7 +129,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       ProductInventoryApiClient productInventoryApi,
       ParticipantResolver participantResolver,
       TMFEdcMapper tmfEdcMapper,
-      String participantId,
+      OwnParticipantIdentity ownParticipantIdentity,
       String controlplane,
       CriterionOperatorRegistry criterionOperatorRegistry,
       LeaseHolder leaseHolder,
@@ -141,7 +144,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         productInventoryApi,
         participantResolver,
         tmfEdcMapper,
-        participantId,
+        ownParticipantIdentity,
         controlplane,
         criterionOperatorRegistry,
         leaseHolder,
@@ -159,7 +162,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       ProductInventoryApiClient productInventoryApi,
       ParticipantResolver participantResolver,
       TMFEdcMapper tmfEdcMapper,
-      String participantId,
+      OwnParticipantIdentity ownParticipantIdentity,
       String controlplane,
       CriterionOperatorRegistry criterionOperatorRegistry,
       LeaseHolder leaseHolder,
@@ -175,7 +178,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
         productInventoryApi,
         participantResolver,
         tmfEdcMapper,
-        participantId,
+        ownParticipantIdentity,
         controlplane,
         criterionOperatorRegistry,
         leaseHolder,
@@ -194,7 +197,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       ProductInventoryApiClient productInventoryApi,
       ParticipantResolver participantResolver,
       TMFEdcMapper tmfEdcMapper,
-      String participantId,
+      OwnParticipantIdentity ownParticipantIdentity,
       String controlplane,
       CriterionOperatorRegistry criterionOperatorRegistry,
       LeaseHolder leaseHolder,
@@ -206,11 +209,12 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     this.quoteApi = quoteApi;
     this.agreementApi = agreementApi;
     this.productOrderApi = productOrderApi;
-    this.productCatalogApi = productCatalogApi;
+    this.contractDefinitionIdResolver =
+        new ContractDefinitionIdResolver(monitor, productCatalogApi, tmfEdcMapper);
     this.productInventoryApi = productInventoryApi;
     this.participantResolver = participantResolver;
     this.tmfEdcMapper = tmfEdcMapper;
-    this.participantId = participantId;
+    this.ownParticipantIdentity = ownParticipantIdentity;
     this.leaseHolder = leaseHolder;
     this.controlplane = controlplane;
     this.criterionOperatorRegistry = criterionOperatorRegistry;
@@ -269,11 +273,18 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .map(criterionOperatorRegistry::<ContractAgreement>toPredicate)
             .reduce(x -> true, Predicate::and);
 
+    Optional<String> serverSideContext =
+        ContextCriteria.serverSideContext(criteria, tmfEdcMapper.getDefaultParticipantContextId());
+
     List<ContractAgreement> contractAgreements = new ArrayList<>();
     int offset = 0;
     boolean moreOfferingsAvailable = true;
     while (moreOfferingsAvailable) {
-      List<ExtendableAgreementVO> agreements = agreementApi.getAgreements(offset, 100);
+      int currentOffset = offset;
+      List<ExtendableAgreementVO> agreements =
+          serverSideContext
+              .map(context -> agreementApi.getAgreements(currentOffset, TMF_PAGE_SIZE, context))
+              .orElseGet(() -> agreementApi.getAgreements(currentOffset, TMF_PAGE_SIZE));
       agreements.stream()
           // only "AGREED" agreements can be considered as agreement in the terms of DSP
           .filter(agreement -> agreement.getStatus() != null)
@@ -291,8 +302,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
           .filter(filterPredicate)
           .forEach(contractAgreements::add);
 
-      moreOfferingsAvailable = agreements.size() == 100;
-      offset += 100;
+      moreOfferingsAvailable = agreements.size() == TMF_PAGE_SIZE;
+      offset += TMF_PAGE_SIZE;
     }
     return contractAgreements.stream();
   }
@@ -308,16 +319,24 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       return null;
     }
     return tmfEdcMapper.toContractNegotiation(
-        new ArrayList<>(contractNegotiations), agreementApi, participantResolver, participantId);
+        new ArrayList<>(contractNegotiations),
+        agreementApi,
+        participantResolver,
+        ownParticipantIdentity);
   }
 
-  private Map<String, List<ExtendableQuoteVO>> fetchQuotesByNegotiationId() {
+  /** Groups this controlplane's quotes by negotiation, filtered server-side by a context if set. */
+  private Map<String, List<ExtendableQuoteVO>> fetchQuotesByNegotiationId(
+      Optional<String> serverSideContext) {
     Map<String, List<ExtendableQuoteVO>> negotiations = new HashMap<>();
     int offset = 0;
     boolean moreQuotesAvailable = true;
-    int limit = 100;
     while (moreQuotesAvailable) {
-      List<ExtendableQuoteVO> extendableQuoteVOS = quoteApi.getQuotes(offset, limit);
+      int currentOffset = offset;
+      List<ExtendableQuoteVO> extendableQuoteVOS =
+          serverSideContext
+              .map(context -> quoteApi.getQuotes(currentOffset, TMF_PAGE_SIZE, context))
+              .orElseGet(() -> quoteApi.getQuotes(currentOffset, TMF_PAGE_SIZE));
       extendableQuoteVOS.stream()
           .filter(eqv -> eqv.getContractNegotiationState() != null)
           .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
@@ -326,14 +345,18 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                   negotiations
                       .computeIfAbsent(eqv.getExternalId(), k -> new ArrayList<>())
                       .add(eqv));
-      moreQuotesAvailable = extendableQuoteVOS.size() == limit;
-      offset += limit;
+      moreQuotesAvailable = extendableQuoteVOS.size() == TMF_PAGE_SIZE;
+      offset += TMF_PAGE_SIZE;
     }
     return negotiations;
   }
 
   private List<ContractNegotiation> getNegotiations(List<Criterion> criteria) {
-    return toNegotiations(fetchQuotesByNegotiationId(), criteria);
+    return toNegotiations(
+        fetchQuotesByNegotiationId(
+            ContextCriteria.serverSideContext(
+                criteria, tmfEdcMapper.getDefaultParticipantContextId())),
+        criteria);
   }
 
   private List<ContractNegotiation> toNegotiations(
@@ -344,7 +367,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             entry -> {
               try {
                 return tmfEdcMapper.toContractNegotiation(
-                    entry.getValue(), agreementApi, participantResolver, participantId);
+                    entry.getValue(), agreementApi, participantResolver, ownParticipantIdentity);
               } catch (RuntimeException e) {
                 monitor.warning(
                     String.format(
@@ -1117,13 +1140,18 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setPending(contractNegotiation.isPending())
             .setState(ContractNegotiationStates.TERMINATED.name())
             .setCorrelationId(contractNegotiation.getCorrelationId())
-            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress())
+            .setProtocol(contractNegotiation.getProtocol());
     preserveLeaseFields(orginialQuote.getContractNegotiationState(), contractNegotiationState);
 
     quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
+    quoteUpdateVO.setParticipantContextId(contractNegotiation.getParticipantContextId());
     quoteUpdateVO.setExtendableQuoteItem(
         offersToQuoteItems(
-            contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
+            contractNegotiation.getContractOffers(),
+            quoteState.getValue(),
+            isConsumer,
+            contractNegotiation.getParticipantContextId()));
 
     quoteApi.updateQuote(orginialQuote.getId(), quoteUpdateVO);
 
@@ -1139,6 +1167,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     ExtendableAgreementVO agreementVO =
         tmfEdcMapper.toAgreement(
             contractNegotiation.getId(), contractNegotiation.getContractAgreement());
+    // the negotiation's context, not the offering's set (decision 4)
+    agreementVO.setParticipantContextId(contractNegotiation.getParticipantContextId());
     // refer to the offering, as long as no product exists
     agreementVO.addAgreementItemItem(
         new AgreementItemVO()
@@ -1185,13 +1215,18 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setPending(contractNegotiation.isPending())
             .setState(contractNegotiation.stateAsString())
             .setCorrelationId(contractNegotiation.getCorrelationId())
-            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress())
+            .setProtocol(contractNegotiation.getProtocol());
     preserveLeaseFields(originalQuote.getContractNegotiationState(), contractNegotiationState);
 
     quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
+    quoteUpdateVO.setParticipantContextId(contractNegotiation.getParticipantContextId());
     quoteUpdateVO.setExtendableQuoteItem(
         offersToQuoteItems(
-            contractNegotiation.getContractOffers(), quoteState.getValue(), isConsumer));
+            contractNegotiation.getContractOffers(),
+            quoteState.getValue(),
+            isConsumer,
+            contractNegotiation.getParticipantContextId()));
 
     quoteApi.updateQuote(originalQuote.getId(), quoteUpdateVO);
 
@@ -1203,7 +1238,10 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   private List<ExtendableQuoteItemVO> offersToQuoteItems(
-      List<ContractOffer> offers, String negotiationState, boolean isConsumer) {
+      List<ContractOffer> offers,
+      String negotiationState,
+      boolean isConsumer,
+      String participantContextId) {
     monitor.info(String.format("Got %s offers. Is a consumer: %s", offers.size(), isConsumer));
     if (offers.isEmpty()) {
       return List.of();
@@ -1236,7 +1274,16 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
           .forEach(quoteItemVOS::add);
     }
 
-    return quoteItemVOS;
+    return withContext(quoteItemVOS, participantContextId);
+  }
+
+  /** A negotiation runs in exactly one context, so every item carries the negotiation's. */
+  private static List<ExtendableQuoteItemVO> withContext(
+      List<ExtendableQuoteItemVO> quoteItems, String participantContextId) {
+    quoteItems.stream()
+        .filter(Objects::nonNull)
+        .forEach(item -> item.setParticipantContextId(participantContextId));
+    return quoteItems;
   }
 
   private Optional<String> getTmfOfferId(ContractOffer contractOffer) {
@@ -1244,8 +1291,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     return ContractOfferId.parseId(contractOffer.getId())
         .asOptional()
         .map(ContractOfferId::definitionPart)
-        .flatMap(productCatalogApi::getProductOfferingByExternalId)
-        .map(ExtendableProductOffering::getId);
+        .flatMap(contractDefinitionIdResolver::resolve)
+        .map(resolved -> resolved.offering().getId());
   }
 
   private ExtendableQuoteVO createQuote(
@@ -1261,7 +1308,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setControlplane(controlplane)
             .setState(contractNegotiation.stateAsString())
             .setCorrelationId(contractNegotiation.getCorrelationId())
-            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress()));
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress())
+            .setProtocol(contractNegotiation.getProtocol()));
 
     List<ExtendableQuoteItemVO> extendableQuoteItemVOS =
         switch (contractNegotiation.getType()) {
@@ -1278,7 +1326,9 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                   .toList();
         };
 
-    quoteCreateVO.setExtendableQuoteItem(extendableQuoteItemVOS);
+    quoteCreateVO.setParticipantContextId(contractNegotiation.getParticipantContextId());
+    quoteCreateVO.setExtendableQuoteItem(
+        withContext(extendableQuoteItemVOS, contractNegotiation.getParticipantContextId()));
 
     getFromNegotiation(contractNegotiation).stream()
         .map(p -> new RelatedPartyVO().id(p.partyId()).role(p.role()))
@@ -1298,16 +1348,20 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   private List<PartyWithRole> getFromNegotiation(ContractNegotiation contractNegotiation) {
+    String ownTmfId =
+        participantResolver.getTmfId(
+            ownParticipantIdentity.participantId(
+                contractNegotiation.getParticipantContextId(), contractNegotiation.getProtocol()));
     if (roleFromNegotiation(contractNegotiation.getType()).equals(PROVIDER_ROLE)) {
       return List.of(
           new PartyWithRole(
               participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), CONSUMER_ROLE),
-          new PartyWithRole(participantResolver.getTmfId(participantId), PROVIDER_ROLE));
+          new PartyWithRole(ownTmfId, PROVIDER_ROLE));
     } else {
       return List.of(
           new PartyWithRole(
               participantResolver.getTmfId(contractNegotiation.getCounterPartyId()), PROVIDER_ROLE),
-          new PartyWithRole(participantResolver.getTmfId(participantId), CONSUMER_ROLE));
+          new PartyWithRole(ownTmfId, CONSUMER_ROLE));
     }
   }
 

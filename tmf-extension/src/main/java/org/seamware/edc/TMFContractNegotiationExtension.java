@@ -38,6 +38,7 @@ import org.eclipse.edc.connector.controlplane.transform.odrl.OdrlTransformersFac
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participant.spi.ParticipantIdMapper;
 import org.eclipse.edc.participantcontext.single.spi.SingleParticipantContextSupplier;
+import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
 import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.policy.model.Constraint;
 import org.eclipse.edc.policy.model.Policy;
@@ -357,7 +358,12 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               productInventoryApi(tmfConfig),
               participantResolver(tmfConfig),
               tmfEdcMapper(tmfConfig),
-              tmfConfig.getParticipantId(),
+              // looked up lazily: injecting it closes a boot cycle via the participant-context
+              // core; absent only on a classic runtime without that core (configured id is used)
+              new OwnParticipantIdentity(
+                  () -> serviceExtensionContext.getService(ParticipantIdentityResolver.class, true),
+                  tmfConfig.getParticipantId(),
+                  tmfConfig.getDefaultParticipantContextId()),
               controlplane,
               criterionOperatorRegistry,
               new TMFBackedLeaseHolder(

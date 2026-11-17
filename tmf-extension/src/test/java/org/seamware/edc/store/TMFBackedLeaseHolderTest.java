@@ -39,6 +39,9 @@ public class TMFBackedLeaseHolderTest {
   private static final String CONTROLPLANE = "cp-1";
   private static final String OTHER_CONTROLPLANE = "cp-2";
   private static final long NOW = 1000000L;
+  private static final String TEST_PROTOCOL = "custom-dataspace-profile";
+  private static final long LEASE_DURATION = 60000L;
+  private static final long REMAINING_LEASE = 30000L;
 
   private QuoteApiClient quoteApi;
   private Clock clock;
@@ -63,6 +66,7 @@ public class TMFBackedLeaseHolderTest {
             .setState("REQUESTING")
             .setCorrelationId("corr-1")
             .setCounterPartyAddress("http://peer")
+            .setProtocol(TEST_PROTOCOL)
             .setLeased(leased)
             .setLeasedBy(leasedBy)
             .setLeaseExpiry(leaseExpiry));
@@ -249,6 +253,23 @@ public class TMFBackedLeaseHolderTest {
 
       verify(quoteApi).updateQuote(eq("q-first"), any());
       verify(quoteApi).updateQuote(eq("q-second"), any());
+    }
+
+    @Test
+    void changes_only_lease_fields() {
+      when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
+          .thenReturn(List.of(unleased("q-1")));
+      ContractNegotiationState expected =
+          quoteWith("q-1", CONTROLPLANE, true, "lock-1", NOW + LEASE_DURATION)
+              .getContractNegotiationState();
+      when(quoteApi.updateQuote(eq("q-1"), any()))
+          .thenReturn(quoteWith("q-1", CONTROLPLANE, true, "lock-1", NOW + LEASE_DURATION));
+
+      leaseHolder.acquireLease("neg-1", "lock-1", Duration.ofMillis(LEASE_DURATION));
+
+      verify(quoteApi)
+          .updateQuote(
+              eq("q-1"), argThat(update -> expected.equals(update.getContractNegotiationState())));
     }
 
     @Test
@@ -474,6 +495,21 @@ public class TMFBackedLeaseHolderTest {
                         && CONTROLPLANE.equals(s.getControlplane())
                         && !s.isLeased();
                   }));
+    }
+
+    @Test
+    void changes_only_lease_fields() {
+      ExtendableQuoteVO quote =
+          quoteWith("q-1", CONTROLPLANE, true, "lock-1", NOW + REMAINING_LEASE);
+      when(quoteApi.findByNegotiationIdAndStates(eq("neg-1"), anyCollection()))
+          .thenReturn(List.of(quote));
+      ContractNegotiationState expected = unleased("q-1").getContractNegotiationState();
+
+      leaseHolder.releaseLease("neg-1", "lock-1", "done");
+
+      verify(quoteApi)
+          .updateQuote(
+              eq("q-1"), argThat(update -> expected.equals(update.getContractNegotiationState())));
     }
 
     @Test
