@@ -36,20 +36,32 @@ package org.seamware.edc.tir;
  * #L%
  */
 
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
 import org.eclipse.edc.iam.verifiablecredentials.spi.validation.TrustedIssuerRegistry;
 import org.seamware.til.model.CredentialsVO;
 import org.seamware.til.model.TrustedIssuerVO;
 
+/**
+ * Trusted issuer registry backed by one or more EBSI TILs. Lookups return the union of all TILs;
+ * registrations go to the first (primary) TIL only.
+ */
 public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
 
   private final TirClient tirClient;
+  private final List<TirClient> lookupClients;
 
   public EbsiTrustedIssuersRegistry(TirClient tirClient) {
+    this(tirClient, List.of());
+  }
+
+  public EbsiTrustedIssuersRegistry(TirClient tirClient, List<TirClient> additionalClients) {
     this.tirClient = tirClient;
+    this.lookupClients = Stream.concat(Stream.of(tirClient), additionalClients.stream()).toList();
   }
 
   @Override
@@ -70,15 +82,12 @@ public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
 
   @Override
   public Set<String> getSupportedTypes(Issuer issuer) {
-    return tirClient
-        .getIssuer(issuer.id())
+    return lookupClients.stream()
+        .flatMap(client -> client.getIssuer(issuer.id()).stream())
         .filter(trustedIssuer -> trustedIssuer.getCredentials() != null)
-        .map(
-            trustedIssuer ->
-                trustedIssuer.getCredentials().stream()
-                    .map(CredentialsVO::getCredentialsType)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toSet()))
-        .orElse(Set.of());
+        .flatMap(trustedIssuer -> trustedIssuer.getCredentials().stream())
+        .map(CredentialsVO::getCredentialsType)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
   }
 }

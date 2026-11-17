@@ -36,8 +36,10 @@ package org.seamware.edc;
  * #L%
  */
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.eclipse.edc.spi.EdcException;
@@ -49,8 +51,18 @@ public class DcpConfig {
 
   private static final String DCP_CONFIG = "dcp";
   private static final String DCP_SCOPES_CONFIG = "dcp.scopes";
+
+  /** Per-profile scope overrides: {@code dcp.profiles.<profileName>.scopes.*}. */
+  public static final String DCP_PROFILES_CONFIG = "dcp.profiles";
+
+  private static final String SCOPES_CONFIG = "scopes";
+  private static final String CATALOG_KEY = "catalog";
+  private static final String NEGOTIATION_KEY = "negotiation";
+  private static final String TRANSFER_KEY = "transfer";
+
   private boolean enabled;
   private Scopes scopes;
+  private Map<String, Scopes> profileScopes = Map.of();
 
   public boolean isEnabled() {
     return enabled;
@@ -60,6 +72,11 @@ public class DcpConfig {
     return scopes;
   }
 
+  /** Scope overrides keyed by dataspace profile name; empty when no profile overrides are set. */
+  public Map<String, Scopes> getProfileScopes() {
+    return profileScopes;
+  }
+
   public static DcpConfig fromConfig(Config config) {
     Config dcpConfig = config.getConfig(DCP_CONFIG);
     DcpConfig.Builder dcpConfigBuilder = DcpConfig.Builder.newInstance();
@@ -67,17 +84,27 @@ public class DcpConfig {
     getNullSafeFromConfig(() -> dcpConfig.getBoolean("enabled"))
         .ifPresent(dcpConfigBuilder::enabled);
 
-    Config scopesConfig = config.getConfig(DCP_SCOPES_CONFIG);
-    Scopes.Builder scopesBuilder = new Scopes.Builder();
-    getNullSafeFromConfig(() -> scopesConfig.getString("catalog"))
-        .ifPresent(scopesBuilder::catalog);
-    getNullSafeFromConfig(() -> scopesConfig.getString("negotiation"))
-        .ifPresent(scopesBuilder::negotiation);
-    getNullSafeFromConfig(() -> scopesConfig.getString("transfer"))
-        .ifPresent(scopesBuilder::transfer);
-
-    dcpConfigBuilder.scopes(scopesBuilder.build());
+    dcpConfigBuilder.scopes(scopesFrom(config.getConfig(DCP_SCOPES_CONFIG)));
+    dcpConfigBuilder.profileScopes(
+        config
+            .getConfig(DCP_PROFILES_CONFIG)
+            .partition()
+            .collect(
+                Collectors.toMap(
+                    Config::currentNode,
+                    profileConfig -> scopesFrom(profileConfig.getConfig(SCOPES_CONFIG)))));
     return dcpConfigBuilder.build();
+  }
+
+  private static Scopes scopesFrom(Config scopesConfig) {
+    Scopes.Builder scopesBuilder = new Scopes.Builder();
+    getNullSafeFromConfig(() -> scopesConfig.getString(CATALOG_KEY))
+        .ifPresent(scopesBuilder::catalog);
+    getNullSafeFromConfig(() -> scopesConfig.getString(NEGOTIATION_KEY))
+        .ifPresent(scopesBuilder::negotiation);
+    getNullSafeFromConfig(() -> scopesConfig.getString(TRANSFER_KEY))
+        .ifPresent(scopesBuilder::transfer);
+    return scopesBuilder.build();
   }
 
   public record Scopes(String catalog, String negotiation, String transfer) {
@@ -136,6 +163,11 @@ public class DcpConfig {
 
     public Builder scopes(Scopes scopes) {
       dcpConfig.scopes = scopes;
+      return this;
+    }
+
+    public Builder profileScopes(Map<String, Scopes> profileScopes) {
+      dcpConfig.profileScopes = Map.copyOf(profileScopes);
       return this;
     }
 

@@ -29,6 +29,19 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
+            <artifactId>protocol-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <!-- DataspaceProfileContextRegistryImpl, extended for the per-profile TIR check; the
+             controlplane runtime already ships control-plane-core. -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>control-plane-core</artifactId>
+            <version>${edc.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
             <artifactId>identity-did-spi</artifactId>
             <version>${edc.version}</version>
         </dependency>

@@ -40,6 +40,9 @@ import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.eclipse.edc.connector.controlplane.contract.spi.policy.TransferProcessPolicyContext;
 import org.eclipse.edc.iam.decentralizedclaims.spi.scope.ScopeExtractorRegistry;
 import org.eclipse.edc.iam.decentralizedclaims.spi.verification.SignatureSuiteRegistry;
@@ -47,6 +50,7 @@ import org.eclipse.edc.iam.verifiablecredentials.spi.VcConstants;
 import org.eclipse.edc.iam.verifiablecredentials.spi.validation.TrustedIssuerRegistry;
 import org.eclipse.edc.policy.context.request.spi.RequestCatalogPolicyContext;
 import org.eclipse.edc.policy.context.request.spi.RequestContractNegotiationPolicyContext;
+import org.eclipse.edc.policy.context.request.spi.RequestPolicyContext;
 import org.eclipse.edc.policy.context.request.spi.RequestTransferProcessPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.policy.engine.spi.RuleBindingRegistry;
@@ -98,26 +102,18 @@ public class DCPExtension implements ServiceExtension {
       // register signature suite
       var suite = new Jws2020SignatureSuite(typeManager.getMapper(JSON_LD));
       signatureSuiteRegistry.register(VcConstants.JWS_2020_SIGNATURE_SUITE, suite);
-      DcpConfig.Scopes scopes = dcpConfig.getScopes();
-      if (!scopes.catalog().isEmpty()) {
-        monitor.debug("[DCPExtension] Configure post validator for catalog: " + scopes.catalog());
-        policyEngine.registerPostValidator(
-            RequestCatalogPolicyContext.class,
-            new DefaultScopeMappingFunction(monitor, scopes.catalog())::apply);
-      }
-      if (!scopes.negotiation().isEmpty()) {
-        monitor.debug(
-            "[DCPExtension] Configure post validator for negotiation: " + scopes.negotiation());
-        policyEngine.registerPostValidator(
-            RequestContractNegotiationPolicyContext.class,
-            new DefaultScopeMappingFunction(monitor, scopes.negotiation())::apply);
-      }
-      if (!scopes.transfer().isEmpty()) {
-        monitor.debug("[DCPExtension] Configure post validator for transfer: " + scopes.transfer());
-        policyEngine.registerPostValidator(
-            RequestTransferProcessPolicyContext.class,
-            new DefaultScopeMappingFunction(monitor, scopes.transfer())::apply);
-      }
+      registerScopeValidator(
+          dcpConfig, RequestCatalogPolicyContext.class, "catalog", DcpConfig.Scopes::catalog);
+      registerScopeValidator(
+          dcpConfig,
+          RequestContractNegotiationPolicyContext.class,
+          "negotiation",
+          DcpConfig.Scopes::negotiation);
+      registerScopeValidator(
+          dcpConfig,
+          RequestTransferProcessPolicyContext.class,
+          "transfer",
+          DcpConfig.Scopes::transfer);
       // ODRL-PAP based policy evaluation is handled by OdrlPapPolicyExtension
       // (policy-extension module). Enable via odrlPap.policy.enabled=true.
 
@@ -135,6 +131,29 @@ public class DCPExtension implements ServiceExtension {
           "dayOfWeek",
           new DayOfWeekEvaluator<>(monitor, clock));
     }
+  }
+
+  // Registered only when the request type has a global scope or at least one profile override.
+  private <C extends RequestPolicyContext> void registerScopeValidator(
+      DcpConfig dcpConfig,
+      Class<C> contextType,
+      String requestType,
+      Function<DcpConfig.Scopes, String> scopeOf) {
+    String defaultScope = scopeOf.apply(dcpConfig.getScopes());
+    Map<String, String> profileScopes =
+        dcpConfig.getProfileScopes().entrySet().stream()
+            .filter(profile -> !scopeOf.apply(profile.getValue()).isEmpty())
+            .collect(
+                Collectors.toMap(Map.Entry::getKey, profile -> scopeOf.apply(profile.getValue())));
+    if (defaultScope.isEmpty() && profileScopes.isEmpty()) {
+      return;
+    }
+    monitor.debug(
+        String.format(
+            "[DCPExtension] Configure post validator for %s: %s, per profile: %s",
+            requestType, defaultScope, profileScopes));
+    policyEngine.registerPostValidator(
+        contextType, new DefaultScopeMappingFunction(monitor, defaultScope, profileScopes)::apply);
   }
 
   /**

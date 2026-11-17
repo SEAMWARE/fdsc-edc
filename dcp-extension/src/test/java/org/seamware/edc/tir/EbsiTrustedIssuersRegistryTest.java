@@ -107,6 +107,21 @@ public class EbsiTrustedIssuersRegistryTest {
         "If the issuer has no types, none should be returned.");
   }
 
+  @Test
+  public void testGetSupportedTypes_union_of_all_tils() {
+    TirClient profileTirClient = mock(TirClient.class);
+    when(tirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("global-credential"))));
+    when(profileTirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("profile-credential"))));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(tirClient, List.of(profileTirClient));
+
+    assertEquals(
+        Set.of("global-credential", "profile-credential"),
+        registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+  }
+
   private static Stream<Arguments> getTypeSets() {
     return Stream.of(
         Arguments.of(Set.of("test-credential")),

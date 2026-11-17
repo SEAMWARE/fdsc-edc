@@ -37,21 +37,31 @@ package org.seamware.edc;
  */
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import okhttp3.OkHttpClient;
 import org.eclipse.edc.iam.verifiablecredentials.spi.validation.TrustedIssuerRegistry;
+import org.eclipse.edc.protocol.spi.DataspaceProfileContextRegistry;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.seamware.edc.tir.EbsiTrustedIssuersRegistry;
+import org.seamware.edc.tir.ProfileTrustCheckingContextRegistry;
 import org.seamware.edc.tir.TirClient;
 
-@Provides({TrustedIssuerRegistry.class})
+/**
+ * Backs DCP issuer validation with EBSI TILs. Profiles with their own TIL ({@code
+ * ebsiTir.profiles.*}) additionally get a profile registry that only trusts that TIL's issuers.
+ */
+@Provides({TrustedIssuerRegistry.class, DataspaceProfileContextRegistry.class})
 public class TirExtension implements ServiceExtension {
 
   private TirClient tirClient;
   private TrustedIssuerRegistry trustedIssuerRegistry;
+  private Map<String, TirClient> profileTirClients;
 
   @Inject private Monitor monitor;
 
@@ -64,12 +74,26 @@ public class TirExtension implements ServiceExtension {
     TirConfig tirConfig = TirConfig.fromConfig(context.getConfig());
     if (tirConfig.isEnabled()) {
       context.registerService(TrustedIssuerRegistry.class, trustedIssuerRegistry(context));
+      Map<String, TirClient> profileClients = profileTirClients(context);
+      if (!profileClients.isEmpty()) {
+        context.registerService(
+            DataspaceProfileContextRegistry.class,
+            new ProfileTrustCheckingContextRegistry(
+                monitor,
+                profileClients.entrySet().stream()
+                    .collect(
+                        Collectors.toMap(
+                            Map.Entry::getKey,
+                            profile -> new EbsiTrustedIssuersRegistry(profile.getValue())))));
+      }
     }
   }
 
   public TrustedIssuerRegistry trustedIssuerRegistry(ServiceExtensionContext context) {
     if (trustedIssuerRegistry == null) {
-      trustedIssuerRegistry = new EbsiTrustedIssuersRegistry(tirClient(context));
+      trustedIssuerRegistry =
+          new EbsiTrustedIssuersRegistry(
+              tirClient(context), List.copyOf(profileTirClients(context).values()));
     }
     return trustedIssuerRegistry;
   }
@@ -80,5 +104,18 @@ public class TirExtension implements ServiceExtension {
       tirClient = new TirClient(monitor, okHttpClient, tirConfig.getTilAddress(), objectMapper);
     }
     return tirClient;
+  }
+
+  private Map<String, TirClient> profileTirClients(ServiceExtensionContext context) {
+    if (profileTirClients == null) {
+      profileTirClients =
+          TirConfig.fromConfig(context.getConfig()).getProfileTilAddresses().entrySet().stream()
+              .collect(
+                  Collectors.toMap(
+                      Map.Entry::getKey,
+                      profile ->
+                          new TirClient(monitor, okHttpClient, profile.getValue(), objectMapper)));
+    }
+    return profileTirClients;
   }
 }

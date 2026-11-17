@@ -483,6 +483,14 @@ per context, stamped with that context id. That is out of scope here.
    If it cannot be replaced in place, re-register the profile under the same
    name, built from the same `edc.dataspace.profiles.*` values.
 
+   **Resolved in Step 6:** a profile cannot be replaced in place (the registry
+   only appends). Upstream's `DataspaceProfileContextRegistryImpl` is a
+   `@Provider(isDefault = true)` (`ControlPlaneDefaultServicesExtension:101`),
+   so `TirExtension` provides `ProfileTrustCheckingContextRegistry` instead,
+   which wraps the id-extraction function of each profile with its own TIL as
+   the profile is registered. Without `ebsiTir.profiles.*` it is not
+   registered and upstream's default stays in place.
+
 ### Management API auth for operators
 
 - The keys of `management-api-oauth2-authentication` are `edc.iam.oauth2.issuer`,

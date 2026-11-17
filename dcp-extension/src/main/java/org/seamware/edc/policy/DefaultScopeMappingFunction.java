@@ -36,30 +36,49 @@ package org.seamware.edc.policy;
  * #L%
  */
 
+import java.util.Map;
+import java.util.Optional;
 import org.eclipse.edc.policy.context.request.spi.RequestPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyValidatorRule;
 import org.eclipse.edc.policy.model.Policy;
-import org.eclipse.edc.spi.iam.RequestScope;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
 
+/**
+ * Adds the configured DCP scope to an outgoing request. The scope is chosen by the message's
+ * protocol (the dataspace profile name); profiles without an override use the default scope.
+ */
 public class DefaultScopeMappingFunction implements PolicyValidatorRule<RequestPolicyContext> {
 
   private final Monitor monitor;
   private final String defaultScope;
+  private final Map<String, String> profileScopes;
 
   public DefaultScopeMappingFunction(Monitor monitor, String defaultScope) {
+    this(monitor, defaultScope, Map.of());
+  }
+
+  public DefaultScopeMappingFunction(
+      Monitor monitor, String defaultScope, Map<String, String> profileScopes) {
     this.monitor = monitor;
     this.defaultScope = defaultScope;
+    this.profileScopes = Map.copyOf(profileScopes);
   }
 
   @Override
   public Boolean apply(Policy policy, RequestPolicyContext requestPolicyContext) {
+    String scope =
+        Optional.ofNullable(requestPolicyContext.requestContext().getMessage())
+            .map(RemoteMessage::getProtocol)
+            .map(profileScopes::get)
+            .orElse(defaultScope);
+    if (scope == null || scope.isEmpty()) {
+      return true;
+    }
     monitor.debug(
         String.format(
-            "Add scope %s for %s.",
-            defaultScope, requestPolicyContext.requestContext().toString()));
-    RequestScope.Builder requestScopeBuilder = requestPolicyContext.requestScopeBuilder();
-    requestScopeBuilder.scope(defaultScope);
+            "Add scope %s for %s.", scope, requestPolicyContext.requestContext().toString()));
+    requestPolicyContext.requestScopeBuilder().scope(scope);
     return true;
   }
 }
