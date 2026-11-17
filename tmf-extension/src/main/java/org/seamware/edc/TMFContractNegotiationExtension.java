@@ -38,6 +38,7 @@ import org.eclipse.edc.connector.controlplane.transform.odrl.OdrlTransformersFac
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participant.spi.ParticipantIdMapper;
 import org.eclipse.edc.participantcontext.single.spi.SingleParticipantContextSupplier;
+import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
 import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.policy.model.Constraint;
 import org.eclipse.edc.policy.model.Policy;
@@ -123,6 +124,10 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   // runtime, which registers a different supplier type - hence optional rather than required.
   @Inject(required = false)
   private SingleParticipantContextSupplier participantContextSupplier;
+
+  // absent only on a classic runtime without the connector core; then the configured id is used
+  @Inject(required = false)
+  private ParticipantIdentityResolver participantIdentityResolver;
 
   @Override
   public String name() {
@@ -357,7 +362,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               productInventoryApi(tmfConfig),
               participantResolver(tmfConfig),
               tmfEdcMapper(tmfConfig),
-              tmfConfig.getParticipantId(),
+              new OwnParticipantIdentity(participantIdentityResolver, tmfConfig.getParticipantId()),
               controlplane,
               criterionOperatorRegistry,
               new TMFBackedLeaseHolder(

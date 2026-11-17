@@ -49,6 +49,7 @@ import org.eclipse.edc.connector.controlplane.contract.spi.validation.Validatabl
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
@@ -553,7 +554,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             new ArrayList<>(inputQuotes),
             agreementApiClient,
             participantResolver,
-            participantInput);
+            OwnParticipantIdentity.fixed(participantInput));
     assertEquals(
         SORTED_MAPPER.writeValueAsString(expectedNegotiation),
         SORTED_MAPPER.writeValueAsString(contractNegotiation),
@@ -578,7 +579,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                 new ArrayList<>(List.of(failingQuote)),
                 agreementApiClient,
                 participantResolver,
-                TEST_CONSUMER_DID),
+                OwnParticipantIdentity.fixed(TEST_CONSUMER_DID)),
         "If the negotiation state does not contain a valid state, an exception should be thrown.");
   }
 
@@ -600,7 +601,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                 new ArrayList<>(List.of(failingQuote)),
                 agreementApiClient,
                 participantResolver,
-                TEST_CONSUMER_DID),
+                OwnParticipantIdentity.fixed(TEST_CONSUMER_DID)),
         "If no negotiation state is contained, an exception should be thrown.");
   }
 
@@ -653,9 +654,48 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                 new ArrayList<>(List.of(newest, older)),
                 agreementApiClient,
                 participantResolver,
-                TEST_CONSUMER_DID);
+                OwnParticipantIdentity.fixed(TEST_CONSUMER_DID));
 
     assertEquals(expectedContext, negotiation.getParticipantContextId());
+  }
+
+  private static Stream<Arguments> ownIdentityPerContext() {
+    return Stream.of(
+        Arguments.of(CONTEXT_A, TEST_PROVIDER_DID, ContractNegotiation.Type.PROVIDER),
+        Arguments.of(CONTEXT_B, TEST_CONSUMER_DID, ContractNegotiation.Type.CONSUMER));
+  }
+
+  @ParameterizedTest(name = "context {0} with own id {1} -> {2}")
+  @MethodSource("ownIdentityPerContext")
+  public void toContractNegotiation_derivesTheTypeFromTheContextsOwnId(
+      String context, String ownDid, ContractNegotiation.Type expectedType) {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+    givenOrganizationsResolveToDids();
+    AgreementApiClient agreementApiClient = mock(AgreementApiClient.class);
+    when(agreementApiClient.findByNegotiationId(any())).thenReturn(Optional.empty());
+    ParticipantIdentityResolver identityResolver = mock(ParticipantIdentityResolver.class);
+    when(identityResolver.getParticipantId(eq(context), any())).thenReturn(ownDid);
+    ExtendableQuoteVO quote =
+        getExtendableQuoteVo(
+            negotiationState("REQUESTED", true),
+            QuoteStateTypeVO.IN_PROGRESS,
+            TEST_CONSUMER_TMF_ID,
+            TEST_PROVIDER_TMF_ID,
+            1,
+            List.of(String.format("%s:%s:%s", TEST_OFFER_ID, TEST_ASSET_ID, "1")));
+    quote.setParticipantContextId(context);
+
+    ContractNegotiation negotiation =
+        mapperWithDefault(TEST_PARTICIPANT_CONTEXT_ID)
+            .toContractNegotiation(
+                new ArrayList<>(List.of(quote)),
+                agreementApiClient,
+                participantResolver,
+                new OwnParticipantIdentity(identityResolver, TEST_CONSUMER_DID));
+
+    assertEquals(expectedType, negotiation.getType());
   }
 
   /** Mapper default, agreement's tag, expected agreement context. */
