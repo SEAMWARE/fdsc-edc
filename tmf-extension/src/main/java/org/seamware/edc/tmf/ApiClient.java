@@ -36,12 +36,29 @@ public abstract class ApiClient {
   /** Separates alternatives within one TMForum query value, which the server ORs. */
   protected static final String QUERY_VALUE_OR_SEPARATOR = ",";
 
+  /** Characters TMForum splits a query value on; a context filter value must not contain them. */
+  private static final String QUERY_VALUE_SEPARATORS = ",;";
+
   protected final Monitor monitor;
   protected final OkHttpClient okHttpClient;
 
   protected ApiClient(Monitor monitor, OkHttpClient okHttpClient) {
     this.monitor = monitor;
     this.okHttpClient = okHttpClient;
+  }
+
+  /**
+   * Rejects a context id TMForum would split into several alternatives, which would widen the
+   * filter to other contexts.
+   */
+  protected static String requireFilterableContextId(String participantContextId) {
+    if (participantContextId.chars().anyMatch(c -> QUERY_VALUE_SEPARATORS.indexOf(c) >= 0)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Participant context id '%s' must not contain any of '%s'.",
+              participantContextId, QUERY_VALUE_SEPARATORS));
+    }
+    return participantContextId;
   }
 
   protected ResponseBody executeRequest(Request request) {

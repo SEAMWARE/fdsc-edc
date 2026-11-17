@@ -70,7 +70,8 @@ public class ProductCatalogApiClient extends ApiClient {
 
   /**
    * Get the product offerings made in the given context, i.e. tagged with it or with {@link
-   * TMFConfig#ALL_PARTICIPANT_CONTEXTS}. A null context applies no filter.
+   * TMFConfig#ALL_PARTICIPANT_CONTEXTS}. A null context applies no filter; a context containing
+   * {@code ,} or {@code ;} throws {@link IllegalArgumentException}.
    */
   public List<ExtendableProductOffering> getProductOfferings(
       int offset, int limit, @Nullable String participantContextId) {
@@ -81,7 +82,10 @@ public class ProductCatalogApiClient extends ApiClient {
     if (participantContextId != null) {
       urlBuilder.addQueryParameter(
           PARTICIPANT_CONTEXT_IDS_QUERY_PARAM,
-          String.join(QUERY_VALUE_OR_SEPARATOR, participantContextId, ALL_PARTICIPANT_CONTEXTS));
+          String.join(
+              QUERY_VALUE_OR_SEPARATOR,
+              requireFilterableContextId(participantContextId),
+              ALL_PARTICIPANT_CONTEXTS));
     }
     Request request = new Request.Builder().url(urlBuilder.build()).build();
     try (ResponseBody responseBody = executeRequest(request)) {

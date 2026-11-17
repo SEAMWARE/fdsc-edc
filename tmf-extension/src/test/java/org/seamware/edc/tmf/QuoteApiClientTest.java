@@ -79,6 +79,13 @@ public class QuoteApiClientTest extends AbstractApiTest {
         expectedFilter, recordedRequest.getRequestUrl().queryParameter("participantContextId"));
   }
 
+  @ParameterizedTest(name = "context {0}")
+  @ValueSource(strings = {"ctx-a,ctx-b", "ctx-a;ctx-b", ","})
+  public void testGetQuotes_rejectsContextThatWidensTheFilter(String context) {
+    assertThrows(IllegalArgumentException.class, () -> quoteApiClient.getQuotes(0, 5, context));
+    assertEquals(0, mockWebServer.getRequestCount(), "No request may be sent.");
+  }
+
   @Test
   public void testGetQuotes_invalid_content() throws Exception {
     mockResponse(200, "invalid");

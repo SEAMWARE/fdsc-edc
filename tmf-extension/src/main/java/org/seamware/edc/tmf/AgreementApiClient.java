@@ -62,7 +62,8 @@ public class AgreementApiClient extends ApiClient {
   }
 
   /**
-   * Returns the agreements tagged with the given context, paged. A null context applies no filter.
+   * Returns the agreements tagged with the given context, paged. A null context applies no filter;
+   * a context containing {@code ,} or {@code ;} throws {@link IllegalArgumentException}.
    */
   public List<ExtendableAgreementVO> getAgreements(
       int offset, int limit, @Nullable String participantContextId) {
@@ -71,7 +72,8 @@ public class AgreementApiClient extends ApiClient {
     urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
     urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(limit));
     if (participantContextId != null) {
-      urlBuilder.addQueryParameter(PARTICIPANT_CONTEXT_ID_QUERY_PARAM, participantContextId);
+      urlBuilder.addQueryParameter(
+          PARTICIPANT_CONTEXT_ID_QUERY_PARAM, requireFilterableContextId(participantContextId));
     }
     Request request = new Request.Builder().url(urlBuilder.build()).build();
     try (ResponseBody responseBody = executeRequest(request)) {

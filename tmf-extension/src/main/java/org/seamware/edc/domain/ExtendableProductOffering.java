@@ -21,6 +21,7 @@ import static org.seamware.edc.domain.ExtendableProduct.EXTERNAL_ID_SCHEMA;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,9 +49,10 @@ public class ExtendableProductOffering extends ProductOfferingVO {
   @JsonProperty("externalId")
   private String externalId;
 
-  // never serialized as [], TMForum stores that but reads it back as [{}]
+  // never serialized as [], TMForum stores that but reads it back as [{}]; tolerate it on read
   @JsonProperty("participantContextIds")
   @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @JsonDeserialize(using = LenientStringListDeserializer.class)
   private List<String> participantContextIds;
 
   private ExtendableProductSpecificationRef productSpecification;

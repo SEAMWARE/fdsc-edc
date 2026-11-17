@@ -90,6 +90,15 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
         expectedFilter, recordedRequest.getRequestUrl().queryParameter("participantContextIds"));
   }
 
+  @ParameterizedTest(name = "context {0}")
+  @ValueSource(strings = {"ctx-a,ctx-b", "ctx-a;ctx-b", ","})
+  public void testGetProductOfferings_rejectsContextThatWidensTheFilter(String context) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> productCatalogApiClient.getProductOfferings(0, 5, context));
+    assertEquals(0, mockWebServer.getRequestCount(), "No request may be sent.");
+  }
+
   @Test
   public void testGetProductOfferings_success_empty() throws Exception {
     mockResponse(200, List.of());

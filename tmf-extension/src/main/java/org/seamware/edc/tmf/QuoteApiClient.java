@@ -60,7 +60,10 @@ public class QuoteApiClient extends ApiClient {
     return getQuotes(offset, limit, null);
   }
 
-  /** Returns the quotes tagged with the given context, paged. A null context applies no filter. */
+  /**
+   * Returns the quotes tagged with the given context, paged. A null context applies no filter; a
+   * context containing {@code ,} or {@code ;} throws {@link IllegalArgumentException}.
+   */
   public List<ExtendableQuoteVO> getQuotes(
       int offset, int limit, @Nullable String participantContextId) {
     HttpUrl.Builder urlBuilder = HttpUrl.parse(baseUrl).newBuilder();
@@ -68,7 +71,8 @@ public class QuoteApiClient extends ApiClient {
     urlBuilder.addQueryParameter(OFFSET_PARAM, String.valueOf(offset));
     urlBuilder.addQueryParameter(LIMIT_PARAM, String.valueOf(limit));
     if (participantContextId != null) {
-      urlBuilder.addQueryParameter(PARTICIPANT_CONTEXT_ID_QUERY_PARAM, participantContextId);
+      urlBuilder.addQueryParameter(
+          PARTICIPANT_CONTEXT_ID_QUERY_PARAM, requireFilterableContextId(participantContextId));
     }
     //    only get quotes that we are responsible for
     //    urlBuilder.addQueryParameter(CONTROL_PLANE_ID_PARAM, controlPlaneId);

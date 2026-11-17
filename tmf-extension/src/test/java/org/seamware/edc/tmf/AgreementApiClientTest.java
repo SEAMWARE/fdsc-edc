@@ -112,6 +112,14 @@ public class AgreementApiClientTest extends AbstractApiTest {
         expectedFilter, recordedRequest.getRequestUrl().queryParameter("participantContextId"));
   }
 
+  @ParameterizedTest(name = "context {0}")
+  @ValueSource(strings = {"ctx-a,ctx-b", "ctx-a;ctx-b", ","})
+  public void testGetAgreements_rejectsContextThatWidensTheFilter(String context) {
+    assertThrows(
+        IllegalArgumentException.class, () -> agreementApiClient.getAgreements(0, 5, context));
+    assertEquals(0, mockWebServer.getRequestCount(), "No request may be sent.");
+  }
+
   @Test
   public void testGetAgreements_invalid_content() throws Exception {
     mockResponse(200, "invalid");

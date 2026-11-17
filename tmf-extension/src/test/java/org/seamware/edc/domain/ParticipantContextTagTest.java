@@ -206,6 +206,30 @@ class ParticipantContextTagTest {
         node.has(CONTEXT_IDS_PROPERTY), "TMForum reads an empty array back as [{}], omit it.");
   }
 
+  private static Stream<Arguments> storedOfferingContexts() {
+    return Stream.of(
+        Arguments.of("[{}]", null),
+        Arguments.of("[{}, \"" + CONTEXT_A + "\"]", List.of(CONTEXT_A)),
+        Arguments.of("[]", null),
+        Arguments.of("\"\"", null),
+        Arguments.of("\"" + CONTEXT_A + "\"", List.of(CONTEXT_A)),
+        Arguments.of(
+            "[\"" + CONTEXT_A + "\", 1, \"" + ALL_CONTEXTS + "\"]",
+            List.of(CONTEXT_A, ALL_CONTEXTS)),
+        Arguments.of("null", null));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("storedOfferingContexts")
+  void offeringParticipantContextIds_readsMalformedStoredValuesLeniently(
+      String storedValue, List<String> expected) throws Exception {
+    String json = "{\"" + CONTEXT_IDS_PROPERTY + "\":" + storedValue + "}";
+
+    ExtendableProductOffering read = OBJECT_MAPPER.readValue(json, ExtendableProductOffering.class);
+
+    assertEquals(expected, read.getParticipantContextIds());
+  }
+
   @Test
   void offeringParticipantContextIds_isPartOfEquality() {
     assertNotEquals(
