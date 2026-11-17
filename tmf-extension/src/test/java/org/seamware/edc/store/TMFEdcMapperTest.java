@@ -46,6 +46,8 @@ import org.eclipse.edc.connector.controlplane.contract.spi.types.negotiation.Con
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractOffer;
 import org.eclipse.edc.connector.controlplane.contract.spi.validation.ValidatableConsumerOffer;
+import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
+import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -77,6 +79,13 @@ class TMFEdcMapperTest extends AbstractStoreTest {
           .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
           .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
           .build();
+
+  private static final String CONTEXT_A = "did:web:dataspace-a";
+  private static final String CONTEXT_B = "did:web:dataspace-b";
+  private static final String TEST_TRANSFER_ID = "test-transfer";
+  private static final String TEST_PRODUCT_ID = "test-product";
+  private static final String TEST_TRANSFER_TYPE = "HttpData-PULL";
+  private static final String TEST_PROTOCOL = "dataspace-protocol-http";
 
   public TMFEdcMapper tmfEdcMapper;
   public ParticipantResolver participantResolver;
@@ -535,24 +544,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
     when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
     when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
         .thenReturn(Result.success(getTestPolicy()));
-    when(participantResolver.getOrganization(eq(TEST_CONSUMER_TMF_ID)))
-        .thenReturn(
-            Optional.of(
-                new OrganizationVO()
-                    .partyCharacteristic(
-                        List.of(
-                            new org.seamware.tmforum.party.model.CharacteristicVO()
-                                .name("did")
-                                .value(TEST_CONSUMER_DID)))));
-    when(participantResolver.getOrganization(eq(TEST_PROVIDER_TMF_ID)))
-        .thenReturn(
-            Optional.of(
-                new OrganizationVO()
-                    .partyCharacteristic(
-                        List.of(
-                            new org.seamware.tmforum.party.model.CharacteristicVO()
-                                .name("did")
-                                .value(TEST_PROVIDER_DID)))));
+    givenOrganizationsResolveToDids();
 
     AgreementApiClient agreementApiClient = mock(AgreementApiClient.class);
     when(agreementApiClient.findByNegotiationId(any())).thenReturn(inputAgreement);
@@ -610,6 +602,171 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                 participantResolver,
                 TEST_CONSUMER_DID),
         "If no negotiation state is contained, an exception should be thrown.");
+  }
+
+  // ---- PARTICIPANT CONTEXT OF TAGGED ENTITIES ----
+
+  /** Mapper default, newest quote's tag, older quote's tag, expected negotiation context. */
+  private static Stream<Arguments> negotiationContexts() {
+    return Stream.of(
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_A, null, CONTEXT_A),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_B, null, CONTEXT_B),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, null, null, TEST_PARTICIPANT_CONTEXT_ID),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, null, CONTEXT_A, TEST_PARTICIPANT_CONTEXT_ID),
+        Arguments.of(null, CONTEXT_A, null, CONTEXT_A),
+        Arguments.of(null, null, null, null));
+  }
+
+  @ParameterizedTest(name = "default {0}, newest quote {1}, older quote {2} -> {3}")
+  @MethodSource("negotiationContexts")
+  public void toContractNegotiation_stampsTheNewestQuotesContext(
+      String defaultContext, String newestTag, String olderTag, String expectedContext) {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+    givenOrganizationsResolveToDids();
+    AgreementApiClient agreementApiClient = mock(AgreementApiClient.class);
+    when(agreementApiClient.findByNegotiationId(any())).thenReturn(Optional.empty());
+    String offerId = String.format("%s:%s:%s", TEST_OFFER_ID, TEST_ASSET_ID, "1");
+    ExtendableQuoteVO older =
+        getExtendableQuoteVo(
+            negotiationState("INITIAL", true),
+            QuoteStateTypeVO.IN_PROGRESS,
+            TEST_CONSUMER_TMF_ID,
+            TEST_PROVIDER_TMF_ID,
+            1,
+            List.of(offerId));
+    older.setParticipantContextId(olderTag);
+    ExtendableQuoteVO newest =
+        getExtendableQuoteVo(
+            negotiationState("REQUESTED", true),
+            QuoteStateTypeVO.IN_PROGRESS,
+            TEST_CONSUMER_TMF_ID,
+            TEST_PROVIDER_TMF_ID,
+            2,
+            List.of(offerId));
+    newest.setParticipantContextId(newestTag);
+
+    ContractNegotiation negotiation =
+        mapperWithDefault(defaultContext)
+            .toContractNegotiation(
+                new ArrayList<>(List.of(newest, older)),
+                agreementApiClient,
+                participantResolver,
+                TEST_CONSUMER_DID);
+
+    assertEquals(expectedContext, negotiation.getParticipantContextId());
+  }
+
+  /** Mapper default, agreement's tag, expected agreement context. */
+  private static Stream<Arguments> agreementContexts() {
+    return Stream.of(
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_A, CONTEXT_A),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, CONTEXT_B, CONTEXT_B),
+        Arguments.of(TEST_PARTICIPANT_CONTEXT_ID, null, TEST_PARTICIPANT_CONTEXT_ID),
+        Arguments.of(null, CONTEXT_A, CONTEXT_A),
+        Arguments.of(null, null, null));
+  }
+
+  @ParameterizedTest(name = "default {0}, agreement {1} -> {2}")
+  @MethodSource("agreementContexts")
+  public void toContractAgreement_stampsTheAgreementsContext(
+      String defaultContext, String agreementTag, String expectedContext) {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+    ExtendableAgreementVO agreementVO = getTestAgreement();
+    agreementVO.setParticipantContextId(agreementTag);
+
+    ContractAgreement agreement =
+        mapperWithDefault(defaultContext).toContractAgreement(agreementVO);
+
+    assertEquals(expectedContext, agreement.getParticipantContextId());
+  }
+
+  private static Stream<String> writtenContexts() {
+    return Stream.of(CONTEXT_A, CONTEXT_B, null);
+  }
+
+  @ParameterizedTest(name = "agreement in {0}")
+  @MethodSource("writtenContexts")
+  public void toAgreement_writesTheAgreementsOwnContext(String context) {
+    when(participantResolver.getTmfId(eq(TEST_CONSUMER_DID))).thenReturn(TEST_CONSUMER_TMF_ID);
+    when(participantResolver.getTmfId(eq(TEST_PROVIDER_DID))).thenReturn(TEST_PROVIDER_TMF_ID);
+    when(typeTransformerRegistry.transform(any(), eq(JsonObject.class)))
+        .thenReturn(Result.success(getEmptyOdrlContract()));
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    ContractAgreement agreement =
+        ContractAgreement.Builder.newInstance()
+            .id(TEST_AGREEMENT_ID)
+            .agreementId(TEST_DSP_AGREEMENT_ID)
+            .participantContextId(context)
+            .assetId(TEST_ASSET_ID)
+            .consumerId(TEST_CONSUMER_DID)
+            .providerId(TEST_PROVIDER_DID)
+            .contractSigningDate(1)
+            .policy(getTestPolicy())
+            .build();
+
+    assertEquals(
+        context,
+        tmfEdcMapper.toAgreement(TEST_NEGOTIATION_ID, agreement).getParticipantContextId(),
+        "The entity's own context is written, never the mapper default.");
+  }
+
+  @ParameterizedTest(name = "transfer in {0}")
+  @MethodSource("writtenContexts")
+  public void fromTransferProcess_writesTheTransfersOwnContext(String context) {
+    TransferProcess transferProcess =
+        TransferProcess.Builder.newInstance()
+            .id(TEST_TRANSFER_ID)
+            .participantContextId(context)
+            .type(TransferProcess.Type.PROVIDER)
+            .state(TransferProcessStates.REQUESTED.code())
+            .protocol(TEST_PROTOCOL)
+            .counterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
+            .contractId(TEST_AGREEMENT_ID)
+            .transferType(TEST_TRANSFER_TYPE)
+            .build();
+
+    assertEquals(
+        context,
+        tmfEdcMapper
+            .fromTransferProcess(transferProcess, TEST_ASSET_ID, TEST_PRODUCT_ID)
+            .getParticipantContextId(),
+        "The entity's own context is written, never the mapper default.");
+  }
+
+  private void givenOrganizationsResolveToDids() {
+    when(participantResolver.getOrganization(eq(TEST_CONSUMER_TMF_ID)))
+        .thenReturn(
+            Optional.of(
+                new OrganizationVO()
+                    .partyCharacteristic(
+                        List.of(
+                            new org.seamware.tmforum.party.model.CharacteristicVO()
+                                .name("did")
+                                .value(TEST_CONSUMER_DID)))));
+    when(participantResolver.getOrganization(eq(TEST_PROVIDER_TMF_ID)))
+        .thenReturn(
+            Optional.of(
+                new OrganizationVO()
+                    .partyCharacteristic(
+                        List.of(
+                            new org.seamware.tmforum.party.model.CharacteristicVO()
+                                .name("did")
+                                .value(TEST_PROVIDER_DID)))));
+  }
+
+  private TMFEdcMapper mapperWithDefault(String defaultContext) {
+    return new TMFEdcMapper(
+        new NoopMonitor(),
+        objectMapper,
+        participantResolver,
+        typeTransformerRegistry,
+        jsonLd,
+        clock,
+        defaultContext);
   }
 
   // ---- FROM CONTRACT OFFERS ----

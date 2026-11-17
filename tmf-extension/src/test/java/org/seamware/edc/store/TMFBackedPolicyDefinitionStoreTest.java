@@ -151,6 +151,30 @@ public class TMFBackedPolicyDefinitionStoreTest {
     verify(monitor).severe(ArgumentMatchers.<String>argThat(m -> m.contains(qualifiedA)));
   }
 
+  private static Stream<Arguments> unaddressablePlainHits() {
+    return Stream.of(
+        Arguments.of(List.of(CONTEXT_A, CONTEXT_B)),
+        Arguments.of(List.of(TMFConfig.ALL_PARTICIPANT_CONTEXTS)));
+  }
+
+  @ParameterizedTest(name = "plain hit tagged {0}")
+  @MethodSource("unaddressablePlainHits")
+  public void testFindById_unaddressablePlainHitFallsBackToTheQualifiedId(
+      List<String> plainHitContexts) {
+    String qualifiedA = ContextQualifiedId.qualify(TEST_ID, CONTEXT_A);
+    when(productCatalogApiClient.getByPolicyId(eq(qualifiedA)))
+        .thenReturn(Optional.of(new OfferingPolicy(getTestPolicy(qualifiedA), plainHitContexts)));
+    when(productCatalogApiClient.getByPolicyId(eq(TEST_ID)))
+        .thenReturn(
+            Optional.of(new OfferingPolicy(getTestPolicy(TEST_ID), List.of(CONTEXT_A, CONTEXT_B))));
+
+    PolicyDefinition definition = tmfBackedPolicyDefinitionStore.findById(qualifiedA);
+
+    assertNotNull(definition, "The qualified id of the multi-context offering must resolve.");
+    assertEquals(qualifiedA, definition.getId());
+    assertEquals(CONTEXT_A, definition.getParticipantContextId());
+  }
+
   @Test
   public void testFindById_failsForAPolicyIdUsedByOfferingsInTwoContexts() {
     when(productCatalogApiClient.getByPolicyId(eq(TEST_ID)))

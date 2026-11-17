@@ -25,7 +25,6 @@ import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.persistence.EdcPersistenceException;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.StoreResult;
-import org.seamware.edc.tmf.OfferingPolicy;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
 public class TMFBackedPolicyDefinitionStore implements PolicyDefinitionStore {
@@ -49,12 +48,15 @@ public class TMFBackedPolicyDefinitionStore implements PolicyDefinitionStore {
   @Override
   public PolicyDefinition findById(String policyDefinitionId) {
     try {
-      Optional<OfferingPolicy> plainHit = productCatalogApiClient.getByPolicyId(policyDefinitionId);
-      if (plainHit.isEmpty()) {
+      Optional<PolicyDefinition> plain =
+          productCatalogApiClient
+              .getByPolicyId(policyDefinitionId)
+              .flatMap(offeringPolicy -> tmfEdcMapper.toPolicyDefinition(offeringPolicy, null));
+      // a plain id that cannot address its offering (multi-context, or no default) is never issued
+      if (plain.isEmpty()) {
         return resolveQualified(policyDefinitionId).orElse(null);
       }
-      Optional<PolicyDefinition> plain = tmfEdcMapper.toPolicyDefinition(plainHit.get(), null);
-      if (plain.isPresent() && resolveQualified(policyDefinitionId).isPresent()) {
+      if (resolveQualified(policyDefinitionId).isPresent()) {
         monitor.severe(
             String.format(
                 "Policy id %s is ambiguous: it is a plain policy id and the context-qualified id"

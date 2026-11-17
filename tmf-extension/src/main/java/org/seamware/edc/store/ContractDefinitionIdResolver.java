@@ -43,23 +43,25 @@ public class ContractDefinitionIdResolver {
   public record ResolvedOffering(ExtendableProductOffering offering, String participantContextId) {}
 
   public Optional<ResolvedOffering> resolve(String definitionId) {
-    Optional<ExtendableProductOffering> plainHit =
-        productCatalogApi.getProductOfferingByExternalId(definitionId);
-    if (plainHit.isEmpty()) {
+    Optional<ResolvedOffering> plain =
+        productCatalogApi
+            .getProductOfferingByExternalId(definitionId)
+            .flatMap(
+                offering ->
+                    tmfEdcMapper
+                        .contextForId(offering.getParticipantContextIds(), null)
+                        .map(ctx -> new ResolvedOffering(offering, ctx)));
+    // a plain id that cannot address its offering (multi-context, or no default) is never issued
+    if (plain.isEmpty()) {
       return resolveQualified(definitionId);
     }
-    // a plain id of a multi-context offering carries no context and is never issued
-    Optional<ResolvedOffering> plain =
-        tmfEdcMapper
-            .contextForId(plainHit.get().getParticipantContextIds(), null)
-            .map(ctx -> new ResolvedOffering(plainHit.get(), ctx));
-    if (plain.isPresent() && resolveQualified(definitionId).isPresent()) {
+    if (resolveQualified(definitionId).isPresent()) {
       monitor.severe(
           String.format(
               "Contract definition id %s is ambiguous: it is the external id of offering %s and"
                   + " the context-qualified id of another offering. Neither resolves until one is"
                   + " renamed.",
-              definitionId, plainHit.get().getId()));
+              definitionId, plain.get().offering().getId()));
       return Optional.empty();
     }
     return plain;

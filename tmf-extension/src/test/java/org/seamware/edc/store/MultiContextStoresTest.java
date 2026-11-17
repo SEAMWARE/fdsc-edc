@@ -226,6 +226,25 @@ public class MultiContextStoresTest extends AbstractStoreTest {
     verify(monitor).severe(contains("ambiguous"));
   }
 
+  private static Stream<Arguments> unaddressablePlainHits() {
+    return Stream.of(Arguments.of(A_AND_B), Arguments.of(ALL));
+  }
+
+  @ParameterizedTest(name = "plain hit tagged {0}")
+  @MethodSource("unaddressablePlainHits")
+  public void testFindDefinition_unaddressablePlainHitFallsBackToTheQualifiedId(
+      List<String> plainHitTags) {
+    String qualifiedA = ContextQualifiedId.qualify(OFFER_ID, CONTEXT_A);
+    offerings.add(offering(qualifiedA, plainHitTags));
+    offerings.add(offering(OFFER_ID, A_AND_B));
+
+    ContractDefinition definition = contractDefinitionStore.findById(qualifiedA);
+
+    assertNotNull(definition, "The qualified id of the multi-context offering must resolve.");
+    assertEquals(qualifiedA, definition.getId());
+    assertEquals(CONTEXT_A, definition.getParticipantContextId());
+  }
+
   @Test
   public void testFindDefinition_externalIdUsedInTwoContextsIsNullAndLoggedSevere() {
     when(productCatalogApi.getProductOfferingByExternalId(OFFER_ID))
