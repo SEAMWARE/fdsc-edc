@@ -85,6 +85,9 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
 
   private static final long OWN_LEASE_POLL_INTERVAL_MS = 100;
 
+  /** Page size for listing Quotes and Agreements from TMForum. */
+  private static final int TMF_PAGE_SIZE = 100;
+
   private final Monitor monitor;
   private final ObjectMapper objectMapper;
   private final QuoteApiClient quoteApi;
@@ -280,8 +283,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
       int currentOffset = offset;
       List<ExtendableAgreementVO> agreements =
           serverSideContext
-              .map(context -> agreementApi.getAgreements(currentOffset, 100, context))
-              .orElseGet(() -> agreementApi.getAgreements(currentOffset, 100));
+              .map(context -> agreementApi.getAgreements(currentOffset, TMF_PAGE_SIZE, context))
+              .orElseGet(() -> agreementApi.getAgreements(currentOffset, TMF_PAGE_SIZE));
       agreements.stream()
           // only "AGREED" agreements can be considered as agreement in the terms of DSP
           .filter(agreement -> agreement.getStatus() != null)
@@ -299,8 +302,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
           .filter(filterPredicate)
           .forEach(contractAgreements::add);
 
-      moreOfferingsAvailable = agreements.size() == 100;
-      offset += 100;
+      moreOfferingsAvailable = agreements.size() == TMF_PAGE_SIZE;
+      offset += TMF_PAGE_SIZE;
     }
     return contractAgreements.stream();
   }
@@ -328,13 +331,12 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     Map<String, List<ExtendableQuoteVO>> negotiations = new HashMap<>();
     int offset = 0;
     boolean moreQuotesAvailable = true;
-    int limit = 100;
     while (moreQuotesAvailable) {
       int currentOffset = offset;
       List<ExtendableQuoteVO> extendableQuoteVOS =
           serverSideContext
-              .map(context -> quoteApi.getQuotes(currentOffset, limit, context))
-              .orElseGet(() -> quoteApi.getQuotes(currentOffset, limit));
+              .map(context -> quoteApi.getQuotes(currentOffset, TMF_PAGE_SIZE, context))
+              .orElseGet(() -> quoteApi.getQuotes(currentOffset, TMF_PAGE_SIZE));
       extendableQuoteVOS.stream()
           .filter(eqv -> eqv.getContractNegotiationState() != null)
           .filter(eqv -> eqv.getContractNegotiationState().getControlplane().equals(controlplane))
@@ -343,8 +345,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
                   negotiations
                       .computeIfAbsent(eqv.getExternalId(), k -> new ArrayList<>())
                       .add(eqv));
-      moreQuotesAvailable = extendableQuoteVOS.size() == limit;
-      offset += limit;
+      moreQuotesAvailable = extendableQuoteVOS.size() == TMF_PAGE_SIZE;
+      offset += TMF_PAGE_SIZE;
     }
     return negotiations;
   }
@@ -1138,7 +1140,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setPending(contractNegotiation.isPending())
             .setState(ContractNegotiationStates.TERMINATED.name())
             .setCorrelationId(contractNegotiation.getCorrelationId())
-            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress())
+            .setProtocol(contractNegotiation.getProtocol());
     preserveLeaseFields(orginialQuote.getContractNegotiationState(), contractNegotiationState);
 
     quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
@@ -1212,7 +1215,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setPending(contractNegotiation.isPending())
             .setState(contractNegotiation.stateAsString())
             .setCorrelationId(contractNegotiation.getCorrelationId())
-            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress());
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress())
+            .setProtocol(contractNegotiation.getProtocol());
     preserveLeaseFields(originalQuote.getContractNegotiationState(), contractNegotiationState);
 
     quoteUpdateVO.setContractNegotiationState(contractNegotiationState);
@@ -1304,7 +1308,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .setControlplane(controlplane)
             .setState(contractNegotiation.stateAsString())
             .setCorrelationId(contractNegotiation.getCorrelationId())
-            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress()));
+            .setCounterPartyAddress(contractNegotiation.getCounterPartyAddress())
+            .setProtocol(contractNegotiation.getProtocol()));
 
     List<ExtendableQuoteItemVO> extendableQuoteItemVOS =
         switch (contractNegotiation.getType()) {

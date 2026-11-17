@@ -51,6 +51,7 @@ import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
 import org.eclipse.edc.policy.model.Policy;
+import org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.types.domain.DataAddress;
@@ -82,6 +83,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
           .build();
 
   private static final String CONTEXT_A = "did:web:dataspace-a";
+  private static final String TEST_PROFILE = "dataspace-a-profile";
   private static final String CONTEXT_B = "did:web:dataspace-b";
   private static final String TEST_TRANSFER_ID = "test-transfer";
   private static final String TEST_PRODUCT_ID = "test-product";
@@ -696,6 +698,54 @@ class TMFEdcMapperTest extends AbstractStoreTest {
                 new OwnParticipantIdentity(identityResolver, TEST_CONSUMER_DID));
 
     assertEquals(expectedType, negotiation.getType());
+  }
+
+  /** Stored protocol (null for a legacy quote), expected protocol, expected type. */
+  private static Stream<Arguments> storedProtocols() {
+    return Stream.of(
+        Arguments.of(TEST_PROFILE, TEST_PROFILE, ContractNegotiation.Type.PROVIDER),
+        Arguments.of(
+            null,
+            Dsp2025Constants.DATASPACE_PROTOCOL_HTTP_V_2025_1,
+            ContractNegotiation.Type.CONSUMER));
+  }
+
+  @ParameterizedTest(name = "stored {0} -> {1}, {2}")
+  @MethodSource("storedProtocols")
+  public void toContractNegotiation_usesTheStoredProtocolForIdentityAndNegotiation(
+      String storedProtocol, String expectedProtocol, ContractNegotiation.Type expectedType) {
+    when(jsonLd.expand(any())).thenReturn(Result.success(getTestOdrlContract()));
+    when(typeTransformerRegistry.transform(any(), eq(Policy.class)))
+        .thenReturn(Result.success(getTestPolicy()));
+    givenOrganizationsResolveToDids();
+    AgreementApiClient agreementApiClient = mock(AgreementApiClient.class);
+    when(agreementApiClient.findByNegotiationId(any())).thenReturn(Optional.empty());
+    ParticipantIdentityResolver identityResolver = mock(ParticipantIdentityResolver.class);
+    when(identityResolver.getParticipantId(eq(CONTEXT_A), eq(TEST_PROFILE)))
+        .thenReturn(TEST_PROVIDER_DID);
+    when(identityResolver.getParticipantId(
+            eq(CONTEXT_A), eq(Dsp2025Constants.DATASPACE_PROTOCOL_HTTP_V_2025_1)))
+        .thenReturn(TEST_CONSUMER_DID);
+    ExtendableQuoteVO quote =
+        getExtendableQuoteVo(
+            negotiationState("REQUESTED", true).setProtocol(storedProtocol),
+            QuoteStateTypeVO.IN_PROGRESS,
+            TEST_CONSUMER_TMF_ID,
+            TEST_PROVIDER_TMF_ID,
+            1,
+            List.of(String.format("%s:%s:%s", TEST_OFFER_ID, TEST_ASSET_ID, "1")));
+    quote.setParticipantContextId(CONTEXT_A);
+
+    ContractNegotiation negotiation =
+        mapperWithDefault(TEST_PARTICIPANT_CONTEXT_ID)
+            .toContractNegotiation(
+                new ArrayList<>(List.of(quote)),
+                agreementApiClient,
+                participantResolver,
+                new OwnParticipantIdentity(identityResolver, TEST_CONSUMER_DID));
+
+    assertEquals(expectedType, negotiation.getType());
+    assertEquals(expectedProtocol, negotiation.getProtocol());
   }
 
   /** Mapper default, agreement's tag, expected agreement context. */

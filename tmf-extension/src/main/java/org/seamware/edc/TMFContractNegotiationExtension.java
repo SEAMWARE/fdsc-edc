@@ -362,7 +362,8 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               // core; absent only on a classic runtime without that core (configured id is used)
               new OwnParticipantIdentity(
                   () -> serviceExtensionContext.getService(ParticipantIdentityResolver.class, true),
-                  tmfConfig.getParticipantId()),
+                  tmfConfig.getParticipantId(),
+                  tmfConfig.getDefaultParticipantContextId()),
               controlplane,
               criterionOperatorRegistry,
               new TMFBackedLeaseHolder(

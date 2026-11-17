@@ -68,9 +68,20 @@ class OwnParticipantIdentityTest {
   }
 
   @Test
+  void participantId_fallsBackToTheConfiguredIdForAnUnknownDefaultContext() {
+    OwnParticipantIdentity identity =
+        new OwnParticipantIdentity(
+            () -> mock(ParticipantIdentityResolver.class), CONFIGURED_ID, CONTEXT_A);
+
+    assertEquals(CONFIGURED_ID, identity.participantId(CONTEXT_A, PROTOCOL));
+    assertThrows(IllegalStateException.class, () -> identity.participantId(CONTEXT_B, PROTOCOL));
+  }
+
+  @Test
   void participantId_picksUpAResolverRegisteredAfterConstruction() {
     AtomicReference<ParticipantIdentityResolver> registry = new AtomicReference<>();
-    OwnParticipantIdentity identity = new OwnParticipantIdentity(registry::get, CONFIGURED_ID);
+    OwnParticipantIdentity identity =
+        new OwnParticipantIdentity(registry::get, CONFIGURED_ID, null);
     assertEquals(CONFIGURED_ID, identity.participantId(CONTEXT_A, PROTOCOL));
 
     ParticipantIdentityResolver resolver = mock(ParticipantIdentityResolver.class);

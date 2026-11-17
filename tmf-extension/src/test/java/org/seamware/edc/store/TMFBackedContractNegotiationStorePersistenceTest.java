@@ -2511,6 +2511,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             .setState(state)
             .setControlplane(TEST_CONTROL_PLANE)
             .setCounterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
+            .setProtocol(TEST_PROTOCOL)
             .setLeased(false)
             .setPending(false);
 
@@ -2528,6 +2529,7 @@ public class TMFBackedContractNegotiationStorePersistenceTest
             .setState(state)
             .setControlplane(TEST_CONTROL_PLANE)
             .setCounterPartyAddress(TEST_COUNTER_PARTY_ADDRESS)
+            .setProtocol(TEST_PROTOCOL)
             .setLeased(false)
             .setPending(false);
 

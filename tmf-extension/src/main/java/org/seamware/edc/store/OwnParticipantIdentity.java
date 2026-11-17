@@ -22,29 +22,34 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * This connector's own participant id in a participant context (decision 5 of the multi-dataspace
- * design). Uses the fixed classic id only when the runtime registers no {@link
- * ParticipantIdentityResolver}.
+ * design). Uses the fixed classic id when the runtime registers no {@link
+ * ParticipantIdentityResolver}, or when the resolver knows no identity for the default context.
  */
 public class OwnParticipantIdentity {
 
   private final Supplier<@Nullable ParticipantIdentityResolver> participantIdentityResolver;
   private final String fallbackParticipantId;
+  private final @Nullable String defaultParticipantContextId;
 
   public OwnParticipantIdentity(
       @Nullable ParticipantIdentityResolver participantIdentityResolver,
       String fallbackParticipantId) {
-    this(() -> participantIdentityResolver, fallbackParticipantId);
+    this(() -> participantIdentityResolver, fallbackParticipantId, null);
   }
 
   /**
    * Looks the resolver up on every call, so it can come from the service registry after boot: an
    * {@code @Inject} would close a dependency cycle through the connector participant-context core.
+   * The fallback id also covers {@code defaultParticipantContextId}, which on a classic runtime may
+   * be an explicit key the resolver does not know.
    */
   public OwnParticipantIdentity(
       Supplier<@Nullable ParticipantIdentityResolver> participantIdentityResolver,
-      String fallbackParticipantId) {
+      String fallbackParticipantId,
+      @Nullable String defaultParticipantContextId) {
     this.participantIdentityResolver = participantIdentityResolver;
     this.fallbackParticipantId = fallbackParticipantId;
+    this.defaultParticipantContextId = defaultParticipantContextId;
   }
 
   /** The same id in every context, as on a classic runtime without the connector core. */
@@ -52,7 +57,10 @@ public class OwnParticipantIdentity {
     return new OwnParticipantIdentity((ParticipantIdentityResolver) null, participantId);
   }
 
-  /** Throws {@link IllegalStateException} when the resolver knows no identity for the context. */
+  /**
+   * Throws {@link IllegalStateException} when the resolver knows no identity for a non-default
+   * context.
+   */
   public String participantId(@Nullable String participantContextId, @Nullable String protocol) {
     ParticipantIdentityResolver resolver = participantIdentityResolver.get();
     if (resolver == null) {
@@ -62,6 +70,11 @@ public class OwnParticipantIdentity {
         participantContextId == null
             ? null
             : resolver.getParticipantId(participantContextId, protocol);
+    if (participantId == null
+        && participantContextId != null
+        && participantContextId.equals(defaultParticipantContextId)) {
+      return fallbackParticipantId;
+    }
     if (participantId == null) {
       throw new IllegalStateException(
           String.format("No own participant id is known for context %s.", participantContextId));
