@@ -181,8 +181,11 @@ change.
     offering lookup's "multiple … exist" check stays global; its error message
     adds the `participantContextId` of each match, so a cross-context duplicate
     is identifiable from the log. The spec lookup is unchanged.
-  - Add one shared constant `PARTICIPANT_CONTEXT_ID_QUERY_PARAM` instead of
-    per-client literals.
+  - Add two shared constants instead of per-client literals:
+    `PARTICIPANT_CONTEXT_ID_QUERY_PARAM` (`participantContextId`, Quote and
+    Agreement) and `PARTICIPANT_CONTEXT_IDS_QUERY_PARAM`
+    (`participantContextIds`, ProductOffering). Using the singular one on
+    offerings matches nothing (see decision 2).
 - Tests:
   - Jackson round-trip of each VO, with and without the field;
   - MockWebServer/WireMock tests asserting the query parameter, following the

@@ -133,11 +133,12 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
      (all contexts); see decision 4.
    - It is declared **optional** in the JSON schemas under `schemas/`, so
      existing data still validates.
-   - For a **non-default** context it is queried **server-side** with a
-     `participantContextId=` query parameter (for offerings: the array contains
-     the context or `*`), the same way
-     `ProductCatalogApiClient.getProductSpecByExternalId` already queries
-     `externalId`.
+   - For a **non-default** context it is queried **server-side**, the same
+     way `ProductCatalogApiClient.getProductSpecByExternalId` already queries
+     `externalId`. The parameter follows the property name:
+     `participantContextId=X` for Quote, Agreement and Usage, and
+     `participantContextIds=X,*` (array contains X or `*`) for the
+     ProductOffering. `participantContextId=` matches no offering property.
 3. **Legacy data with no context id** belongs to the *default context*.
    - The new setting is `tmfExtension.defaultParticipantContextId`.
    - In classic mode it defaults to the `SingleParticipantContextSupplier`
