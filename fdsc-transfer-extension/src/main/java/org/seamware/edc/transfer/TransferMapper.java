@@ -36,14 +36,13 @@ package org.seamware.edc.transfer;
  * #L%
  */
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.jetbrains.annotations.Nullable;
 import org.seamware.edc.TransferConfig;
 import org.seamware.edc.apisix.*;
+import org.seamware.edc.dcp.ContextPathSegment;
 
 public class TransferMapper {
 
@@ -57,9 +56,6 @@ public class TransferMapper {
   private static final String ROUTING_TYPE_ROUND_ROBIN = "roundrobin";
 
   private static final String PATH_SEPARATOR = "/";
-  // URLEncoder is form-encoding; a path segment needs a space as %20, not +.
-  private static final String FORM_ENCODED_SPACE = "+";
-  private static final String PATH_ENCODED_SPACE = "%20";
 
   private final TransferConfig transferConfig;
   private final @Nullable String defaultParticipantContextId;
@@ -213,10 +209,6 @@ public class TransferMapper {
     if (participantContextId == null || participantContextId.equals(defaultParticipantContextId)) {
       return "";
     }
-    // The controller's @PathParam is URL-decoded, so the id must arrive encoded to round-trip
-    // (e.g. a did:web id with an encoded port, or one containing '/').
-    return PATH_SEPARATOR
-        + URLEncoder.encode(participantContextId, StandardCharsets.UTF_8)
-            .replace(FORM_ENCODED_SPACE, PATH_ENCODED_SPACE);
+    return PATH_SEPARATOR + ContextPathSegment.encode(participantContextId);
   }
 }

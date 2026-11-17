@@ -28,8 +28,6 @@ import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.jwk.KeyUse;
 import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
 import com.nimbusds.jwt.SignedJWT;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Map;
 import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
@@ -122,9 +120,7 @@ class EdrIssuerMatchesDiscoveryTest {
     Map<String, Object> oidConfig =
         contextSuffix.isEmpty()
             ? oidConfigController.getOIDConfiguration()
-            // JAX-RS hands the controller the URL-decoded path segment.
-            : oidConfigController.getOIDConfiguration(
-                URLDecoder.decode(contextSuffix.substring(1), StandardCharsets.UTF_8));
+            : oidConfigController.getOIDConfiguration(contextSuffix.substring(1));
 
     assertEquals(edrIssuer, oidConfig.get("issuer"), "Discovery: " + discovery);
   }

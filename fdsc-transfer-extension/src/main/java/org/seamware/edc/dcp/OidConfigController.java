@@ -86,12 +86,20 @@ public class OidConfigController {
     return oidConfiguration(defaultParticipantContextId);
   }
 
-  /** Throws {@link ObjectNotFoundException} (404) for a context without a known identity. */
+  /**
+   * Serves the context whose id is {@link ContextPathSegment}-encoded in the path. Throws {@link
+   * ObjectNotFoundException} (404) for a malformed segment or a context without a known identity.
+   */
   @GET
-  @Path("/{participantContextId}")
+  @Path("/{encodedParticipantContextId}")
   public Map<String, Object> getOIDConfiguration(
-      @PathParam("participantContextId") String participantContextId) {
-    return oidConfiguration(participantContextId);
+      @PathParam("encodedParticipantContextId") String encodedParticipantContextId) {
+    return oidConfiguration(
+        ContextPathSegment.decode(encodedParticipantContextId)
+            .orElseThrow(
+                () ->
+                    new ObjectNotFoundException(
+                        OidConfigController.class, encodedParticipantContextId)));
   }
 
   private Map<String, Object> oidConfiguration(@Nullable String participantContextId) {

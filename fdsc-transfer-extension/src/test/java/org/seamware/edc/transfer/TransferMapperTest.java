@@ -45,9 +45,9 @@ class TransferMapperTest {
   @ParameterizedTest(name = "context {0}")
   @CsvSource(
       value = {
-        "context-b, /context-b",
-        "did:web:a.example%3A8443, /did%3Aweb%3Aa.example%253A8443",
-        "ctx/with space, /ctx%2Fwith%20space",
+        "context-b, /Y29udGV4dC1i",
+        "did:web:a.example%3A8443, /ZGlkOndlYjphLmV4YW1wbGUlM0E4NDQz",
+        "ctx/with space, /Y3R4L3dpdGggc3BhY2U",
         "default-context, ''",
         "null, ''",
       },

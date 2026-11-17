@@ -75,7 +75,9 @@ class OidConfigControllerTest {
     "default-context, did:web:default.example"
   })
   void getOIDConfiguration_returnsIssuerOfContext(String contextId, String expectedIssuer) {
-    assertOidConfig(controller(DEFAULT_CONTEXT).getOIDConfiguration(contextId), expectedIssuer);
+    assertOidConfig(
+        controller(DEFAULT_CONTEXT).getOIDConfiguration(ContextPathSegment.encode(contextId)),
+        expectedIssuer);
   }
 
   @Test
@@ -83,11 +85,18 @@ class OidConfigControllerTest {
     assertOidConfig(controller(DEFAULT_CONTEXT).getOIDConfiguration(), DEFAULT_IDENTITY);
   }
 
-  @Test
-  void getOIDConfiguration_unknownContextIsNotFound() {
+  @ParameterizedTest(name = "segment {0}")
+  @CsvSource({
+    // "unknown-context", encoded
+    "dW5rbm93bi1jb250ZXh0",
+    // not base64url: '%' is outside the alphabet, a single char is an impossible length
+    "context%3Aa",
+    "a"
+  })
+  void getOIDConfiguration_unknownOrMalformedSegmentIsNotFound(String segment) {
     assertThrows(
         ObjectNotFoundException.class,
-        () -> controller(DEFAULT_CONTEXT).getOIDConfiguration("unknown-context"));
+        () -> controller(DEFAULT_CONTEXT).getOIDConfiguration(segment));
   }
 
   @Test
