@@ -140,7 +140,7 @@ public class TMForumBackedCatalogProtocolServiceTest {
     givenVerifiedToken();
     ExtendableProductSpecification spec = mock(ExtendableProductSpecification.class);
     when(productCatalogApi.getProductSpecByExternalId(DATASET_ID)).thenReturn(Optional.of(spec));
-    when(productCatalogApi.getProductOfferings(anyInt(), anyInt()))
+    when(productCatalogApi.getProductOfferings(anyInt(), anyInt(), any()))
         .thenReturn(List.of(mock(ExtendableProductOffering.class)));
     when(tmfEdcMapper.filterByAccessPolicy(any(), eq(policyEngine), eq(participantAgent)))
         .thenReturn(List.of());
@@ -160,7 +160,7 @@ public class TMForumBackedCatalogProtocolServiceTest {
     List<ExtendableProductOffering> accessible = List.of(mock(ExtendableProductOffering.class));
     Dataset dataset = Dataset.Builder.newInstance().id(DATASET_ID).build();
     when(productCatalogApi.getProductSpecByExternalId(DATASET_ID)).thenReturn(Optional.of(spec));
-    when(productCatalogApi.getProductOfferings(anyInt(), anyInt())).thenReturn(List.of());
+    when(productCatalogApi.getProductOfferings(anyInt(), anyInt(), any())).thenReturn(List.of());
     when(tmfEdcMapper.filterByAccessPolicy(any(), eq(policyEngine), eq(participantAgent)))
         .thenReturn(accessible);
     when(tmfEdcMapper.datasetFromProductSpecification(eq(spec), eq(accessible), any()))
@@ -176,7 +176,7 @@ public class TMForumBackedCatalogProtocolServiceTest {
   public void testGetCatalog_stampsTheParticipantContextIdentity() {
     givenVerifiedToken();
     when(productCatalogApi.getProductSpecifications(anyInt(), anyInt())).thenReturn(List.of());
-    when(productCatalogApi.getProductOfferings(anyInt(), anyInt())).thenReturn(List.of());
+    when(productCatalogApi.getProductOfferings(anyInt(), anyInt(), any())).thenReturn(List.of());
     when(tmfEdcMapper.filterByAccessPolicy(any(), eq(policyEngine), eq(participantAgent)))
         .thenReturn(List.of());
 

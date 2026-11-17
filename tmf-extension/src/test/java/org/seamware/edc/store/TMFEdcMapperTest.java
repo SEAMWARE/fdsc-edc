@@ -49,7 +49,6 @@ import org.eclipse.edc.connector.controlplane.contract.spi.validation.Validatabl
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
-import org.eclipse.edc.participantcontext.spi.store.ParticipantContextStore;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
@@ -62,7 +61,6 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.edc.SchemaBaseUriHolder;
-import org.seamware.edc.TMFConfig;
 import org.seamware.edc.domain.*;
 import org.seamware.edc.tmf.AgreementApiClient;
 import org.seamware.edc.tmf.ParticipantResolver;
@@ -118,8 +116,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
             typeTransformerRegistry,
             jsonLd,
             clock,
-            TEST_PARTICIPANT_CONTEXT_ID,
-            null);
+            TEST_PARTICIPANT_CONTEXT_ID);
   }
 
   // ---- TO AGREEMENT ----
@@ -762,11 +759,6 @@ class TMFEdcMapperTest extends AbstractStoreTest {
   }
 
   private TMFEdcMapper mapperWithDefault(String defaultContext) {
-    return mapperWith(defaultContext, ParticipantContextStores.holding(CONTEXT_A, CONTEXT_B));
-  }
-
-  private TMFEdcMapper mapperWith(
-      String defaultContext, ParticipantContextStore participantContextStore) {
     return new TMFEdcMapper(
         new NoopMonitor(),
         objectMapper,
@@ -774,64 +766,7 @@ class TMFEdcMapperTest extends AbstractStoreTest {
         typeTransformerRegistry,
         jsonLd,
         clock,
-        defaultContext,
-        participantContextStore);
-  }
-
-  private static Stream<Arguments> storesWithoutContextB() {
-    return Stream.of(
-        Arguments.of("classic, no store", null),
-        Arguments.of("store without B", ParticipantContextStores.holding(CONTEXT_A)));
-  }
-
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("storesWithoutContextB")
-  public void untaggedOffering_qualifierThatNamesNoContextDoesNotResolve(
-      String name, ParticipantContextStore participantContextStore) {
-    TMFEdcMapper mapper = mapperWith(CONTEXT_A, participantContextStore);
-
-    assertEquals(Optional.empty(), mapper.contextForId(null, CONTEXT_B));
-    assertEquals(
-        Optional.empty(),
-        mapper.contextForId(List.of(TMFConfig.ALL_PARTICIPANT_CONTEXTS), CONTEXT_B));
-    assertEquals(
-        Optional.of(CONTEXT_A),
-        mapper.contextForId(List.of(TMFConfig.ALL_PARTICIPANT_CONTEXTS), CONTEXT_A),
-        "The default context is always known.");
-  }
-
-  private static Stream<Arguments> untaggedOfferingIds() {
-    String qualifiedA = ContextQualifiedId.qualify(TEST_OFFER_ID, CONTEXT_A);
-    String qualifiedB = ContextQualifiedId.qualify(TEST_OFFER_ID, CONTEXT_B);
-    return Stream.of(
-        Arguments.of("default A, requested in A", CONTEXT_A, CONTEXT_A, TEST_OFFER_ID),
-        Arguments.of("default A, requested in B", CONTEXT_A, CONTEXT_B, qualifiedB),
-        Arguments.of("no default, requested in A", null, CONTEXT_A, qualifiedA),
-        Arguments.of("no default, requested in B", null, CONTEXT_B, qualifiedB));
-  }
-
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("untaggedOfferingIds")
-  public void untaggedOffering_isOfferedInEveryContextAndItsIdResolvesBack(
-      String name, String defaultContext, String requestingContext, String expectedId) {
-    TMFEdcMapper mapper = mapperWithDefault(defaultContext);
-    ExtendableProductOffering offering = new ExtendableProductOffering();
-    offering.setExternalId(TEST_OFFER_ID);
-
-    assertEquals(Optional.of(expectedId), mapper.contractDefinitionId(offering, requestingContext));
-    String qualifier =
-        ContextQualifiedId.parse(expectedId)
-            .map(ContextQualifiedId::participantContextId)
-            .orElse(null);
-    assertEquals(
-        Optional.of(requestingContext),
-        mapper.contextForId(null, TEST_OFFER_ID.equals(expectedId) ? null : qualifier),
-        "The issued id must resolve back to the requesting context.");
-  }
-
-  @Test
-  public void untaggedOffering_plainIdIsUnresolvableWithoutADefaultContext() {
-    assertEquals(Optional.empty(), mapperWithDefault(null).contextForId(null, null));
+        defaultContext);
   }
 
   // ---- FROM CONTRACT OFFERS ----

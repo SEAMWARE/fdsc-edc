@@ -38,7 +38,6 @@ import org.eclipse.edc.connector.controlplane.transform.odrl.OdrlTransformersFac
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participant.spi.ParticipantIdMapper;
 import org.eclipse.edc.participantcontext.single.spi.SingleParticipantContextSupplier;
-import org.eclipse.edc.participantcontext.spi.store.ParticipantContextStore;
 import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.policy.model.Constraint;
 import org.eclipse.edc.policy.model.Policy;
@@ -124,10 +123,6 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
   // runtime, which registers a different supplier type - hence optional rather than required.
   @Inject(required = false)
   private SingleParticipantContextSupplier participantContextSupplier;
-
-  // Registered in virtual mode; lets a qualified offer id name a context other than the default.
-  @Inject(required = false)
-  private ParticipantContextStore participantContextStore;
 
   @Override
   public String name() {
@@ -261,8 +256,7 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               typeTransformerRegistry,
               jsonLd,
               clock,
-              config.getDefaultParticipantContextId(),
-              participantContextStore);
+              config.getDefaultParticipantContextId());
     }
     return tmfEdcMapper;
   }

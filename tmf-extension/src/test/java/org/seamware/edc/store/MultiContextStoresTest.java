@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -87,8 +88,6 @@ public class MultiContextStoresTest extends AbstractStoreTest {
   private static final String CONTEXT_A = "did:web:dataspace-a";
   private static final String CONTEXT_B = "did:web:dataspace-b";
   private static final String CONTEXT_C = "did:web:dataspace-c";
-  // a version suffix in a legacy external id, not a participant context
-  private static final String UNKNOWN_CONTEXT = "v2";
 
   private static final String OFFER_ID = "offer";
   private static final String OFFER_ID_A = "offer-a";
@@ -143,8 +142,7 @@ public class MultiContextStoresTest extends AbstractStoreTest {
             typeTransformerRegistry,
             jsonLd,
             Clock.systemUTC(),
-            DEFAULT_CONTEXT,
-            ParticipantContextStores.holding(CONTEXT_A, CONTEXT_B, CONTEXT_C));
+            DEFAULT_CONTEXT);
     contractDefinitionStore =
         new TMFBackedContractDefinitionStore(
             monitor,
@@ -171,18 +169,7 @@ public class MultiContextStoresTest extends AbstractStoreTest {
     String qualifiedC = ContextQualifiedId.qualify(OFFER_ID, CONTEXT_C);
     return Stream.of(
         Arguments.of("legacy, plain id", null, OFFER_ID, DEFAULT_CONTEXT),
-        Arguments.of("legacy, qualified A", null, qualifiedA, CONTEXT_A),
-        Arguments.of("legacy, qualified C", null, qualifiedC, CONTEXT_C),
-        Arguments.of(
-            "legacy, qualified unknown context",
-            null,
-            ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT),
-            null),
-        Arguments.of(
-            "legacy, qualified default",
-            null,
-            ContextQualifiedId.qualify(OFFER_ID, DEFAULT_CONTEXT),
-            null),
+        Arguments.of("legacy, qualified B", null, qualifiedB, null),
         Arguments.of("context A, plain id", List.of(CONTEXT_A), OFFER_ID, CONTEXT_A),
         Arguments.of("context B, plain id", List.of(CONTEXT_B), OFFER_ID, CONTEXT_B),
         Arguments.of("single context, qualified id", List.of(CONTEXT_A), qualifiedA, null),
@@ -192,11 +179,6 @@ public class MultiContextStoresTest extends AbstractStoreTest {
         Arguments.of("A and B, plain id", A_AND_B, OFFER_ID, null),
         Arguments.of("all, qualified A", ALL, qualifiedA, CONTEXT_A),
         Arguments.of("all, qualified C", ALL, qualifiedC, CONTEXT_C),
-        Arguments.of(
-            "all, qualified unknown context",
-            ALL,
-            ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT),
-            null),
         Arguments.of("all, plain id", ALL, OFFER_ID, null));
   }
 
@@ -225,7 +207,7 @@ public class MultiContextStoresTest extends AbstractStoreTest {
 
   @Test
   public void testFindDefinition_externalIdContainingTheSeparatorResolvesAsPlainId() {
-    String externalId = ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT);
+    String externalId = ContextQualifiedId.qualify(OFFER_ID, "v2");
     offerings.add(offering(externalId, List.of(CONTEXT_A)));
 
     ContractDefinition definition = contractDefinitionStore.findById(externalId);
@@ -243,20 +225,6 @@ public class MultiContextStoresTest extends AbstractStoreTest {
 
     assertNull(contractDefinitionStore.findById(qualifiedA));
     verify(monitor).severe(contains("ambiguous"));
-  }
-
-  @Test
-  public void testFindDefinition_legacyIdWithAVersionSuffixIsNotAmbiguous() {
-    String versionedId = ContextQualifiedId.qualify(OFFER_ID, UNKNOWN_CONTEXT);
-    offerings.add(offering(OFFER_ID, null));
-    offerings.add(offering(versionedId, null));
-
-    ContractDefinition definition = contractDefinitionStore.findById(versionedId);
-
-    assertNotNull(definition, "The untagged offering's own external id must resolve.");
-    assertEquals(versionedId, definition.getId());
-    assertEquals(DEFAULT_CONTEXT, definition.getParticipantContextId());
-    verify(monitor, never()).severe(anyString());
   }
 
   private static Stream<Arguments> unaddressablePlainHits() {
@@ -359,6 +327,23 @@ public class MultiContextStoresTest extends AbstractStoreTest {
     assertOffers(context, expectedDefinitionId);
   }
 
+  private static Stream<Arguments> legacyOffering() {
+    return Stream.of(
+        Arguments.of(DEFAULT_CONTEXT, Optional.of(OFFER_ID)),
+        Arguments.of(CONTEXT_A, Optional.empty()),
+        Arguments.of(CONTEXT_B, Optional.empty()));
+  }
+
+  @ParameterizedTest(name = "requested in {0}")
+  @MethodSource("legacyOffering")
+  public void testCatalog_untaggedOfferingIsOfferedOnlyInTheDefaultContext(
+      String context, Optional<String> expectedDefinitionId) {
+    givenSpecs();
+    offerings.add(offering(OFFER_ID, null));
+
+    assertOffers(context, expectedDefinitionId);
+  }
+
   @Test
   public void testCatalog_productOfferedOnlyInAIsMissingFromB() {
     givenSpecs();
@@ -398,26 +383,23 @@ public class MultiContextStoresTest extends AbstractStoreTest {
         });
   }
 
-  private static Stream<Arguments> legacyOfferingInEveryContext() {
-    return Stream.of(
-        Arguments.of(DEFAULT_CONTEXT, OFFER_ID),
-        Arguments.of(CONTEXT_A, ContextQualifiedId.qualify(OFFER_ID, CONTEXT_A)),
-        Arguments.of(CONTEXT_B, ContextQualifiedId.qualify(OFFER_ID, CONTEXT_B)));
-  }
-
-  @ParameterizedTest(name = "requested in {0}")
-  @MethodSource("legacyOfferingInEveryContext")
-  public void testCatalog_untaggedOfferingIsOfferedInEveryContext(
-      String context, String expectedDefinitionId) {
+  @Test
+  public void testCatalog_defaultContextServesLegacyOfferingsWithoutAServerSideFilter() {
     givenSpecs();
     offerings.add(offering(OFFER_ID, null));
+    offerings.add(offering(OFFER_ID_A, List.of(CONTEXT_A)));
 
-    assertOffers(context, Optional.of(expectedDefinitionId));
-    ContractDefinition definition = contractDefinitionStore.findById(expectedDefinitionId);
-    assertNotNull(definition, "The issued offer id must resolve in the store.");
-    assertEquals(context, definition.getParticipantContextId());
-    // TMForum cannot express "tagged with the context or untagged"
-    verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), any());
+    assertOffers(DEFAULT_CONTEXT, Optional.of(OFFER_ID));
+    verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), eq(DEFAULT_CONTEXT));
+  }
+
+  @Test
+  public void testCatalog_namedContextIsFilteredServerSide() {
+    givenSpecs();
+    offerings.add(offering(OFFER_ID_A, List.of(CONTEXT_A)));
+
+    assertOffers(CONTEXT_A, Optional.of(OFFER_ID_A));
+    verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), isNull());
   }
 
   /** Asserts the catalog and the dataset lookup in the context show exactly the expected offer. */
@@ -465,10 +447,22 @@ public class MultiContextStoresTest extends AbstractStoreTest {
 
   // ---- FIXTURES ----
 
-  /** TMForum lists every offering; the catalog filters by context in memory. */
+  /** Emulates TMForum's {@code participantContextIds} filter: the context or {@code *}. */
   private void givenTMForumServesOfferings() {
-    when(productCatalogApi.getProductOfferings(anyInt(), anyInt()))
-        .thenAnswer(invocation -> List.copyOf(offerings));
+    when(productCatalogApi.getProductOfferings(anyInt(), anyInt(), any()))
+        .thenAnswer(
+            invocation -> {
+              String filter = invocation.getArgument(2);
+              return offerings.stream()
+                  .filter(
+                      o ->
+                          filter == null
+                              || (o.getParticipantContextIds() != null
+                                  && (o.getParticipantContextIds().contains(filter)
+                                      || o.getParticipantContextIds()
+                                          .contains(ALL_PARTICIPANT_CONTEXTS))))
+                  .toList();
+            });
     when(productCatalogApi.getProductOfferingByExternalId(anyString()))
         .thenAnswer(
             invocation ->

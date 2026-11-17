@@ -139,9 +139,6 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
      `participantContextId=X` for Quote, Agreement and Usage, and
      `participantContextIds=X,*` (array contains X or `*`) for the
      ProductOffering. `participantContextId=` matches no offering property.
-     The catalog does not use the offering filter, because it would drop the
-     untagged offerings that serve every context (decision 4); see "query
-     forms" below.
 3. **Legacy data with no context id** belongs to the *default context*.
    - The new setting is `tmfExtension.defaultParticipantContextId`.
    - In classic mode it defaults to the `SingleParticipantContextSupplier`
@@ -159,19 +156,14 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
 
    | `participantContextIds` | Offered in |
    |---|---|
-   | absent or empty | every context (legacy data; see below) |
+   | absent or empty | the default context only (decision 3; legacy data) |
    | `["A"]` | dataspace A only |
    | `["A", "B"]` | dataspaces A and B |
    | `["*"]` | every context, including ones added later |
 
-   Absent means "all" for backward compatibility (maintainer decision, PR #10
-   review): existing offerings stay offered when a dataspace is added. To keep
-   an existing offer out of a new dataspace, tag it with the dataspaces it is
-   meant for. Unlike `*`, an untagged offering keeps its plain id in the
-   default context (so classic and TCK offer ids are unchanged) and is
-   qualified only in the other contexts. Decision 3 still applies to Quotes,
-   Agreements and Usage: each ran in one dataspace, so an untagged one belongs
-   to the default context. An offer that needs *different* policies per
+   Absent deliberately does **not** mean "all": an existing single-dataspace
+   deployment that adds a second dataspace must not expose its existing offers
+   there without an explicit tag. An offer that needs *different* policies per
    dataspace is modelled as one offering per dataspace, all referencing the same
    ProductSpecification. The wildcard is the named constant
    `ALL_PARTICIPANT_CONTEXTS = "*"`.
@@ -189,38 +181,34 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
      *does* compare the definition's context with the negotiation's
      (`ContractNegotiationProtocolServiceImpl:247`). A by-id lookup therefore
      has to learn the context from the id itself:
-     - an offering that serves **exactly one** context (one id) keeps its
-       plain `externalId` as contract definition id and its plain policy ids,
-       stamped with that context. An untagged offering does the same in the
-       default context. Classic and TCK data are therefore unchanged;
-     - an offering that serves **several or all** contexts, and an untagged
-       offering in any context other than the default, is exposed in
+     - an offering that serves **exactly one** context (absent, or one id) keeps
+       its plain `externalId` as contract definition id and its plain policy
+       ids, stamped with that context. Classic and TCK data are therefore
+       unchanged;
+     - an offering that serves **several or all** contexts is exposed in
        context X under the *context-qualified* contract definition id
        `<offeringExternalId>@X`, and its policies under `<policyId>@X`, stamped
        with X. One shared helper `ContextQualifiedId` (in `store/`, separator
        constant `CONTEXT_QUALIFIER_SEPARATOR = "@"`) builds and parses these ids;
      - parsing tries the full id as a plain `externalId` first (one lookup, as
-       today). A plain hit resolves only if its offering keeps a plain id
-       (single-context, or untagged with a default context); a plain id that
-       names a multi-context or `*` offering carries no context to stamp, and
-       the catalog never issues it. An id containing the separator is also
-       split at the **last** separator, whether or not the plain lookup hit.
-       The qualified form `foo@X` resolves only if X is a **known participant
-       context** (the default context, or one in the optional
-       `ParticipantContextStore`) and `foo` is exposed under a qualified id
-       in X: a multi-context offering whose `participantContextIds` contains
-       X or `*`, or an untagged offering when X is not the default. Requiring
-       a known context keeps legacy ids like `offer@v2` plain on a classic
-       runtime, whose only context is the default. Policy ids follow the
-       same rules;
-     - **ambiguous ids are a data error.** An offering whose `externalId` (or
-       policy id) is literally `foo@X` and resolves as a plain id collides
-       with the qualified id of an offering `foo` exposed as `foo@X`. If both
-       the plain and the split form resolve, the lookup logs `monitor.severe`
-       naming both offerings and returns nothing, the same outcome as a
-       cross-context duplicate. The catalog may still list the colliding
-       offer, but negotiating it fails until the data is fixed; Step 10's
-       operator guide states the restriction. With these rules each (offering, context) pair has exactly
+       today). A plain hit resolves only if that offering serves exactly one
+       context; a plain id that names a multi-context or `*` offering returns
+       nothing, because it carries no context to stamp and the catalog never
+       issues it. When the plain lookup finds nothing, or finds an offering
+       that its plain id cannot address, the id is split at the **last**
+       separator. The qualified form resolves only if the prefix names a
+       multi-context offering whose `participantContextIds` contains X or
+       `*`; an untagged or single-context offering never resolves qualified.
+       Otherwise the lookup returns nothing. Policy ids follow the same rules;
+     - **ambiguous ids are a data error.** A single-context offering whose
+       `externalId` (or policy id) is literally `foo@X` collides with the
+       qualified id of a multi-context offering `foo` that serves X. When a
+       plain hit contains the separator, the lookup also checks the split form;
+       if both resolve, it logs `monitor.severe` naming both offerings and
+       returns nothing, the same outcome as a cross-context duplicate. The
+       catalog may still list the colliding offer, but negotiating it fails
+       until the data is fixed; Step 10's operator guide states the
+       restriction. With these rules each (offering, context) pair has exactly
        one id and every id resolves to at most one definition, and an id
        qualified with X can only produce a definition stamped X, which line 247
        rejects in any other context;
@@ -342,7 +330,7 @@ Further behaviour that later steps must respect:
 |---|---|---|
 | Quote, Agreement in non-default context X | `?participantContextId=X` | server-side, so paging stays server-side |
 | Usage in non-default context X | `?participantContextId=X` | server-side. Measured on create and list only (in the review round): nothing in the runtime writes or lists Usage today (no Usage client; `TMFEdcMapper.toCreate`/`toUpdate` for Usage have no callers), so no store depends on it yet |
-| Offerings in any context X | unfiltered | in memory: untagged offerings serve every context, and TMForum cannot express "contains X or `*` OR absent". `?participantContextIds=X,*` stays available in `ProductCatalogApiClient` but the catalog does not use it |
+| Offerings in non-default context X | `?participantContextIds=X,*` | server-side, so paging stays server-side |
 | Any entity in the **default** context | unfiltered | in memory: map (absent → default), then filter |
 | By-id lookups (`externalId`, policy id, quote id) | unchanged, context-less | the mapped entity carries its context |
 
@@ -356,10 +344,10 @@ Further behaviour that later steps must respect:
 **Catalog (`TMForumBackedCatalogProtocolService.getCatalog`):**
 - specs stay shared and keep their server-side `QuerySpec` paging;
 - offerings, fetched today with `getProductOfferings(0, MAX_OFFERINGS = 100)`,
-  are fetched unfiltered in every context and filtered in memory, because
-  untagged offerings serve every context.
+  use `participantContextIds=X,*` for a non-default context;
+- for the default context they are fetched unfiltered and filtered in memory.
   The existing 100-offering cap then applies **before** the context filter, so
-  Step 3 pages offerings to exhaustion instead of relying on
+  Step 3 must page offerings to exhaustion on that path instead of relying on
   one `MAX_OFFERINGS` call;
 - an offering tagged with the default context explicitly
   (`participantContextIds` contains the default, or `*`) is handled by the

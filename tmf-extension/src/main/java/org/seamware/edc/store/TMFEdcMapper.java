@@ -49,7 +49,6 @@ import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcessStates;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.participant.spi.ParticipantAgent;
-import org.eclipse.edc.participantcontext.spi.store.ParticipantContextStore;
 import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.policy.model.PolicyType;
@@ -141,8 +140,6 @@ public class TMFEdcMapper {
   private final Clock clock;
   // owns the untagged TMForum entities (decision 3); null leaves them unresolvable
   private final String defaultParticipantContextId;
-  // knows the contexts besides the default one; null on runtimes without a context store
-  private final @Nullable ParticipantContextStore participantContextStore;
 
   public TMFEdcMapper(
       Monitor monitor,
@@ -151,8 +148,7 @@ public class TMFEdcMapper {
       TypeTransformerRegistry typeTransformerRegistry,
       JsonLd jsonLd,
       Clock clock,
-      @Nullable String defaultParticipantContextId,
-      @Nullable ParticipantContextStore participantContextStore) {
+      @Nullable String defaultParticipantContextId) {
     this.monitor = monitor;
     this.objectMapper = objectMapper;
     this.participantResolver = participantResolver;
@@ -160,7 +156,6 @@ public class TMFEdcMapper {
     this.jsonLd = jsonLd;
     this.clock = clock;
     this.defaultParticipantContextId = defaultParticipantContextId;
-    this.participantContextStore = participantContextStore;
     this.tmfObjectMapper = new TMFObjectMapperImpl();
   }
 
@@ -175,61 +170,49 @@ public class TMFEdcMapper {
         : participantContextId;
   }
 
-  /**
-   * Whether an offering with these tags is made in the context (decision 4 table). An untagged
-   * offering is made in every context, so legacy data stays offered after a dataspace is added.
-   */
+  /** Whether an offering with these tags is made in the context (decision 4 table). */
   public boolean servesContext(
       @Nullable List<String> participantContextIds, @Nullable String participantContextId) {
     if (participantContextId == null) {
       return false;
     }
     Set<String> tags = contextTags(participantContextIds);
-    return tags.isEmpty()
-        || tags.contains(participantContextId)
-        || tags.contains(ALL_PARTICIPANT_CONTEXTS);
+    if (tags.isEmpty()) {
+      return participantContextId.equals(defaultParticipantContextId);
+    }
+    return tags.contains(participantContextId) || tags.contains(ALL_PARTICIPANT_CONTEXTS);
   }
 
-  /**
-   * Whether an offering with these tags is exposed in the context under a {@link
-   * ContextQualifiedId}: a multi-context offering always, an untagged one outside the default
-   * context, whose plain id it keeps.
-   */
-  private boolean isQualifiedIn(
-      @Nullable List<String> participantContextIds, String participantContextId) {
+  /** Whether an offering with these tags is exposed under {@link ContextQualifiedId}s. */
+  public static boolean isMultiContext(@Nullable List<String> participantContextIds) {
     Set<String> tags = contextTags(participantContextIds);
-    if (tags.isEmpty()) {
-      return !participantContextId.equals(defaultParticipantContextId);
-    }
     return tags.size() > 1 || tags.contains(ALL_PARTICIPANT_CONTEXTS);
   }
 
   /**
-   * Context of an offering looked up by id: for a plain id ({@code qualifier} null) the context it
-   * keeps its plain id in, for a qualified id the qualifier if it names an existing participant
-   * context the offering is exposed in under a qualified id. Empty in every other case, so each id
-   * resolves in at most one context.
+   * Context of an offering looked up by id: for a plain id ({@code qualifier} null) the single
+   * context it serves, for a qualified id the qualifier if the offering is multi-context and serves
+   * it. Empty in every other case, so each id resolves in at most one context.
    */
   public Optional<String> contextForId(
       @Nullable List<String> participantContextIds, @Nullable String qualifier) {
     if (qualifier != null) {
-      return servesContext(participantContextIds, qualifier)
-              && isQualifiedIn(participantContextIds, qualifier)
-              && isParticipantContext(qualifier)
+      return isMultiContext(participantContextIds)
+              && servesContext(participantContextIds, qualifier)
           ? Optional.of(qualifier)
           : Optional.empty();
     }
-    Set<String> tags = contextTags(participantContextIds);
-    if (tags.isEmpty()) {
-      return Optional.ofNullable(defaultParticipantContextId);
+    if (isMultiContext(participantContextIds)) {
+      return Optional.empty();
     }
-    String onlyTag = tags.iterator().next();
-    return isQualifiedIn(participantContextIds, onlyTag) ? Optional.empty() : Optional.of(onlyTag);
+    return contextTags(participantContextIds).stream()
+        .findFirst()
+        .or(() -> Optional.ofNullable(defaultParticipantContextId));
   }
 
   /**
    * Contract definition id of the offering in the requesting context: its plain external id, or a
-   * {@link ContextQualifiedId} where it is qualified. Empty if it does not serve the context.
+   * {@link ContextQualifiedId} when it serves several contexts. Empty if it does not serve it.
    */
   public Optional<String> contractDefinitionId(
       ExtendableProductOffering offering, @Nullable String participantContextId) {
@@ -238,20 +221,13 @@ public class TMFEdcMapper {
       return Optional.empty();
     }
     return Optional.of(
-        qualifyIfNeeded(
+        qualifyIfMultiContext(
             offering.getExternalId(), offering.getParticipantContextIds(), participantContextId));
   }
 
-  // keeps legacy ids like "offer@v2" plain on a classic runtime, whose only context is the default
-  private boolean isParticipantContext(String participantContextId) {
-    return participantContextId.equals(defaultParticipantContextId)
-        || (participantContextStore != null
-            && participantContextStore.findById(participantContextId).succeeded());
-  }
-
-  private String qualifyIfNeeded(
+  private static String qualifyIfMultiContext(
       String id, @Nullable List<String> participantContextIds, String participantContextId) {
-    return isQualifiedIn(participantContextIds, participantContextId)
+    return isMultiContext(participantContextIds)
         ? ContextQualifiedId.qualify(id, participantContextId)
         : id;
   }
@@ -1046,8 +1022,8 @@ public class TMFEdcMapper {
   }
 
   /**
-   * Maps the offering as seen from the requesting context; empty if it is not made there. Where the
-   * offering is qualified, its definition and policy ids are {@link ContextQualifiedId}s.
+   * Maps the offering as seen from the requesting context; empty if it is not made there. A
+   * multi-context offering gets {@link ContextQualifiedId} definition and policy ids.
    */
   public Optional<ContractDefinition> fromProductOffer(
       ExtendableProductOffering productOfferingVO, @Nullable String participantContextId) {
@@ -1071,11 +1047,13 @@ public class TMFEdcMapper {
 
       Policy contractPolicy = getContractPolicyFromOfferTerm(optionalTerm.get());
       contractDefinitionBuilder.contractPolicyId(
-          qualifyIfNeeded(getIdFromPolicy(contractPolicy), offeringContexts, participantContextId));
+          qualifyIfMultiContext(
+              getIdFromPolicy(contractPolicy), offeringContexts, participantContextId));
 
       Policy accessPolicy = getAccessPolicyFromOfferTerm(optionalTerm.get());
       contractDefinitionBuilder.accessPolicyId(
-          qualifyIfNeeded(getIdFromPolicy(accessPolicy), offeringContexts, participantContextId));
+          qualifyIfMultiContext(
+              getIdFromPolicy(accessPolicy), offeringContexts, participantContextId));
 
       return Optional.of(contractDefinitionBuilder.build());
     } catch (IllegalArgumentException e) {
@@ -1096,7 +1074,7 @@ public class TMFEdcMapper {
                 PolicyDefinition.Builder.newInstance()
                     .policy(offeringPolicy.policy())
                     .id(
-                        qualifyIfNeeded(
+                        qualifyIfMultiContext(
                             getIdFromPolicy(offeringPolicy.policy()),
                             offeringPolicy.participantContextIds(),
                             participantContextId))
