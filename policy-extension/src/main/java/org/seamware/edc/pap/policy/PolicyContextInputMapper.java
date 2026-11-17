@@ -72,6 +72,12 @@ public class PolicyContextInputMapper {
   /** Key for the consumer ID within the contract agreement object. */
   static final String KEY_AGREEMENT_CONSUMER_ID = "consumerId";
 
+  /**
+   * Key for the agreement's participant context, i.e. the dataspace it was made in. Optional: lets
+   * policies on the shared PAP tell dataspaces apart.
+   */
+  static final String KEY_AGREEMENT_PARTICIPANT_CONTEXT_ID = "participantContextId";
+
   /** Key for the signing date within the contract agreement object. */
   static final String KEY_AGREEMENT_SIGNING_DATE = "contractSigningDate";
 
@@ -184,6 +190,8 @@ public class PolicyContextInputMapper {
       putIfNotNull(agreementMap, KEY_AGREEMENT_ASSET_ID, agreement.getAssetId());
       putIfNotNull(agreementMap, KEY_AGREEMENT_PROVIDER_ID, agreement.getProviderId());
       putIfNotNull(agreementMap, KEY_AGREEMENT_CONSUMER_ID, agreement.getConsumerId());
+      putIfNotNull(
+          agreementMap, KEY_AGREEMENT_PARTICIPANT_CONTEXT_ID, agreement.getParticipantContextId());
       agreementMap.put(KEY_AGREEMENT_SIGNING_DATE, agreement.getContractSigningDate());
       if (!agreementMap.isEmpty()) {
         payload.put(KEY_CONTRACT_AGREEMENT, agreementMap);
