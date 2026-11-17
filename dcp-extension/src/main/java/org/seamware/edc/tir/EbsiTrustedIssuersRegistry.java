@@ -36,10 +36,15 @@ package org.seamware.edc.tir;
  * #L%
  */
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
@@ -51,13 +56,21 @@ import org.seamware.til.model.TrustedIssuerVO;
 /**
  * Trusted issuer registry backed by one or more EBSI TILs. Lookups return the union of all TILs;
  * registrations go to the first (primary) TIL only. A failing additional TIL is skipped (its
- * issuers are untrusted) so it cannot break authentication in other dataspaces.
+ * issuers are untrusted) for {@link #UNAVAILABLE_TIL_COOLDOWN}, so it cannot break or stall
+ * authentication in other dataspaces.
  */
 public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
+
+  /**
+   * How long a failed additional TIL is skipped; bounds a hanging TIL to one timeout per window.
+   */
+  public static final Duration UNAVAILABLE_TIL_COOLDOWN = Duration.ofSeconds(30);
 
   private final TirClient tirClient;
   private final List<TirClient> additionalClients;
   private final Monitor monitor;
+  private final Clock clock;
+  private final Map<TirClient, Instant> unavailableUntil = new ConcurrentHashMap<>();
 
   public EbsiTrustedIssuersRegistry(TirClient tirClient) {
     this(tirClient, List.of(), null);
@@ -65,9 +78,15 @@ public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
 
   public EbsiTrustedIssuersRegistry(
       TirClient tirClient, List<TirClient> additionalClients, Monitor monitor) {
+    this(tirClient, additionalClients, monitor, Clock.systemUTC());
+  }
+
+  EbsiTrustedIssuersRegistry(
+      TirClient tirClient, List<TirClient> additionalClients, Monitor monitor, Clock clock) {
     this.tirClient = tirClient;
     this.additionalClients = List.copyOf(additionalClients);
     this.monitor = monitor;
+    this.clock = clock;
   }
 
   @Override
@@ -100,11 +119,21 @@ public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
   }
 
   private Optional<TrustedIssuerVO> lookupSkippingFailure(TirClient client, String issuerId) {
+    Instant skipUntil = unavailableUntil.get(client);
+    if (skipUntil != null && clock.instant().isBefore(skipUntil)) {
+      return Optional.empty();
+    }
     try {
-      return client.getIssuer(issuerId);
+      Optional<TrustedIssuerVO> trustedIssuer = client.getIssuer(issuerId);
+      unavailableUntil.remove(client);
+      return trustedIssuer;
     } catch (RuntimeException e) {
+      unavailableUntil.put(client, clock.instant().plus(UNAVAILABLE_TIL_COOLDOWN));
       monitor.warning(
-          String.format("Skipping unavailable profile TIL for issuer %s.", issuerId), e);
+          String.format(
+              "Skipping unavailable profile TIL for issuer %s; not asking it again for %s.",
+              issuerId, UNAVAILABLE_TIL_COOLDOWN),
+          e);
       return Optional.empty();
     }
   }

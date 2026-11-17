@@ -40,8 +40,13 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -136,6 +141,34 @@ public class EbsiTrustedIssuersRegistryTest {
             tirClient, List.of(failingProfileClient), mock(Monitor.class));
 
     assertEquals(Set.of("global-credential"), registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+  }
+
+  @ParameterizedTest(name = "{0} after failure -> {1} profile TIL calls")
+  @MethodSource("cooldownCases")
+  public void testGetSupportedTypes_skips_failed_profile_til_during_cooldown(
+      Duration elapsed, int expectedProfileCalls) {
+    TirClient failingProfileClient = mock(TirClient.class);
+    when(tirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("global-credential"))));
+    when(failingProfileClient.getIssuer(anyString()))
+        .thenThrow(new BadGatewayException("TIL unavailable"));
+    Instant start = Instant.parse("2026-01-01T00:00:00Z");
+    Clock clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(start, start.plus(elapsed));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(
+            tirClient, List.of(failingProfileClient), mock(Monitor.class), clock);
+
+    registry.getSupportedTypes(getIssuer(TEST_ISSUER));
+    assertEquals(Set.of("global-credential"), registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+    verify(failingProfileClient, times(expectedProfileCalls)).getIssuer(TEST_ISSUER);
+  }
+
+  private static Stream<Arguments> cooldownCases() {
+    return Stream.of(
+        Arguments.of(Duration.ZERO, 1),
+        Arguments.of(EbsiTrustedIssuersRegistry.UNAVAILABLE_TIL_COOLDOWN.minusSeconds(1), 1),
+        Arguments.of(EbsiTrustedIssuersRegistry.UNAVAILABLE_TIL_COOLDOWN, 2));
   }
 
   @Test

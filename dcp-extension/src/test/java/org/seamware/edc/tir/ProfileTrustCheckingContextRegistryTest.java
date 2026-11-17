@@ -69,6 +69,8 @@ public class ProfileTrustCheckingContextRegistryTest {
   private static final String PROFILE_A = "dataspace-a";
   private static final String PROFILE_B = "dataspace-b";
   private static final String PROFILE_WITHOUT_TIL = "dataspace-c";
+  // Classic mode registers only this profile, through registerDefault.
+  private static final String DEFAULT_PROFILE = "dataspace-protocol-http:2025-1";
   private static final String ISSUER_A = "did:web:issuer-a.org";
   private static final String ISSUER_B = "did:web:issuer-b.org";
   private static final String ISSUER_GLOBAL = "did:web:issuer-global.org";
@@ -77,6 +79,7 @@ public class ProfileTrustCheckingContextRegistryTest {
 
   private ParticipantIdExtractionFunction delegate;
   private ProfileTrustCheckingContextRegistry registry;
+  private ProfileTrustCheckingContextRegistry defaultOnlyRegistry;
 
   @BeforeEach
   public void setup() {
@@ -104,6 +107,13 @@ public class ProfileTrustCheckingContextRegistryTest {
     Stream.of(PROFILE_A, PROFILE_B, PROFILE_WITHOUT_TIL)
         .map(this::profile)
         .forEach(registry::register);
+    // Upstream only serves default profiles while no standard profile is registered.
+    defaultOnlyRegistry =
+        new ProfileTrustCheckingContextRegistry(
+            mock(Monitor.class),
+            new EbsiTrustedIssuersRegistry(globalTil),
+            Map.of(PROFILE_A, new EbsiTrustedIssuersRegistry(tilA)));
+    defaultOnlyRegistry.registerDefault(profile(DEFAULT_PROFILE));
   }
 
   @ParameterizedTest(name = "{0} with issuer {1} -> {2}")
@@ -129,6 +139,29 @@ public class ProfileTrustCheckingContextRegistryTest {
         Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_GLOBAL, PARTICIPANT_ID),
         Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_A, null),
         Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_B, null));
+  }
+
+  @ParameterizedTest(name = "default profile with issuer {0} -> {1}")
+  @MethodSource("defaultProfileTrustCases")
+  public void defaultProfileOnlyTrustsTheGlobalTil(String issuer, String expectedParticipantId) {
+    ClaimToken claimToken =
+        ClaimToken.Builder.newInstance()
+            .claim(CLAIMTOKEN_VC_KEY, List.of(credential(issuer, CREDENTIAL_TYPE)))
+            .build();
+
+    assertTrue(
+        defaultOnlyRegistry.getIdExtractionFunction(DEFAULT_PROFILE)
+            instanceof ProfileTrustedIssuerIdExtractionFunction);
+    assertEquals(
+        expectedParticipantId,
+        defaultOnlyRegistry.getIdExtractionFunction(DEFAULT_PROFILE).apply(claimToken));
+  }
+
+  private static Stream<Arguments> defaultProfileTrustCases() {
+    return Stream.of(
+        Arguments.of(ISSUER_GLOBAL, PARTICIPANT_ID),
+        Arguments.of(ISSUER_A, null),
+        Arguments.of(ISSUER_B, null));
   }
 
   @Test

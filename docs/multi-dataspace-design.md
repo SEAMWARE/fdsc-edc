@@ -472,9 +472,10 @@ per context, stamped with that context id. That is out of scope here.
 1. `EbsiTrustedIssuersRegistry` is backed by the **union** of the global
    `ebsiTir.tilAddress` and all `ebsiTir.profiles.<profile>.tilAddress`, so
    `HasValidIssuer` passes for an issuer trusted in any dataspace. A failing
-   profile TIL is skipped with a warning (its issuers are untrusted), so one
-   dataspace's TIL outage does not break the others; a failing global TIL
-   still fails the request.
+   profile TIL is skipped with a warning (its issuers are untrusted) and
+   then not asked again for a cooldown window, so one dataspace's TIL outage
+   does not break the others; a failing global TIL still fails the request.
+   For the remaining latency coupling, see the pitfall below.
 2. Once any profile has its own TIL, Step 6 wraps **every** profile's
    id-extraction function:
    - it returns `null` (and therefore 401) unless every VC issuer in the `vc`
@@ -494,15 +495,26 @@ per context, stamped with that context id. That is out of scope here.
    `@Provider(isDefault = true)` (`ControlPlaneDefaultServicesExtension:101`),
    so `TirExtension` provides `ProfileTrustCheckingContextRegistry` instead,
    which wraps the id-extraction function of each profile (with its own TIL,
-   or the global one) as the profile is registered.
+   or the global one) as the profile is registered, through both `register`
+   and `registerDefault`. Without `ebsiTir.profiles.*` it is not registered
+   and upstream's default stays in place.
 
    - **Pitfall for Step 10 docs:** the profile name is part of the
      `dcp.profiles.<profile>.*` / `ebsiTir.profiles.<profile>.*` keys. The
      default profile `dataspace-protocol-http:2025-1` contains `:`, which must
      be escaped (`\:`) in a `.properties` file and cannot be written as an
      environment variable; the guide should recommend `:`-free profile names
-     for per-profile overrides. Without `ebsiTir.profiles.*` it is not
-   registered and upstream's default stays in place.
+     for per-profile overrides.
+   - **Pitfall for Step 10 docs (TIL latency coupling):** TIL lookups are not
+     cached. Every VC check queries the global TIL and every profile TIL
+     (layer 1), and the profile's own TIL again (layer 2). A profile TIL that
+     fails, including by hanging until the OkHttp timeout, is skipped by
+     layer 1 for `EbsiTrustedIssuersRegistry.UNAVAILABLE_TIL_COOLDOWN` (30 s).
+     Other dataspaces therefore pay that timeout at most once per window and
+     not on every request. Requests running concurrently while the first
+     failure is still pending all wait. Operators should keep TIL timeouts
+     short and place TILs close to the connector. A per-issuer cache is
+     deferred until latency proves to be a problem.
 
 ### Management API auth for operators
 
