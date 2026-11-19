@@ -1,0 +1,7 @@
+# Seed and verification scripts for the multi-dataspace verification stack.
+FROM alpine:3.20
+
+RUN apk --no-cache add curl jq openssl
+
+COPY --chmod=755 scripts/init-tmforum-multi-dataspace.sh /scripts/init-tmforum-multi-dataspace.sh
+COPY --chmod=755 scripts/verify-multi-dataspace.sh /scripts/verify-multi-dataspace.sh
