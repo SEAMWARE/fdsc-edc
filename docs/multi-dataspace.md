@@ -306,10 +306,10 @@ All dataspaces share one TMForum. Products are shared; everything that happens
 | ProductOffering (and its embedded policies) | ContractDefinition, PolicyDefinition | `participantContextIds`: array of context ids, or `["*"]` |
 | Quote, QuoteItem | ContractNegotiation | `participantContextId` |
 | Agreement | ContractAgreement | `participantContextId` |
-| Usage | TransferProcess | `participantContextId` |
+| Usage | — (reserved) | `participantContextId` is in the schema, but the connector does not write Usage yet; transfer processes are not stored in TMForum |
 | Product, ProductOrder, ProductSpecificationRef | — | none: reached only through a tagged Quote or Agreement |
 
-- The connector writes the tag on quotes, agreements and usages itself. You tag
+- The connector writes the tag on the quotes and agreements it creates. You tag
   only the offerings you create.
 - The properties are optional in the schemas, so existing data stays valid.
 - **Default-context rule:** an entity without a tag (or with an empty tag)
@@ -469,7 +469,7 @@ Steps:
    not contain `@`.
 2. **Keep your data in it.** Set
    `tmfExtension.defaultParticipantContextId=<that id>`. All existing,
-   untagged offerings, quotes, agreements and usages belong to it; no TMForum
+   untagged offerings, quotes and agreements belong to it; no TMForum
    data migration is needed. Keep `edc.participant.id` at your current DID.
 3. **Publish the schemas** from `schemas/` where TMForum can reach them and
    set `tmfExtension.schemaBaseUri` to that URL (see [TMForum](#tmforum)).

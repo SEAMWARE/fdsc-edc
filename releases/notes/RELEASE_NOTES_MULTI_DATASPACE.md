@@ -71,9 +71,11 @@ secret alias, by convention `<context id>-sts-client-secret`.
   duplicate them. Startup fails on an unknown profile, on a context id
   containing `@`, or on a DID entry that contradicts `.identity`.
 - **Dataspace-aware TMForum storage.** Offerings carry an optional
-  `participantContextIds` array (context ids or `*`); quotes, quote items,
-  agreements and usages carry an optional `participantContextId`. The stores
-  query and filter by context, and the connector tags what it writes.
+  `participantContextIds` array (context ids or `*`); quotes, quote items and
+  agreements carry an optional `participantContextId`. The stores query and
+  filter by context, and the connector tags the quotes and agreements it
+  creates. The Usage schema has the property too, reserved for later: the
+  connector does not write Usage.
   ProductSpecifications (products) stay shared.
 - **Offer a product in one, several or all dataspaces.** An untagged offering
   stays in the default context only. `["A"]`, `["A","B"]` and `["*"]` offer it in
