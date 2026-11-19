@@ -1,0 +1,166 @@
+#
+# Docker Compose for the two-dataspace verification of controlplane-dcp
+#
+# Runs controlplane-dcp in virtual participant-context mode with
+# config/multi-dataspace/edc.properties (dataspace-a and dataspace-b) against
+# one shared TMForum, then checks participant contexts, management API v5
+# access, DSP profile routing and the TMForum offering tags with
+# scripts/verify-multi-dataspace.sh. PostGIS, Scorpio and TMForum are reused
+# from docker-compose.tck.yml.
+#
+# No DCP wallet, Keycloak or ODRL-PAP is started: DSP requests are only checked
+# up to the token check, and management API tokens are signed with a key whose
+# JWKS the static-files service publishes.
+#
+# Usage:
+#   mvn package -pl controlplane-dcp -am -DskipTests
+#   docker compose -f docker-compose.multi-dataspace.yml up --build -d --wait
+#   docker compose -f docker-compose.multi-dataspace.yml run --rm verify
+#   docker compose -f docker-compose.multi-dataspace.yml down -v
+#
+
+services:
+  postgis:
+    extends:
+      file: docker-compose.tck.yml
+      service: postgis
+
+  scorpio:
+    extends:
+      file: docker-compose.tck.yml
+      service: scorpio
+
+  tmforum:
+    extends:
+      file: docker-compose.tck.yml
+      service: tmforum
+
+  # -------------------------------------------------------------------------
+  # Static files — schemas/ for TMForum @schemaLocation validation, and the
+  # JWKS of the management API signing key (generated on first start into the
+  # mgmt-keys volume, which the verifier reads to sign its tokens).
+  # -------------------------------------------------------------------------
+  static-files:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.multi-dataspace-static
+    volumes:
+      - mgmt-keys:/keys
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/jwks.json"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # TMForum seed — one-shot, stays alive so `up --wait` sees it healthy.
+  # -------------------------------------------------------------------------
+  tmf-init:
+    image: fdsc-multi-dataspace-tools:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.multi-dataspace-tools
+    entrypoint: ["/bin/sh", "-c", "/scripts/init-tmforum-multi-dataspace.sh && touch /tmp/init-complete && tail -f /dev/null"]
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/init-complete"]
+      interval: 5s
+      timeout: 3s
+      retries: 120
+      start_period: 5s
+    environment:
+      TMF_BASE_URL: http://tmforum:8632
+      SCHEMA_BASE_URI: http://static-files/schemas/
+      MAX_RETRIES: "90"
+      RETRY_INTERVAL: "2"
+    depends_on:
+      tmforum:
+        condition: service_healthy
+      static-files:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # HashiCorp Vault (dev mode) — the example configuration's shared Vault.
+  # -------------------------------------------------------------------------
+  vault:
+    image: hashicorp/vault:${VAULT_VERSION:-1.18}
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8200/v1/sys/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # EDC Controlplane (DCP variant, virtual mode)
+  # -------------------------------------------------------------------------
+  edc:
+    image: fdsc-edc-controlplane-multi-dataspace:${EDC_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.multi-dataspace
+      args:
+        JAR: controlplane-dcp/target/context/controlplane-dcp.jar
+    environment:
+      EDC_FS_CONFIG: /app/config/edc.properties
+      # Management tokens are verified against the static JWKS instead of Keycloak.
+      EDC_IAM_OAUTH2_ISSUER: http://static-files
+      EDC_IAM_OAUTH2_JWKS_URL: http://static-files/jwks.json
+      # camelCase keys cannot be set through environment variables.
+      JAVA_TOOL_OPTIONS: -DtmfExtension.schemaBaseUri=http://static-files/schemas/
+    ports:
+      - "8080:8080"   # Default API
+      - "8181:8181"   # Management API
+      - "8282:8282"   # DSP Protocol
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/check/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    depends_on:
+      tmf-init:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+  # -------------------------------------------------------------------------
+  # Verifier — run on demand with `run --rm verify`; exits non-zero on failure.
+  # -------------------------------------------------------------------------
+  verify:
+    image: fdsc-multi-dataspace-tools:latest
+    profiles: ["verify"]
+    entrypoint: ["/scripts/verify-multi-dataspace.sh"]
+    environment:
+      MANAGEMENT_URL: http://edc:8181/management
+      PROTOCOL_URL: http://edc:8282/protocol
+      TMF_BASE_URL: http://tmforum:8632
+      SIGNING_KEY_FILE: /keys/management-api.key
+      TOKEN_ISSUER: http://static-files
+    volumes:
+      - mgmt-keys:/keys:ro
+    depends_on:
+      edc:
+        condition: service_healthy
+    networks:
+      - tck-net
+
+volumes:
+  mgmt-keys:
+
+networks:
+  tck-net:
+    driver: bridge
