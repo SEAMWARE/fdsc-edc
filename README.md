@@ -35,7 +35,7 @@ mvn test -pl <module> -Dtest=<TestClassName>
 # e.g.: mvn test -pl dcp-extension -Dtest=TirClientTest
 ```
 
-The Docker build produces multi-platform images (`linux/amd64`, `linux/arm64`) based on `eclipse-temurin:24_36-jre-alpine`.
+The Docker build produces multi-platform images (`linux/amd64`, `linux/arm64`) based on `eclipse-temurin:25.0.5_8-jre-alpine`.
 
 ## Architecture
 
