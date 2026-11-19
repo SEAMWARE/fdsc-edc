@@ -25,6 +25,8 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Stream;
 import org.eclipse.edc.participantcontext.spi.config.model.ParticipantContextConfiguration;
 import org.eclipse.edc.participantcontext.spi.config.service.ParticipantContextConfigService;
 import org.eclipse.edc.participantcontext.spi.service.ParticipantContextService;
@@ -44,6 +46,7 @@ import org.seamware.edc.bootstrap.ParticipantBootstrapConfig.Participant;
 /**
  * Seeds the participant contexts declared in {@link ParticipantBootstrapConfig} at startup.
  * Upserts: existing contexts are updated and their configuration is replaced by the declared one.
+ * The participant-context services are optional, so the extension is a no-op on a classic runtime.
  */
 @Extension(ParticipantBootstrapExtension.NAME)
 public class ParticipantBootstrapExtension implements ServiceExtension {
@@ -53,9 +56,15 @@ public class ParticipantBootstrapExtension implements ServiceExtension {
   /** Separator of {@code ContextQualifiedId} in tmf-extension; a context id must not contain it. */
   static final String CONTEXT_QUALIFIER_SEPARATOR = "@";
 
-  @Inject private ParticipantContextService participantContextService;
-  @Inject private ParticipantContextConfigService participantContextConfigService;
-  @Inject private DataspaceProfileContextRegistry dataspaceProfileContextRegistry;
+  @Inject(required = false)
+  private ParticipantContextService participantContextService;
+
+  @Inject(required = false)
+  private ParticipantContextConfigService participantContextConfigService;
+
+  @Inject(required = false)
+  private DataspaceProfileContextRegistry dataspaceProfileContextRegistry;
+
   @Inject private Monitor monitor;
 
   @Override
@@ -68,8 +77,33 @@ public class ParticipantBootstrapExtension implements ServiceExtension {
   @Override
   public void initialize(ServiceExtensionContext context) {
     participants = ParticipantBootstrapConfig.fromConfig(context.getConfig());
+    if (participants.isEmpty()) {
+      return;
+    }
+    requireServices();
     participants.forEach(ParticipantBootstrapExtension::validate);
     requireUniqueIds(participants);
+  }
+
+  private void requireServices() {
+    var missing =
+        Stream.of(
+                missingService(participantContextService, ParticipantContextService.class),
+                missingService(
+                    participantContextConfigService, ParticipantContextConfigService.class),
+                missingService(
+                    dataspaceProfileContextRegistry, DataspaceProfileContextRegistry.class))
+            .flatMap(Optional::stream)
+            .toList();
+    if (!missing.isEmpty()) {
+      throw new EdcException(
+          "%s declares participants, but the runtime does not provide %s; it requires the virtual participant-context services"
+              .formatted(PARTICIPANTS_CONFIG, missing));
+    }
+  }
+
+  private static Optional<String> missingService(Object service, Class<?> type) {
+    return service == null ? Optional.of(type.getSimpleName()) : Optional.empty();
   }
 
   // Profiles are registered during initialize(), so they are only checked from prepare() on.

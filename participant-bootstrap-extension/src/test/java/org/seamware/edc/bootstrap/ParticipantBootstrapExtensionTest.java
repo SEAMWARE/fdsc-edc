@@ -51,6 +51,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -74,6 +75,7 @@ class ParticipantBootstrapExtensionTest {
   private static final String STS_SECRET = "secret";
   private static final String OTHER_DID = "did:web:other.example";
   private static final long EXISTING_CREATED_AT = 42L;
+  private static final String FAILURE_DETAIL = "store unavailable";
 
   @Mock private ParticipantContextService participantContextService;
   @Mock private ParticipantContextConfigService participantContextConfigService;
@@ -209,8 +211,8 @@ class ParticipantBootstrapExtensionTest {
           savedConfig(CTX_A).getEntries().get(ParticipantBootstrapConfig.PARTICIPANT_DID_ENTRY));
     } else {
       var exception = assertThrows(EdcException.class, () -> start(config));
-      assertTrue(
-          exception.getMessage().contains(OTHER_DID) || exception.getMessage().contains(DID_A));
+      var edcKey = entry.substring(entry.indexOf('.') + 1);
+      assertTrue(exception.getMessage().contains("'%s' must equal".formatted(edcKey)));
       verifyNoInteractions(participantContextService, participantContextConfigService);
     }
   }
@@ -262,6 +264,64 @@ class ParticipantBootstrapExtensionTest {
         participantContextService,
         participantContextConfigService,
         dataspaceProfileContextRegistry);
+  }
+
+  @Test
+  void noKeysWithoutParticipantContextServicesIsNoOp() {
+    var classicExtension = new ParticipantBootstrapExtension();
+
+    classicExtension.initialize(contextWith(Map.of("edc.participant.id", CTX_A)));
+    classicExtension.prepare();
+  }
+
+  @Test
+  void declaredParticipantsWithoutParticipantContextServicesFailStartup() {
+    var classicExtension = new ParticipantBootstrapExtension();
+    var config = contextWith(participant("a", CTX_A, DID_A, PROFILE_A));
+
+    var exception = assertThrows(EdcException.class, () -> classicExtension.initialize(config));
+
+    assertTrue(exception.getMessage().contains(ParticipantContextService.class.getSimpleName()));
+  }
+
+  enum ServiceFailurePoint {
+    LOOKUP,
+    CREATE,
+    UPDATE,
+    SAVE_CONFIG
+  }
+
+  @ParameterizedTest
+  @EnumSource(ServiceFailurePoint.class)
+  void serviceFailureFailsStartup(ServiceFailurePoint failurePoint) {
+    switch (failurePoint) {
+      case LOOKUP ->
+          when(participantContextService.getParticipantContext(CTX_A))
+              .thenReturn(ServiceResult.unexpected(FAILURE_DETAIL));
+      case CREATE ->
+          when(participantContextService.createParticipantContext(any()))
+              .thenReturn(ServiceResult.unexpected(FAILURE_DETAIL));
+      case UPDATE -> {
+        when(participantContextService.getParticipantContext(CTX_A))
+            .thenReturn(
+                ServiceResult.success(
+                    ParticipantContext.Builder.newInstance()
+                        .participantContextId(CTX_A)
+                        .identity(DID_A)
+                        .state(ParticipantContextState.ACTIVATED)
+                        .build()));
+        when(participantContextService.updateParticipantContext(any()))
+            .thenReturn(ServiceResult.unexpected(FAILURE_DETAIL));
+      }
+      case SAVE_CONFIG ->
+          when(participantContextConfigService.save(any()))
+              .thenReturn(ServiceResult.unexpected(FAILURE_DETAIL));
+    }
+
+    var exception =
+        assertThrows(EdcException.class, () -> start(participant("a", CTX_A, DID_A, PROFILE_A)));
+
+    assertTrue(exception.getMessage().contains(FAILURE_DETAIL));
   }
 
   private void start(Map<String, String> config) {
