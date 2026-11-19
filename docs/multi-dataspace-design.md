@@ -25,8 +25,10 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
   `dsp-http-core-virtual`):
   - keys: `edc.dataspace.profiles.<key>.name`, `.protocol.version`,
     `.protocol.binding`, `.protocol.namespace` and `.jsonld.context.urls` (CSV);
-  - `DspVirtualApiConfigurationV2025Extension` always registers the default
-    profile `http-dsp-profile-2025-1`.
+  - `DspVirtualApiConfigurationV2025Extension` registers the default profile
+    `http-dsp-profile-2025-1` via `registerDefault`. The registry serves
+    defaults only while no profile is configured, so a runtime with
+    `edc.dataspace.profiles.*` must declare it explicitly to keep it (Step 8).
 - **DSP path in virtual mode:**
   `<web.http.protocol.path>/{participantContextId}/{profileId}/{catalog|negotiations|transfers}/...`
   - It returns 404 unless the profile is associated with that context. The

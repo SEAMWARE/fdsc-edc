@@ -36,7 +36,6 @@ package org.seamware.edc;
  * #L%
  */
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -48,6 +47,7 @@ import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.spi.types.TypeManager;
 import org.seamware.edc.tir.EbsiTrustedIssuersRegistry;
 import org.seamware.edc.tir.ProfileTrustCheckingContextRegistry;
 import org.seamware.edc.tir.TirClient;
@@ -67,7 +67,9 @@ public class TirExtension implements ServiceExtension {
 
   @Inject private OkHttpClient okHttpClient;
 
-  @Inject private ObjectMapper objectMapper;
+  // TypeManager rather than the TMF extension's ObjectMapper: that extension injects the
+  // DataspaceProfileContextRegistry provided here, so depending on it back would be a cycle.
+  @Inject private TypeManager typeManager;
 
   @Override
   public void initialize(ServiceExtensionContext context) {
@@ -102,7 +104,8 @@ public class TirExtension implements ServiceExtension {
   public TirClient tirClient(ServiceExtensionContext context) {
     if (tirClient == null) {
       TirConfig tirConfig = TirConfig.fromConfig(context.getConfig());
-      tirClient = new TirClient(monitor, okHttpClient, tirConfig.getTilAddress(), objectMapper);
+      tirClient =
+          new TirClient(monitor, okHttpClient, tirConfig.getTilAddress(), typeManager.getMapper());
     }
     return tirClient;
   }
@@ -115,7 +118,8 @@ public class TirExtension implements ServiceExtension {
                   Collectors.toMap(
                       Map.Entry::getKey,
                       profile ->
-                          new TirClient(monitor, okHttpClient, profile.getValue(), objectMapper)));
+                          new TirClient(
+                              monitor, okHttpClient, profile.getValue(), typeManager.getMapper())));
     }
     return profileTirClients;
   }
