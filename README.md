@@ -48,6 +48,9 @@ fdsc-edc/
 ├── dcp-extension/            DCP authentication + EBSI TIR
 ├── fdsc-transfer-extension/  Data transfer provisioning
 ├── test-extension/           Test utilities & TCK support
+├── otel-observability-core/  OTLP export of logs and metrics
+├── otel-audit-extension/     Audit logs (negotiation, transfer, TMForum catalog)
+├── otel-business-metrics/    Negotiation and transfer metrics
 ├── controlplane-oid4vc/      Assembled controlplane (OID4VP)
 ├── controlplane-dcp/         Assembled controlplane (DCP)
 └── controlplane-tck/         Assembled controlplane for the DSP TCK (OID4VP minus data-plane-signaling)
@@ -205,6 +208,13 @@ The GitHub Actions workflow (`.github/workflows/test.yml`) includes a `tck-confo
 3. Builds the Docker image with layer caching.
 4. Runs the TCK via Docker Compose.
 5. Uploads EDC and TCK container logs as artifacts if tests fail.
+
+## Observability
+
+Both controlplane images export audit logs and business metrics over OTLP. The standard
+`OTEL_EXPORTER_OTLP_*` variables are enough to point them at a collector. See
+[OBSERVABILITY_README.md](OBSERVABILITY_README.md) for configuration, prerequisites of the TMForum
+catalog audit, how to check that it works, and troubleshooting.
 
 ## Developing
 

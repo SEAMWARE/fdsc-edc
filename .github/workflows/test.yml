@@ -128,6 +128,7 @@ jobs:
           docker compose -f docker-compose.tck.yml logs opa > tck-logs/opa.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs odrl-pap > tck-logs/odrl-pap.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs edc > tck-logs/edc.log 2>&1 || true
+          docker compose -f docker-compose.tck.yml logs otel-collector > tck-logs/otel-collector.log 2>&1 || true
           docker compose -f docker-compose.tck.yml logs tck > tck-logs/tck.log 2>&1 || true
 
       - name: Upload EDC container logs on success

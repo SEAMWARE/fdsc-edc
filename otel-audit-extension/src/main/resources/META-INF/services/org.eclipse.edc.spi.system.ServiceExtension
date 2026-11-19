@@ -1,0 +1,2 @@
+org.seamware.edc.otel.audit.OtelAuditExtension
+org.seamware.edc.otel.audit.OtelPolicyAuditExtension
