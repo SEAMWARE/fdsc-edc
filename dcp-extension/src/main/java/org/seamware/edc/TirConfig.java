@@ -36,9 +36,11 @@ package org.seamware.edc;
  * #L%
  */
 
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.eclipse.edc.spi.EdcException;
@@ -50,11 +52,23 @@ public class TirConfig {
 
   private static final String EBSI_TIR_CONFIG = "ebsiTir";
 
+  /** Per-profile TILs: {@code ebsiTir.profiles.<profileName>.tilAddress}. */
+  public static final String EBSI_TIR_PROFILES_CONFIG = "ebsiTir.profiles";
+
+  private static final String ENABLED_KEY = "enabled";
+  private static final String TIL_ADDRESS_KEY = "tilAddress";
+
   private boolean enabled;
   private String tilAddress;
+  private Map<String, String> profileTilAddresses = Map.of();
 
   public String getTilAddress() {
     return tilAddress;
+  }
+
+  /** TIL addresses keyed by dataspace profile name; empty when no profile has its own TIL. */
+  public Map<String, String> getProfileTilAddresses() {
+    return profileTilAddresses;
   }
 
   public boolean isEnabled() {
@@ -65,10 +79,20 @@ public class TirConfig {
     Config tirConfig = config.getConfig(EBSI_TIR_CONFIG);
 
     TirConfig.Builder tirConfigBuilder = TirConfig.Builder.newInstance();
-    getNullSafeFromConfig(() -> tirConfig.getBoolean("enabled"))
+    getNullSafeFromConfig(() -> tirConfig.getBoolean(ENABLED_KEY))
         .ifPresent(tirConfigBuilder::enabled);
-    getNullSafeFromConfig(() -> tirConfig.getString("tilAddress"))
+    getNullSafeFromConfig(() -> tirConfig.getString(TIL_ADDRESS_KEY))
         .ifPresent(tirConfigBuilder::tilAddress);
+    tirConfigBuilder.profileTilAddresses(
+        config
+            .getConfig(EBSI_TIR_PROFILES_CONFIG)
+            .partition()
+            .filter(
+                profileConfig -> profileConfig.getRelativeEntries().containsKey(TIL_ADDRESS_KEY))
+            .collect(
+                Collectors.toMap(
+                    Config::currentNode,
+                    profileConfig -> profileConfig.getString(TIL_ADDRESS_KEY))));
 
     return tirConfigBuilder.build();
   }
@@ -91,6 +115,11 @@ public class TirConfig {
 
     public Builder enabled(boolean enabled) {
       tirConfig.enabled = enabled;
+      return this;
+    }
+
+    public Builder profileTilAddresses(Map<String, String> profileTilAddresses) {
+      tirConfig.profileTilAddresses = Map.copyOf(profileTilAddresses);
       return this;
     }
 

@@ -40,14 +40,21 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 import org.eclipse.edc.iam.verifiablecredentials.spi.model.Issuer;
+import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -105,6 +112,74 @@ public class EbsiTrustedIssuersRegistryTest {
     assertTrue(
         ebsiTrustedIssuersRegistry.getSupportedTypes(getIssuer(TEST_ISSUER)).isEmpty(),
         "If the issuer has no types, none should be returned.");
+  }
+
+  @Test
+  public void testGetSupportedTypes_union_of_all_tils() {
+    TirClient profileTirClient = mock(TirClient.class);
+    when(tirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("global-credential"))));
+    when(profileTirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("profile-credential"))));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(tirClient, List.of(profileTirClient), mock(Monitor.class));
+
+    assertEquals(
+        Set.of("global-credential", "profile-credential"),
+        registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+  }
+
+  @Test
+  public void testGetSupportedTypes_skips_failing_profile_til() {
+    TirClient failingProfileClient = mock(TirClient.class);
+    when(tirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("global-credential"))));
+    when(failingProfileClient.getIssuer(anyString()))
+        .thenThrow(new BadGatewayException("TIL unavailable"));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(
+            tirClient, List.of(failingProfileClient), mock(Monitor.class));
+
+    assertEquals(Set.of("global-credential"), registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+  }
+
+  @ParameterizedTest(name = "{0} after failure -> {1} profile TIL calls")
+  @MethodSource("cooldownCases")
+  public void testGetSupportedTypes_skips_failed_profile_til_during_cooldown(
+      Duration elapsed, int expectedProfileCalls) {
+    TirClient failingProfileClient = mock(TirClient.class);
+    when(tirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("global-credential"))));
+    when(failingProfileClient.getIssuer(anyString()))
+        .thenThrow(new BadGatewayException("TIL unavailable"));
+    Instant start = Instant.parse("2026-01-01T00:00:00Z");
+    Clock clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(start, start.plus(elapsed));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(
+            tirClient, List.of(failingProfileClient), mock(Monitor.class), clock);
+
+    registry.getSupportedTypes(getIssuer(TEST_ISSUER));
+    assertEquals(Set.of("global-credential"), registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+    verify(failingProfileClient, times(expectedProfileCalls)).getIssuer(TEST_ISSUER);
+  }
+
+  private static Stream<Arguments> cooldownCases() {
+    return Stream.of(
+        Arguments.of(Duration.ZERO, 1),
+        Arguments.of(EbsiTrustedIssuersRegistry.UNAVAILABLE_TIL_COOLDOWN.minusSeconds(1), 1),
+        Arguments.of(EbsiTrustedIssuersRegistry.UNAVAILABLE_TIL_COOLDOWN, 2));
+  }
+
+  @Test
+  public void testGetSupportedTypes_propagates_failing_primary_til() {
+    TirClient profileTirClient = mock(TirClient.class);
+    when(tirClient.getIssuer(anyString())).thenThrow(new BadGatewayException("TIL unavailable"));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(tirClient, List.of(profileTirClient), mock(Monitor.class));
+
+    assertThrows(
+        BadGatewayException.class, () -> registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
   }
 
   private static Stream<Arguments> getTypeSets() {

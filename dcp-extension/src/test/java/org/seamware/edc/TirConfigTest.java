@@ -41,6 +41,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Stream;
 import org.eclipse.edc.spi.system.configuration.Config;
@@ -85,6 +86,15 @@ public class TirConfigTest {
 
     TirConfig tirConfig2 = TirConfig.Builder.newInstance().enabled(false).build();
     arguments.add(Arguments.of("valid/tir/2.properties", tirConfig2));
+
+    TirConfig tirConfig3 =
+        TirConfig.Builder.newInstance()
+            .enabled(true)
+            .tilAddress("http://my-til.org")
+            .profileTilAddresses(
+                Map.of("dataspace-a", "http://til-a.org", "dataspace-b", "http://til-b.org"))
+            .build();
+    arguments.add(Arguments.of("valid/tir/3.properties", tirConfig3));
 
     return arguments.stream();
   }

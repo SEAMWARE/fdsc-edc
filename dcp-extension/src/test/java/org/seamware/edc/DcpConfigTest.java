@@ -41,6 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.stream.Stream;
 import org.eclipse.edc.spi.system.configuration.Config;
@@ -125,6 +126,22 @@ public class DcpConfigTest {
             .scopes(new DcpConfig.Scopes.Builder().build())
             .build();
     arguments.add(Arguments.of("valid/dcp/6.properties", dcpConfig6));
+
+    DcpConfig dcpConfig7 =
+        DcpConfig.Builder.newInstance()
+            .enabled(true)
+            .scopes(new DcpConfig.Scopes.Builder().catalog("catalog").build())
+            .profileScopes(
+                Map.of(
+                    "dataspace-a",
+                    new DcpConfig.Scopes.Builder()
+                        .catalog("catalog-a")
+                        .transfer("transfer-a")
+                        .build(),
+                    "dataspace-b",
+                    new DcpConfig.Scopes.Builder().negotiation("negotiation-b").build()))
+            .build();
+    arguments.add(Arguments.of("valid/dcp/7.properties", dcpConfig7));
     return arguments.stream();
   }
 
