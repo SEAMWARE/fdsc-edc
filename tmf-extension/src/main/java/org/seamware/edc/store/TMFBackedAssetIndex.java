@@ -35,7 +35,7 @@ import org.seamware.edc.tmf.ProductCatalogApiClient;
 
 /**
  * Read-only asset index over the shared TMForum ProductSpecifications. Assets carry the context a
- * query asks for, so every product is listed in every context (decision 4).
+ * query asks for, so every product is listed in every context (ADR-4).
  */
 public class TMFBackedAssetIndex implements AssetIndex {
 

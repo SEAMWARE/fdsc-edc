@@ -21,7 +21,7 @@
 #                                   the two-dataspace verification stack.
 #
 # Products (ProductSpecifications) are shared; each ProductOffering names the
-# dataspaces it is made in via participantContextIds (design decision 4):
+# dataspaces it is made in via participantContextIds (ADR-4):
 #   MDS-SHARED  offered as MDS-OFFER-SHARED-A in ["A"] and MDS-OFFER-SHARED-B
 #               in ["B"], each with a different policy
 #   MDS-A-ONLY  offered as MDS-OFFER-A-ONLY in ["A"]

@@ -14,7 +14,7 @@ unchanged and stay in classic single-participant mode.
 
 The operator guide, with the configuration reference and step-by-step
 migration, is [`docs/multi-dataspace.md`](../../docs/multi-dataspace.md). The
-design record is
+design decisions are recorded as ADRs in
 [`docs/multi-dataspace-design.md`](../../docs/multi-dataspace-design.md).
 
 ## Breaking changes (DCP image only)

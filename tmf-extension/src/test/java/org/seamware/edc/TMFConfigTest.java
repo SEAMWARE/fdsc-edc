@@ -208,7 +208,7 @@ public class TMFConfigTest {
             .build();
     arguments.add(Arguments.of("valid/4.properties", tmfConfig4));
 
-    // Without a supplier, edc.participant.* never yields a default context (decision 3).
+    // Without a supplier, edc.participant.* never yields a default context (ADR-3).
     TMFConfig tmfConfig5 =
         TMFConfig.Builder.newInstance()
             .enabled(false)

@@ -20,7 +20,12 @@ import java.util.Optional;
 
 /**
  * Contract definition or policy id of an offering that serves several contexts, as exposed in one
- * of them: {@code <id>@<participantContextId>} (decision 4 of the multi-dataspace design).
+ * of them: {@code <id>@<participantContextId>} (ADR-4 of the multi-dataspace design records).
+ *
+ * <p>An EDC contract or policy definition belongs to exactly one participant context, while {@code
+ * ContractDefinitionStore.findById} and {@code PolicyDefinitionStore.findById} take no context and
+ * {@code ContractNegotiationProtocolServiceImpl} compares the resolved definition's context with
+ * the negotiation's. The context therefore has to travel inside the id itself.
  */
 public record ContextQualifiedId(String id, String participantContextId) {
 

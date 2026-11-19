@@ -23,7 +23,7 @@ import org.seamware.edc.tmf.ProductCatalogApiClient;
 
 /**
  * Resolves a plain or {@link ContextQualifiedId} contract definition id to its ProductOffering and
- * the one context it denotes, per decision 4. Ambiguous ids are logged severe and resolve to empty.
+ * the one context it denotes, per ADR-4. Ambiguous ids are logged severe and resolve to empty.
  * TMForum failures, including a duplicate {@code externalId}, propagate.
  */
 public class ContractDefinitionIdResolver {

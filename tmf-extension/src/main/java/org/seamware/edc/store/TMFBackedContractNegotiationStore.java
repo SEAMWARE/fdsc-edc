@@ -1167,7 +1167,7 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
     ExtendableAgreementVO agreementVO =
         tmfEdcMapper.toAgreement(
             contractNegotiation.getId(), contractNegotiation.getContractAgreement());
-    // the negotiation's context, not the offering's set (decision 4)
+    // the negotiation's context, not the offering's set (ADR-4)
     agreementVO.setParticipantContextId(contractNegotiation.getParticipantContextId());
     // refer to the offering, as long as no product exists
     agreementVO.addAgreementItemItem(

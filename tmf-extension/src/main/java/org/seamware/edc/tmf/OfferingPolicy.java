@@ -22,6 +22,6 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * A policy together with the raw {@code participantContextIds} of the ProductOffering that holds
- * it, which decide the policy's context (decision 4).
+ * it, which decide the policy's context (ADR-4).
  */
 public record OfferingPolicy(Policy policy, @Nullable List<String> participantContextIds) {}

@@ -44,7 +44,7 @@ public final class ContextCriteria {
 
   /**
    * The context to filter TMForum by server-side. Empty for no context and for the default one,
-   * which has to be fetched unfiltered so its untagged legacy entities are kept (decision 3).
+   * which has to be fetched unfiltered so its untagged legacy entities are kept (ADR-3).
    */
   public static Optional<String> serverSideContext(
       Collection<Criterion> criteria, @Nullable String defaultParticipantContextId) {

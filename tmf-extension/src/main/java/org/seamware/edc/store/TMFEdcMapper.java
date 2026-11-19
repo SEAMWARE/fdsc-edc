@@ -138,7 +138,7 @@ public class TMFEdcMapper {
   private final TypeTransformerRegistry typeTransformerRegistry;
   private final JsonLd jsonLd;
   private final Clock clock;
-  // owns the untagged TMForum entities (decision 3); null leaves them unresolvable
+  // owns the untagged TMForum entities (ADR-3); null leaves them unresolvable
   private final String defaultParticipantContextId;
 
   public TMFEdcMapper(
@@ -170,7 +170,7 @@ public class TMFEdcMapper {
         : participantContextId;
   }
 
-  /** Whether an offering with these tags is made in the context (decision 4 table). */
+  /** Whether an offering with these tags is made in the context (ADR-4 table). */
   public boolean servesContext(
       @Nullable List<String> participantContextIds, @Nullable String participantContextId) {
     if (participantContextId == null) {
@@ -829,7 +829,7 @@ public class TMFEdcMapper {
 
   /**
    * Maps a shared product to an asset stamped with {@code participantContextId}: the queried
-   * context, or the default one (decision 4).
+   * context, or the default one (ADR-4).
    */
   public Optional<Asset> assetFromProductSpec(
       ExtendableProductSpecification productSpecification, @Nullable String participantContextId) {

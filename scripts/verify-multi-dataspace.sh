@@ -27,7 +27,7 @@
 #     in B but not in A;
 #   - DSP routing: a profile associated with a context reaches the token check
 #     (401 without a DCP token), an unassociated profile or unknown context
-#     gives 404 (design record, Step 1 "DSP routing");
+#     gives 404 (ADR-11 of docs/multi-dataspace-design.md);
 #   - DSP version metadata at <protocol>/{ctx}/.well-known/dspace-version,
 #     and none at the root <protocol>/.well-known/dspace-version (guards
 #     against dsp-version-http-api returning to the virtual assembly);

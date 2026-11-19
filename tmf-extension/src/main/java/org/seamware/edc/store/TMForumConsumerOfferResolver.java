@@ -26,7 +26,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Offer resolver to extract the TMForum entities for a given ID and translates them to a {@link
- * ValidatableConsumerOffer}. The offer's definition part selects the context (decision 4).
+ * ValidatableConsumerOffer}. The offer's definition part selects the context (ADR-4).
  */
 public class TMForumConsumerOfferResolver implements ConsumerOfferResolver {
 

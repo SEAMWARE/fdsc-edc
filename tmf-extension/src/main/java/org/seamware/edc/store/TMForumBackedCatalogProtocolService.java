@@ -165,7 +165,7 @@ public class TMForumBackedCatalogProtocolService implements CatalogProtocolServi
 
   /**
    * The offerings made in the context. The default context is fetched unfiltered and filtered in
-   * memory: TMForum cannot express "tagged with it or untagged" (decision 3).
+   * memory: TMForum cannot express "tagged with it or untagged" (ADR-3).
    */
   private List<ExtendableProductOffering> offeringsServing(String participantContextId) {
     String serverSideFilter =

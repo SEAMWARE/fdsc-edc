@@ -21,8 +21,8 @@ import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolv
 import org.jetbrains.annotations.Nullable;
 
 /**
- * This connector's own participant id in a participant context (decision 5 of the multi-dataspace
- * design). Uses the fixed classic id when the runtime registers no {@link
+ * This connector's own participant id in a participant context (ADR-5 of the multi-dataspace design
+ * records). Uses the fixed classic id when the runtime registers no {@link
  * ParticipantIdentityResolver}, or when the resolver knows no identity for the default context.
  */
 public class OwnParticipantIdentity {
