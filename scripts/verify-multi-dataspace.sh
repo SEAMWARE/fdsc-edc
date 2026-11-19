@@ -28,7 +28,9 @@
 #   - DSP routing: a profile associated with a context reaches the token check
 #     (401 without a DCP token), an unassociated profile or unknown context
 #     gives 404 (design record, Step 1 "DSP routing");
-#   - DSP version metadata at <protocol>/{ctx}/.well-known/dspace-version;
+#   - DSP version metadata at <protocol>/{ctx}/.well-known/dspace-version,
+#     and none at the root <protocol>/.well-known/dspace-version (guards
+#     against dsp-version-http-api returning to the virtual assembly);
 #   - TMForum seed: offerings per context with participantContextIds=X,*.
 # A full DSP catalog exchange needs a DCP wallet and is out of scope.
 #
@@ -234,6 +236,8 @@ ${CONTEXT_B} ${PROFILE_B} ${PROFILE_A}
 EOF
   expect_status "version metadata of an unknown context" "$HTTP_NOT_FOUND" \
     GET "${PROTOCOL_URL}/${UNKNOWN_CONTEXT}/.well-known/dspace-version" "" "" || true
+  expect_status "no root version metadata in virtual mode" "$HTTP_NOT_FOUND" \
+    GET "${PROTOCOL_URL}/.well-known/dspace-version" "" "" || true
 }
 
 verify_tmforum_seed() {

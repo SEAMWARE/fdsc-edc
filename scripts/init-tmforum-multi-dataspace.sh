@@ -84,15 +84,19 @@ wait_for_tmforum() {
 }
 
 ## Prints the TMForum id of the entity with the given externalId, if any.
+## Dies when the lookup fails, so an outage is not mistaken for "absent".
 ## $1 - collection (productSpecification, productOffering), $2 - externalId
 find_id() {
-  curl -sf "${CATALOG_API}/$1?externalId=$2" | jq -r '.[0].id // empty'
+  lookup=$(curl -sf "${CATALOG_API}/$1?externalId=$2") ||
+    die "Lookup of $1 $2 failed"
+  echo "$lookup" | jq -r '.[0].id // empty'
 }
 
 ## Creates a ProductSpecification unless it exists; prints its TMForum id.
 ## $1 - externalId (the EDC asset id)
 ensure_product_spec() {
-  existing=$(find_id productSpecification "$1")
+  # Explicit: busybox sh drops set -e inside the caller's $(...) subshell.
+  existing=$(find_id productSpecification "$1") || exit 1
   if [ -n "$existing" ]; then
     echo "$existing"
     return 0
@@ -118,7 +122,9 @@ ensure_product_spec() {
 ## $3 - ODRL policy uid, $4 - ODRL action, $5 - participantContextIds as a
 ## JSON array, or "" to omit the property (legacy, default context)
 ensure_product_offering() {
-  if [ -n "$(find_id productOffering "$1")" ]; then
+  # Assigned first: a failing find_id would be ignored inside the test.
+  existing=$(find_id productOffering "$1") || exit 1
+  if [ -n "$existing" ]; then
     log "ProductOffering $1 exists, skipping."
     return 0
   fi
