@@ -52,6 +52,7 @@
         <module>test-extension</module>
         <module>dcp-extension</module>
         <module>policy-extension</module>
+        <module>participant-bootstrap-extension</module>
         <module>controlplane-oid4vc</module>
         <module>controlplane-dcp</module>
         <module>controlplane-tck</module>
