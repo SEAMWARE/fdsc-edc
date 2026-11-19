@@ -10,25 +10,72 @@
     </parent>
     <artifactId>controlplane-dcp</artifactId>
 
+    <properties>
+        <!-- the okio release EDC's okhttp-jvm 5.3.2 is built against -->
+        <version.com.squareup.okio>3.16.4</version.com.squareup.okio>
+    </properties>
+
+    <!-- Nearest-wins would otherwise pick okio 3.6.0 from our modules' okhttp 4.12.0, and every
+         outgoing HTTP call fails with NoSuchMethodError: okio.Okio.socket. -->
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>org.eclipse.edc</groupId>
-                <artifactId>controlplane-base-bom</artifactId>
-                <version>${edc.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-                <exclusions>
-                    <exclusion>
-                        <groupId>org.eclipse.jetty.websocket</groupId>
-                        <artifactId>jetty-websocket</artifactId>
-                    </exclusion>
-                </exclusions>
+                <groupId>com.squareup.okio</groupId>
+                <artifactId>okio</artifactId>
+                <version>${version.com.squareup.okio}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.squareup.okio</groupId>
+                <artifactId>okio-jvm</artifactId>
+                <version>${version.com.squareup.okio}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
 
     <dependencies>
+        <!-- Virtual participant-context mode: one runtime serves several participant contexts
+             (one per dataspace) over dsp-virtual and management API v5 with OAuth2. The EDC BOMs
+             are aggregators with plain <dependencies>, so they are used as pom dependencies. -->
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>controlplane-virtual-base-bom</artifactId>
+            <version>${edc.version}</version>
+            <type>pom</type>
+            <exclusions>
+                <!-- data-plane-signaling provides a second DataFlowController; the legacy one
+                     below must stay the only one (docs/migration/EDC-0.18.1-UPGRADE.md §8). -->
+                <exclusion>
+                    <groupId>org.eclipse.edc</groupId>
+                    <artifactId>data-plane-signaling</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.eclipse.edc</groupId>
+                    <artifactId>data-plane-signaling-oauth2</artifactId>
+                </exclusion>
+                <!-- the task executors only enqueue tasks, which nothing consumes without the
+                     NATS feature; the contract and transfer managers below drive the state
+                     machines instead. -->
+                <exclusion>
+                    <groupId>org.eclipse.edc</groupId>
+                    <artifactId>control-plane-contract-task-executor</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.eclipse.edc</groupId>
+                    <artifactId>control-plane-transfer-task-executor</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.eclipse.jetty.websocket</groupId>
+                    <artifactId>jetty-websocket</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>controlplane-virtual-feature-dcp-bom</artifactId>
+            <version>${edc.version}</version>
+            <type>pom</type>
+        </dependency>
+
         <dependency>
             <groupId>org.seamware.edc</groupId>
             <artifactId>dcp-extension</artifactId>
@@ -49,39 +96,16 @@
             <artifactId>policy-extension</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- seeds the participant contexts declared under fdsc.participants.* -->
         <dependency>
             <groupId>org.seamware.edc</groupId>
-            <artifactId>test-extension</artifactId>
+            <artifactId>participant-bootstrap-extension</artifactId>
             <version>${project.version}</version>
         </dependency>
-
 
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>control-plane-api-client</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-
-
-        <!-- real deps -->
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-2025</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>management-api-configuration</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>boot</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>connector-core</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -89,20 +113,10 @@
             <artifactId>vault-hashicorp</artifactId>
             <version>${edc.version}</version>
         </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>runtime-core</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>control-plane-core</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
         <!-- the contract-negotiation and transfer-process state machines. control-plane-core
-             no longer brings them in since 0.18, and the imported controlplane-base-bom only
-             manages versions, so without them no negotiation or transfer leaves its initial
-             state. -->
+             no longer brings them in since 0.18, and the virtual BOM replaces them with task
+             executors (excluded above), so without them no negotiation or transfer leaves its
+             initial state. -->
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>control-plane-contract-manager</artifactId>
@@ -113,118 +127,15 @@
             <artifactId>control-plane-transfer-manager</artifactId>
             <version>${edc.version}</version>
         </dependency>
-        <!-- single-participant ("classic") participant-context mode; seeds one
-             ParticipantContext from edc.participant.context.id -->
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>participant-context-connector-classic-core</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-selector-core</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>policy-monitor-core</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>configuration-filesystem</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>api-core</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>api-observability</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>control-api-configuration</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>version-api</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>http</artifactId>
-            <version>${edc.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.eclipse.jetty.websocket</groupId>
-                    <artifactId>jetty-websocket</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>validator-data-address-http-data</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>control-plane-api</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>management-api</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-selector-api</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <!-- The legacy flow controller and its client. The FDSC transfer runs in the data
-             plane embedded in this controlplane, which the legacy client calls in-process.
-             data-plane-signaling replaces both from 0.18.x onwards, but it only reaches data
-             planes over HTTP and requires one for every transfer, consumer side included,
-             so no transfer could start with it. Both provide the single DataFlowController:
-             only one of them can be on the classpath. -->
+        <!-- The legacy flow controller. The FDSC transfer runs in the data plane embedded in
+             this controlplane, which the legacy client (data-plane-signaling-client, from the
+             BOM) calls in-process. data-plane-signaling replaces it from 0.18.x onwards, but it
+             only reaches data planes over HTTP and selects them per participant context, so no
+             transfer could start with it. Both provide the single DataFlowController: only one
+             of them can be on the classpath. -->
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>transfer-data-plane-signaling</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-signaling-client</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>data-plane-selector-control-api</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>callback-event-dispatcher</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>callback-static-endpoint</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>transform-lib</artifactId>
             <version>${edc.version}</version>
         </dependency>
         <dependency>
@@ -242,18 +153,6 @@
             <artifactId>edr-store-spi</artifactId>
             <version>${edc.version}</version>
         </dependency>
-
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-catalog-lib</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.eclipse.edc</groupId>
-            <artifactId>dsp-version-http-api</artifactId>
-            <version>${edc.version}</version>
-        </dependency>
-
     </dependencies>
 
 
