@@ -77,7 +77,7 @@ fdsc-edc/
 │   ├── run-tck.sh                   # One-command local TCK runner
 │   └── verify-tck-config.sh         # Static config consistency checker
 ├── docker/
-│   └── Dockerfile                   # EDC controlplane Docker image (eclipse-temurin:24-jre-alpine)
+│   └── Dockerfile                   # EDC controlplane Docker image (eclipse-temurin:25-jre-alpine)
 ├── docker-compose.tck.yml           # TCK orchestration (postgis, scorpio, tmforum, edc, tck)
 ├── schemas/                         # JSON/JSON-LD schemas for contracts/policies
 └── .github/workflows/test.yml       # CI: unit tests + TCK conformance
