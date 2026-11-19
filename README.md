@@ -10,6 +10,8 @@ Two deployable controlplane images are produced, each offering a different authe
 | `fdsc-edc-controlplane-oid4vc` | [OpenID for Verifiable Presentations (OID4VP)](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) | [quay.io](https://quay.io/repository/seamware/fdsc-edc-controlplane-oid4vc) |
 | `fdsc-edc-controlplane-dcp` | [Decentralized Claims Protocol (DCP)](https://projects.eclipse.org/projects/technology.dataspacetck) with [EBSI Trusted Issuers Registry](https://hub.ebsi.eu/) | [quay.io](https://quay.io/repository/seamware/fdsc-edc-controlplane-dcp) |
 
+The DCP image can take part in several dataspaces at once; see [Multi-Dataspace Support](#multi-dataspace-support).
+
 ## Getting Started
 
 ### Prerequisites
@@ -48,6 +50,7 @@ fdsc-edc/
 ├── dcp-extension/            DCP authentication + EBSI TIR
 ├── fdsc-transfer-extension/  Data transfer provisioning
 ├── test-extension/           Test utilities & TCK support
+├── participant-bootstrap-extension/  Seeds participant contexts (one per dataspace) from config
 ├── controlplane-oid4vc/      Assembled controlplane (OID4VP)
 ├── controlplane-dcp/         Assembled controlplane (DCP)
 └── controlplane-tck/         Assembled controlplane for the DSP TCK (OID4VP minus data-plane-signaling)
@@ -99,9 +102,15 @@ Provides test utilities for conformance testing in a FIWARE Dataspace setup.
 - TCK (Technology Conformance Kit) webhook controller
 - Contract negotiation and transfer process guards with step recording
 
+#### participant-bootstrap-extension
+
+Seeds EDC participant contexts from `fdsc.participants.*` at startup, one per dataspace, each with its own DID, STS client and dataspace profiles. Only `controlplane-dcp` contains it; see [docs/multi-dataspace.md](docs/multi-dataspace.md).
+
 #### controlplane-oid4vc / controlplane-dcp
 
 Assembly modules that combine the above extensions into deployable shaded JARs and Docker images. Each bundles the full EDC controlplane stack (DSP protocol, management API, EDR store, HashiCorp Vault integration) with the appropriate authentication extension.
+
+`controlplane-oid4vc` (and `controlplane-tck`) run in EDC's classic single-participant mode. `controlplane-dcp` runs in virtual participant-context mode, with management API v5 secured by OAuth2 and DSP endpoints at `<protocol>/<context id>/<profile>/...`.
 
 ### Extension Registration
 
@@ -110,6 +119,22 @@ All extensions are registered via Java SPI (`META-INF/services/org.eclipse.edc.s
 ### Code Generation
 
 The `tmf-extension`, `fdsc-transfer-extension`, `dcp-extension`, and `test-extension` modules generate Java model classes from remote OpenAPI specifications at build time via the `openapi-generator-maven-plugin`. Generated code is placed in `target/generated-sources/` and must not be edited manually.
+
+## Multi-Dataspace Support
+
+One `controlplane-dcp` runtime can take part in several dataspaces at once. Each dataspace is an EDC participant context with its own DID, STS client, DCP scopes and Trusted Issuers List, while all dataspaces share one TMForum and one ODRL-PAP. A product is shared; each offering states the dataspaces it is offered in.
+
+> **Breaking change for existing DCP deployments.** The DCP image now runs in virtual participant-context mode:
+> - the management API moves from v3/v4 to v5 (`/v5beta/participants/<context id>/...`) and requires an OAuth2 JWT;
+> - DSP URLs change from `<protocol>/2025-1/...` to `<protocol>/<context id>/<profile>/...`, and the DSP version endpoint moves to `<protocol>/<context id>/.well-known/dspace-version`;
+> - identity and STS settings move into per-context configuration (`fdsc.participants.*`).
+>
+> The OID4VC image is unchanged.
+
+- Operator guide, configuration reference and migration steps: [docs/multi-dataspace.md](docs/multi-dataspace.md)
+- Example configuration: [config/multi-dataspace/edc.properties](config/multi-dataspace/edc.properties)
+- Local two-dataspace check: [docker-compose.multi-dataspace.yml](docker-compose.multi-dataspace.yml) with [scripts/verify-multi-dataspace.sh](scripts/verify-multi-dataspace.sh)
+- Release notes: [releases/notes/RELEASE_NOTES_MULTI_DATASPACE.md](releases/notes/RELEASE_NOTES_MULTI_DATASPACE.md)
 
 ## DSP Conformance Testing
 
@@ -259,6 +284,7 @@ Images are pushed to `quay.io/seamware/`:
 - **Dual authentication modes** — Choose between OID4VP or DCP depending on your dataspace's identity framework
 - **FIWARE transfer provisioning** — Automated APISIX route creation, credentials configuration, and ODRL policy management
 - **EBSI Trusted Issuers Registry** — Validate credential issuers against the European Blockchain Services Infrastructure (DCP mode)
+- **Multi-dataspace** — One DCP controlplane serves several dataspaces, each with its own identity, scopes and trusted issuers (see [docs/multi-dataspace.md](docs/multi-dataspace.md))
 - **Multi-platform Docker images** — Built for both `linux/amd64` and `linux/arm64`
 
 ## Contributing
