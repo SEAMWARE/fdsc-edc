@@ -3,6 +3,7 @@
 Design record for ticket #114 (multi-dataspace support in `controlplane-dcp`).
 `IMPLEMENTATION_PLAN.md` holds the steps. This file holds the upstream facts
 they rely on, the design decisions, and the Step 1 answers to the open items.
+The operator-facing summary is the guide [`docs/multi-dataspace.md`](multi-dataspace.md).
 
 ## Verified upstream facts (EDC tag `v0.18.1`, commit 3a22ff4 — do not re-research)
 
@@ -209,8 +210,9 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
        if both resolve, it logs `monitor.severe` naming both offerings and
        returns nothing, the same outcome as a cross-context duplicate. The
        catalog may still list the colliding offer, but negotiating it fails
-       until the data is fixed; Step 10's operator guide states the
-       restriction. With these rules each (offering, context) pair has exactly
+       until the data is fixed. The operator guide states the restriction
+       ("Offering a product in one, several or all dataspaces"; resolved in
+       Step 10). With these rules each (offering, context) pair has exactly
        one id and every id resolves to at most one definition, and an id
        qualified with X can only produce a definition stamped X, which line 247
        rejects in any other context;
@@ -238,6 +240,10 @@ they rely on, the design decisions, and the Step 1 answers to the open items.
    runtime changes.
 
 ## Open-item resolutions (Step 1)
+
+**Status: all items below are resolved.** Step 1 resolved them; the items it
+left to later steps were closed by Steps 6 (TIR profile registry) and 10
+(operator documentation).
 
 All citations are to the EDC Connector tag `v0.18.1` (commit 3a22ff4), unless a
 file in this repository is named. Each item ends with a **Decision** line
@@ -322,9 +328,10 @@ Further behaviour that later steps must respect:
     - Step 9's compose file serves `schemas/` from a static container,
       points the seed's `@schemaLocation`s at it **and** sets
       `tmfExtension.schemaBaseUri` for the controlplane to the same base;
-    - Step 10's operator guide states that the schemas must be published or
+    - the operator guide states that the schemas must be published or
       self-hosted at a URL TMForum can reach, and that
-      `tmfExtension.schemaBaseUri` must point there.
+      `tmfExtension.schemaBaseUri` must point there ("TMForum"; resolved in
+      Step 10).
 
 **Decision: query forms**
 
@@ -444,12 +451,12 @@ per context, stamped with that context id. That is out of scope here.
 - contexts share the global Vault config (fallback on, no per-context
   `edc.vault.hashicorp.config`);
 - every context uses a distinct STS secret alias. The convention, which Step 7
-  documents and Step 10 shows, is `edc.iam.sts.oauth.client.secret.alias=<ctxId>-sts-client-secret`;
+  documents and the operator guide shows, is `edc.iam.sts.oauth.client.secret.alias=<ctxId>-sts-client-secret`;
 - the alias is configured explicitly per context, not derived from the
   context id, so the operator controls the KV key layout;
 - an operator who needs hard isolation can set the context's private config
-  entry `edc.vault.hashicorp.config` with its own `folder`. Step 10 mentions
-  this; no code is needed.
+  entry `edc.vault.hashicorp.config` with its own `folder`. The operator guide
+  mentions this ("`fdsc.participants.*`"); no code is needed.
 
 ### TIR per dataspace
 
@@ -506,7 +513,8 @@ per context, stamped with that context id. That is out of scope here.
      default profile `dataspace-protocol-http:2025-1` contains `:`, which must
      be escaped (`\:`) in a `.properties` file and cannot be written as an
      environment variable; the guide should recommend `:`-free profile names
-     for per-profile overrides.
+     for per-profile overrides. **Resolved in Step 10:** the guide's
+     "`edc.dataspace.profiles.*`" and "Limitations and pitfalls" sections say so.
    - **Pitfall for Step 10 docs (TIL latency coupling):** TIL lookups are not
      cached. Every VC check queries the global TIL and every profile TIL
      (layer 1), and the profile's own TIL again (layer 2). A profile TIL that
@@ -516,7 +524,8 @@ per context, stamped with that context id. That is out of scope here.
      not on every request. Requests running concurrently while the first
      failure is still pending all wait. Operators should keep TIL timeouts
      short and place TILs close to the connector. A per-issuer cache is
-     deferred until latency proves to be a problem.
+     deferred until latency proves to be a problem. **Resolved in Step 10:**
+     the guide's "DCP and TIR" section describes the coupling and the advice.
 
 ### Management API auth for operators
 
@@ -546,8 +555,9 @@ per context, stamped with that context id. That is out of scope here.
     `management-api:write`, which Keycloak emits in the `scope` claim;
 - operators use an admin client;
 - a per-dataspace client needs `sub` equal to the context id, i.e. a
-  hardcoded-claim mapper on `sub`. **Deferred to Step 10**, because it is chart
-  configuration and is not exercised by any test in this repository;
+  hardcoded-claim mapper on `sub`. **Resolved in Step 10** as documentation
+  only (the guide's "Management API v5 and OAuth2" section), because it is
+  chart configuration and is not exercised by any test in this repository;
 - Step 9 uses no Keycloak: a static JWKS plus tokens signed with `openssl`,
   with `iss` set to the configured issuer.
 
@@ -580,9 +590,9 @@ per context, stamped with that context id. That is out of scope here.
   together with the other classic DSP modules. `controlplane-oid4vc` and
   `controlplane-tck` keep it (classic mode).
 - Step 8's example config sets an explicit `edc.dsp.callback.address` with
-  `%s` and does **not** set `web.http.protocol.virtual`; the Step 10 guide
-  explains that the flag is only a fallback for deployments without an
-  explicit callback address.
+  `%s` and does **not** set `web.http.protocol.virtual`. The guide ("DSP URL
+  layout") explains that the flag is only a fallback for deployments without
+  an explicit callback address.
 
 **Step 9 asserts:**
 - `GET <protocol>/{A}/.well-known/dspace-version` returns 200 and lists A's
@@ -626,3 +636,26 @@ via `/v5beta/participants/{A}/profiles` is not needed.
 
 **Decision:** Step 8 removes `test-extension` from `controlplane-dcp/pom.xml`.
 `controlplane-tck` keeps it unchanged.
+
+## Upstream configuration keys used by the operator guide
+
+Checked against the `controlplane-dcp` shaded JAR (EDC `0.18.1`). Keys already
+covered above (`edc.dataspace.profiles.*`, `edc.dsp.callback.address`,
+`web.http.protocol.virtual`, `edc.dataspace.enable.profiles.all`,
+`edc.iam.sts.oauth.*`, `edc.participant.*`, `edc.iam.oauth2.*`,
+`edc.vault.hashicorp.config`, `edc.vault.hashicorp.allowfallback`) are not
+repeated.
+
+| Key | Read by |
+|---|---|
+| `edc.iam.dcp.scopes.<k>.{id,type,value,profile}` (`type` `DEFAULT` or `POLICY`) | `DynamicDcpScopeConfigurationExtension` |
+| `edc.participants.config.encryption.algorithm` | `ParticipantContextConfigServicesExtension` |
+| `edc.encryption.aes.key.alias` | `AesEncryptionExtension` |
+| `edc.vault.hashicorp.url`, `edc.vault.hashicorp.token` | `HashicorpVaultConfig` (global Vault, shared by all contexts) |
+| `web.http.path`, `web.http.management.path`, `web.http.protocol.path` (and `.port`) | EDC web server contexts |
+
+Keys of this repository named in the guide are constants in
+`ParticipantBootstrapConfig` (`fdsc.participants.*`), `TMFConfig`
+(`tmfExtension.defaultParticipantContextId`, `tmfExtension.schemaBaseUri`,
+`ALL_PARTICIPANT_CONTEXTS`), `DcpConfig` (`dcp.scopes.*`, `dcp.profiles.*`) and
+`TirConfig` (`ebsiTir.tilAddress`, `ebsiTir.profiles.*`).

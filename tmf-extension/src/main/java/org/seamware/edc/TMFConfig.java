@@ -50,6 +50,7 @@ public class TMFConfig {
 
   private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";
   private static final String TMF_EXTENSION_CATALOG_CONFIG_PATH = "tmfExtension.catalog";
+  private static final String SCHEMA_BASE_URI_KEY = "schemaBaseUri";
   private static final URI DEFAULT_SCHEMA_BASE_URI =
       URI.create("https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/");
 
@@ -180,7 +181,7 @@ public class TMFConfig {
         .ifPresent(tmfConfigBuilder::usageManagementApi);
     getNullSafeFromConfig(() -> tmfExtensionConfig.getString("partyCatalogApi"))
         .ifPresent(tmfConfigBuilder::partyCatalogApi);
-    getNullSafeFromConfig(() -> tmfExtensionConfig.getString("schemaBaseUri"))
+    getNullSafeFromConfig(() -> tmfExtensionConfig.getString(SCHEMA_BASE_URI_KEY))
         .ifPresent(tmfConfigBuilder::schemaBaseUri);
 
     CatalogConfig.Builder catalogConfigBuilder = new CatalogConfig.Builder();
