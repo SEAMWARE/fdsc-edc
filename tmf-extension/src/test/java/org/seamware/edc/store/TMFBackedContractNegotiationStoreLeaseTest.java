@@ -697,7 +697,7 @@ public class TMFBackedContractNegotiationStoreLeaseTest
         productInventoryApiClient,
         participantResolver,
         tmfEdcMapper,
-        TEST_PARTICIPANT_ID,
+        OwnParticipantIdentity.fixed(TEST_PARTICIPANT_ID),
         TEST_CONTROL_PLANE_ID,
         criterionOperatorRegistry,
         leaseHolder,

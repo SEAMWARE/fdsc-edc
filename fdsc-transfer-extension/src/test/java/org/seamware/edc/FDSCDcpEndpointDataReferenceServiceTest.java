@@ -39,32 +39,53 @@ package org.seamware.edc;
 import static org.eclipse.edc.spi.constants.CoreConstants.EDC_NAMESPACE;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.jwk.KeyUse;
 import com.nimbusds.jose.jwk.RSAKey;
+import com.nimbusds.jwt.SignedJWT;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.List;
+import java.util.stream.Stream;
+import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
+import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.dataplane.spi.DataFlow;
+import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.security.Vault;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.seamware.edc.store.OwnParticipantIdentity;
 
 public class FDSCDcpEndpointDataReferenceServiceTest {
 
   private static final String TEST_TRANSFER_HOST = "transfer.host";
-  private static final String TEST_ISSUER = "test-issuer";
+  private static final String TEST_FLOW_ID = "my-flow";
+  private static final String CONTEXT_A = "context-a";
+  private static final String CONTEXT_B = "context-b";
+  private static final String DEFAULT_CONTEXT = "default-context";
+  private static final String IDENTITY_A = "did:web:a.example";
+  private static final String IDENTITY_B = "did:web:b.example";
+  private static final String DEFAULT_IDENTITY = "did:web:default.example";
+  private static final String COUNTER_PARTY_ID = "did:web:counter-party.example";
+  private static final String UNKNOWN_CONTEXT = "unknown-context";
 
   private Vault vault;
   private Clock clock;
+  private TransferProcessStore transferProcessStore;
 
   private FDSCDcpEndpointDataReferenceService fdscDcpEndpointDataReferenceService;
 
@@ -79,8 +100,79 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
             .transferProtocol("https")
             .build();
 
+    transferProcessStore = mock(TransferProcessStore.class);
+    givenTransferInContext(DEFAULT_CONTEXT);
+    ParticipantIdentityResolver identityResolver = mock(ParticipantIdentityResolver.class);
+    when(identityResolver.getParticipantId(eq(CONTEXT_A), any())).thenReturn(IDENTITY_A);
+    when(identityResolver.getParticipantId(eq(CONTEXT_B), any())).thenReturn(IDENTITY_B);
+    when(identityResolver.getParticipantId(eq(DEFAULT_CONTEXT), any()))
+        .thenReturn(DEFAULT_IDENTITY);
     fdscDcpEndpointDataReferenceService =
-        new FDSCDcpEndpointDataReferenceService(transferConfig, vault, TEST_ISSUER, clock);
+        new FDSCDcpEndpointDataReferenceService(
+            mock(Monitor.class),
+            transferConfig,
+            vault,
+            new TransferContextResolver(transferProcessStore, DEFAULT_CONTEXT),
+            new OwnParticipantIdentity(() -> identityResolver, DEFAULT_IDENTITY, DEFAULT_CONTEXT),
+            clock);
+  }
+
+  private void givenTransferInContext(String participantContextId) {
+    when(transferProcessStore.findById(TEST_FLOW_ID))
+        .thenReturn(
+            TransferProcess.Builder.newInstance()
+                .id(TEST_FLOW_ID)
+                .participantContextId(participantContextId)
+                .build());
+  }
+
+  private static Stream<Arguments> transferContexts() {
+    return Stream.of(
+        Arguments.of(CONTEXT_A, IDENTITY_A),
+        Arguments.of(CONTEXT_B, IDENTITY_B),
+        Arguments.of(null, DEFAULT_IDENTITY));
+  }
+
+  @ParameterizedTest
+  @MethodSource("transferContexts")
+  public void testCreateEndpointReference_issuer_is_identity_of_transfer_context(
+      String participantContextId, String expectedIssuer) throws Exception {
+    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
+    givenTransferInContext(participantContextId);
+    DataFlow counterPartyFlow =
+        DataFlow.Builder.newInstance().id(TEST_FLOW_ID).participantId(COUNTER_PARTY_ID).build();
+
+    Result<DataAddress> result =
+        fdscDcpEndpointDataReferenceService.createEndpointDataReference(counterPartyFlow);
+
+    assertTrue(result.succeeded(), "The data address should have been returned.");
+    SignedJWT token =
+        SignedJWT.parse(result.getContent().getStringProperty(EDC_NAMESPACE + "authorization"));
+    assertEquals(
+        expectedIssuer,
+        token.getJWTClaimsSet().getIssuer(),
+        "The EDR must be issued by the transfer's own context, never by the counter-party.");
+    assertEquals(List.of(expectedIssuer), token.getJWTClaimsSet().getAudience());
+  }
+
+  @Test
+  public void testCreateEndpointReference_fail_no_transfer_process() {
+    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
+    when(transferProcessStore.findById(any())).thenReturn(null);
+
+    assertTrue(
+        fdscDcpEndpointDataReferenceService.createEndpointDataReference(getDataFlow()).failed(),
+        "Without a transfer, no issuer can be resolved and no EDR may be signed.");
+  }
+
+  @Test
+  public void testCreateEndpointReference_fail_unknown_context_identity() {
+    when(vault.resolveSecret(any())).thenReturn(getRSAJWK());
+    givenTransferInContext(UNKNOWN_CONTEXT);
+
+    assertTrue(
+        fdscDcpEndpointDataReferenceService.createEndpointDataReference(getDataFlow()).failed(),
+        "Without an identity for the transfer's context, no EDR may be signed.");
   }
 
   @Test
@@ -145,13 +237,13 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
   }
 
   private static DataFlow getDataFlow() {
-    DataFlow theFlow = DataFlow.Builder.newInstance().id("my-flow").build();
+    DataFlow theFlow = DataFlow.Builder.newInstance().id(TEST_FLOW_ID).build();
     return theFlow;
   }
 
   private static DataFlow getDataFlow(String transferPath) {
     return DataFlow.Builder.newInstance()
-        .id("my-flow")
+        .id(TEST_FLOW_ID)
         .source(
             DataAddress.Builder.newInstance()
                 .type("FDSC")

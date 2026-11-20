@@ -36,30 +36,60 @@ package org.seamware.edc.policy;
  * #L%
  */
 
+import java.util.Map;
+import java.util.Optional;
 import org.eclipse.edc.policy.context.request.spi.RequestPolicyContext;
 import org.eclipse.edc.policy.engine.spi.PolicyValidatorRule;
 import org.eclipse.edc.policy.model.Policy;
-import org.eclipse.edc.spi.iam.RequestScope;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
 
+/**
+ * Adds the configured DCP scope to an outgoing request. The scope is chosen by the message's
+ * protocol, which is the dataspace profile name: EDC keys a profile by {@code
+ * DataspaceProfileContext.name()} and resolves it from the message protocol, so {@code
+ * dcp.profiles.<name>} and {@code ebsiTir.profiles.<name>} share that key space. A profile without
+ * an override uses the default scope; an override whose key matches no profile is logged, since it
+ * is usually a typo in the configuration.
+ */
 public class DefaultScopeMappingFunction implements PolicyValidatorRule<RequestPolicyContext> {
 
   private final Monitor monitor;
   private final String defaultScope;
+  private final Map<String, String> profileScopes;
 
   public DefaultScopeMappingFunction(Monitor monitor, String defaultScope) {
+    this(monitor, defaultScope, Map.of());
+  }
+
+  public DefaultScopeMappingFunction(
+      Monitor monitor, String defaultScope, Map<String, String> profileScopes) {
     this.monitor = monitor;
     this.defaultScope = defaultScope;
+    this.profileScopes = Map.copyOf(profileScopes);
   }
 
   @Override
   public Boolean apply(Policy policy, RequestPolicyContext requestPolicyContext) {
+    String protocol =
+        Optional.ofNullable(requestPolicyContext.requestContext().getMessage())
+            .map(RemoteMessage::getProtocol)
+            .orElse(null);
+    if (protocol != null && !profileScopes.isEmpty() && !profileScopes.containsKey(protocol)) {
+      monitor.debug(
+          String.format(
+              "No scope override for profile %s; using the default scope. Overrides configured"
+                  + " for: %s.",
+              protocol, profileScopes.keySet()));
+    }
+    String scope = Optional.ofNullable(protocol).map(profileScopes::get).orElse(defaultScope);
+    if (scope == null || scope.isEmpty()) {
+      return true;
+    }
     monitor.debug(
         String.format(
-            "Add scope %s for %s.",
-            defaultScope, requestPolicyContext.requestContext().toString()));
-    RequestScope.Builder requestScopeBuilder = requestPolicyContext.requestScopeBuilder();
-    requestScopeBuilder.scope(defaultScope);
+            "Add scope %s for %s.", scope, requestPolicyContext.requestContext().toString()));
+    requestPolicyContext.requestScopeBuilder().scope(scope);
     return true;
   }
 }

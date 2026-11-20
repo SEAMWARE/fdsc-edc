@@ -4,9 +4,8 @@ Status: **migration complete (Step 9).** All nine plan steps have landed on
 `ticket-72/work`, the reactor builds and packages against EDC 0.18.1, and the DSP
 TCK is green at `1.0.1` against DSP `2025-1`. The per-item resolution is tracked in
 §11; the findings below stay as recorded so the reasoning behind each decision is
-preserved. This document is the single source of truth for the upgrade;
-`IMPLEMENTATION_PLAN.md` points here instead of carrying its own copy of the
-findings. Everything below was verified directly against Maven Central and by
+preserved. This document is the single source of truth for the upgrade.
+Everything below was verified directly against Maven Central and by
 `javap` on the published 0.14.1 / 0.18.1 jars, or against the repository itself
 (file:line references). Treat it as ground truth and do not re-research it.
 

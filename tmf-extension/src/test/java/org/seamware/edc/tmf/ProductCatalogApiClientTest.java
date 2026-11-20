@@ -33,6 +33,7 @@ import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.edc.domain.ExtendableProductOffering;
@@ -68,6 +69,34 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
 
     RecordedRequest recordedRequest = mockWebServer.takeRequest();
     assertEquals("/productOffering?offset=0&limit=5", recordedRequest.getPath());
+  }
+
+  @ParameterizedTest(name = "context {0}")
+  @CsvSource(
+      value = {"did:web:dataspace-a; did:web:dataspace-a,*", "NULL; NULL"},
+      delimiter = ';',
+      nullValues = "NULL")
+  public void testGetProductOfferings_participantContext(String context, String expectedFilter)
+      throws Exception {
+    List<ExtendableProductOffering> testOfferings = getOfferings(2);
+    mockResponse(200, testOfferings);
+
+    assertEquals(testOfferings, productCatalogApiClient.getProductOfferings(0, 5, context));
+
+    RecordedRequest recordedRequest = mockWebServer.takeRequest();
+    assertEquals("/productOffering", recordedRequest.getRequestUrl().encodedPath());
+    assertEquals("5", recordedRequest.getRequestUrl().queryParameter("limit"));
+    assertEquals(
+        expectedFilter, recordedRequest.getRequestUrl().queryParameter("participantContextIds"));
+  }
+
+  @ParameterizedTest(name = "context {0}")
+  @ValueSource(strings = {"ctx-a,ctx-b", "ctx-a;ctx-b", ","})
+  public void testGetProductOfferings_rejectsContextThatWidensTheFilter(String context) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> productCatalogApiClient.getProductOfferings(0, 5, context));
+    assertEquals(0, mockWebServer.getRequestCount(), "No request may be sent.");
   }
 
   @Test
@@ -206,11 +235,14 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
 
     mockResponse(200, mockOfferings);
 
-    Optional<Policy> returnedPolicy = productCatalogApiClient.getByPolicyId(requestedPolicyId);
+    Optional<OfferingPolicy> returnedPolicy =
+        productCatalogApiClient.getByPolicyId(requestedPolicyId);
     assertEquals(expectedPolicy.isPresent(), returnedPolicy.isPresent());
     if (expectedPolicy.isPresent()) {
       assertEquals(
-          expectedPolicy.get(), returnedPolicy.get(), "The correct policy should be returned.");
+          expectedPolicy.get(),
+          returnedPolicy.get().policy(),
+          "The correct policy should be returned.");
     }
   }
 
@@ -253,11 +285,11 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
             Optional.empty()));
   }
 
-  @Test
-  public void testGetByPolicyId_duplicate_id() throws Exception {
-    Policy accessPolicy = getTestPolicy("access");
-    Policy contractPolicy = getTestPolicy("contract");
+  private static final String CONTEXT_A = "did:web:dataspace-a";
+  private static final String CONTEXT_B = "did:web:dataspace-b";
+  private static final int POLICY_SCAN_PAGE_SIZE = 100;
 
+  private void givenPoliciesResolvable(Policy... policies) {
     when(tmfEdcMapper.fromOdrl(any()))
         .thenAnswer(
             invocation -> {
@@ -265,25 +297,70 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
               Object policyId =
                   ((Map<String, Object>) policyMap.get("extensibleProperties"))
                       .get("http://www.w3.org/ns/odrl/2/uid");
-              if (policyId.equals("access")) {
-                return accessPolicy;
-              }
-              if (policyId.equals("contract")) {
-                return contractPolicy;
+              for (Policy policy : policies) {
+                if (policyId.equals(TMFEdcMapper.getIdFromPolicy(policy))) {
+                  return policy;
+                }
               }
               return null;
             });
+  }
 
-    mockResponse(
-        200,
-        List.of(
-            getOfferingWithPolicy(new ContractDefintion(accessPolicy, contractPolicy)),
-            getOfferingWithPolicy(new ContractDefintion(accessPolicy, getTestPolicy("else")))));
+  @Test
+  public void testGetByPolicyId_returnsTheOwningOfferingsContexts() throws Exception {
+    Policy accessPolicy = getTestPolicy("access");
+    Policy contractPolicy = getTestPolicy("contract");
+    givenPoliciesResolvable(accessPolicy, contractPolicy);
+    ExtendableProductOffering offering =
+        getOfferingWithPolicy(new ContractDefintion(accessPolicy, contractPolicy));
+    offering.setParticipantContextIds(List.of(CONTEXT_A, CONTEXT_B));
+    mockResponse(200, List.of(offering));
 
-    assertThrows(
-        BadGatewayException.class,
-        () -> productCatalogApiClient.getByPolicyId("access"),
-        "If a duplicate id is received, a BadGateWay should be thrown.");
+    assertEquals(
+        Optional.of(new OfferingPolicy(accessPolicy, List.of(CONTEXT_A, CONTEXT_B))),
+        productCatalogApiClient.getByPolicyId("access"));
+  }
+
+  @Test
+  public void testGetByPolicyId_duplicate_id() throws Exception {
+    Policy accessPolicy = getTestPolicy("access");
+    Policy contractPolicy = getTestPolicy("contract");
+    givenPoliciesResolvable(accessPolicy, contractPolicy);
+    ExtendableProductOffering offeringA =
+        getOfferingWithPolicy(new ContractDefintion(accessPolicy, contractPolicy));
+    offeringA.setParticipantContextIds(List.of(CONTEXT_A));
+    ExtendableProductOffering offeringB =
+        getOfferingWithPolicy(new ContractDefintion(accessPolicy, getTestPolicy("else")));
+    offeringB.setParticipantContextIds(List.of(CONTEXT_B));
+    mockResponse(200, List.of(offeringA, offeringB));
+
+    BadGatewayException exception =
+        assertThrows(
+            BadGatewayException.class,
+            () -> productCatalogApiClient.getByPolicyId("access"),
+            "If a duplicate id is received, a BadGateWay should be thrown.");
+    assertTrue(exception.getMessage().contains("access"));
+    assertTrue(exception.getMessage().contains(CONTEXT_A));
+    assertTrue(exception.getMessage().contains(CONTEXT_B));
+  }
+
+  @Test
+  public void testGetByPolicyId_keepsPagingAfterAHit() throws Exception {
+    Policy accessPolicy = getTestPolicy("access");
+    Policy contractPolicy = getTestPolicy("contract");
+    givenPoliciesResolvable(accessPolicy, contractPolicy);
+    List<ExtendableProductOffering> firstPage = getOfferings(POLICY_SCAN_PAGE_SIZE - 1);
+    firstPage.add(getOfferingWithPolicy(new ContractDefintion(accessPolicy, contractPolicy)));
+    ExtendableProductOffering secondPageHit =
+        getOfferingWithPolicy(new ContractDefintion(accessPolicy, getTestPolicy("else")));
+    secondPageHit.setParticipantContextIds(List.of(CONTEXT_B));
+    mockResponse(200, firstPage);
+    mockResponse(200, List.of(secondPageHit));
+
+    BadGatewayException exception =
+        assertThrows(
+            BadGatewayException.class, () -> productCatalogApiClient.getByPolicyId("access"));
+    assertTrue(exception.getMessage().contains(CONTEXT_B));
   }
 
   @Test
@@ -390,6 +467,22 @@ public class ProductCatalogApiClientTest extends AbstractApiTest {
         BadGatewayException.class,
         () -> productCatalogApiClient.getProductOfferingByExternalId(TEST_ASSET_ID),
         "If the server returns something invalid, a BadGateWay should be thrown.");
+  }
+
+  @Test
+  public void testGetProductOfferingByExternalId_duplicateNamesContexts() throws Exception {
+    List<ExtendableProductOffering> offerings = getOfferings(2);
+    offerings.get(0).setParticipantContextIds(List.of("did:web:dataspace-a"));
+    offerings.get(1).setParticipantContextIds(List.of("did:web:dataspace-b"));
+    mockResponse(200, offerings);
+
+    BadGatewayException exception =
+        assertThrows(
+            BadGatewayException.class,
+            () -> productCatalogApiClient.getProductOfferingByExternalId(TEST_ASSET_ID));
+
+    assertTrue(exception.getMessage().contains("did:web:dataspace-a"));
+    assertTrue(exception.getMessage().contains("did:web:dataspace-b"));
   }
 
   @Test

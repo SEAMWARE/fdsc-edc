@@ -21,6 +21,7 @@ import static org.seamware.edc.domain.ExtendableProduct.EXTERNAL_ID_SCHEMA;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +48,12 @@ public class ExtendableProductOffering extends ProductOfferingVO {
   /** Corresponds to data-set id */
   @JsonProperty("externalId")
   private String externalId;
+
+  // never serialized as [], TMForum stores that but reads it back as [{}]; tolerate it on read
+  @JsonProperty("participantContextIds")
+  @JsonInclude(JsonInclude.Include.NON_EMPTY)
+  @JsonDeserialize(using = LenientStringListDeserializer.class)
+  private List<String> participantContextIds;
 
   private ExtendableProductSpecificationRef productSpecification;
 
@@ -89,6 +96,19 @@ public class ExtendableProductOffering extends ProductOfferingVO {
     return this;
   }
 
+  /**
+   * Contexts (dataspaces) the offering is made in; the wildcard {@code "*"} means all of them. Null
+   * or empty means the default context only.
+   */
+  public List<String> getParticipantContextIds() {
+    return participantContextIds;
+  }
+
+  public ExtendableProductOffering setParticipantContextIds(List<String> participantContextIds) {
+    this.participantContextIds = participantContextIds;
+    return this;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -96,12 +116,18 @@ public class ExtendableProductOffering extends ProductOfferingVO {
     if (!super.equals(o)) return false;
     ExtendableProductOffering that = (ExtendableProductOffering) o;
     return Objects.equals(externalId, that.externalId)
+        && Objects.equals(participantContextIds, that.participantContextIds)
         && Objects.equals(productSpecification, that.productSpecification)
         && Objects.equals(productOfferingTerm, that.productOfferingTerm);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), externalId, productSpecification, productOfferingTerm);
+    return Objects.hash(
+        super.hashCode(),
+        externalId,
+        participantContextIds,
+        productSpecification,
+        productOfferingTerm);
   }
 }

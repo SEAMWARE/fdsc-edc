@@ -27,12 +27,40 @@ public abstract class ApiClient {
   protected static final String OFFSET_PARAM = "offset";
   protected static final String LIMIT_PARAM = "limit";
 
+  /** Filter on the context tag of Quotes, Agreements and Usages; never matches an offering. */
+  protected static final String PARTICIPANT_CONTEXT_ID_QUERY_PARAM = "participantContextId";
+
+  /** Array-contains filter on a ProductOffering's context tags. */
+  protected static final String PARTICIPANT_CONTEXT_IDS_QUERY_PARAM = "participantContextIds";
+
+  /** Separates alternatives within one TMForum query value, which the server ORs. */
+  protected static final String QUERY_VALUE_OR_SEPARATOR = ",";
+
+  /**
+   * Single characters TMForum reads as OR inside a query, each on its own: {@code key=A,B} and
+   * {@code key=A;key=B}. A context id containing either could widen its filter to other contexts.
+   */
+  private static final String OR_SEPARATOR_CHARS = ",;";
+
   protected final Monitor monitor;
   protected final OkHttpClient okHttpClient;
 
   protected ApiClient(Monitor monitor, OkHttpClient okHttpClient) {
     this.monitor = monitor;
     this.okHttpClient = okHttpClient;
+  }
+
+  /**
+   * Rejects a context id TMForum would split into several alternatives, which would widen the
+   * filter to other contexts.
+   */
+  protected static String requireFilterableContextId(String participantContextId) {
+    if (participantContextId.chars().anyMatch(c -> OR_SEPARATOR_CHARS.indexOf(c) >= 0)) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Participant context id '%s' must not contain ',' or ';'.", participantContextId));
+    }
+    return participantContextId;
   }
 
   protected ResponseBody executeRequest(Request request) {

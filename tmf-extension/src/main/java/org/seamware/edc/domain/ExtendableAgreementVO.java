@@ -42,6 +42,9 @@ public class ExtendableAgreementVO extends AgreementVO {
   @JsonProperty("externalId")
   private String externalId;
 
+  @JsonProperty("participantContextId")
+  private String participantContextId;
+
   @JsonProperty("negotiationId")
   private String negotiationId;
 
@@ -63,6 +66,16 @@ public class ExtendableAgreementVO extends AgreementVO {
     return this;
   }
 
+  /** Participant context (dataspace) the entity belongs to; null means the default context. */
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
+  public ExtendableAgreementVO setParticipantContextId(String participantContextId) {
+    this.participantContextId = participantContextId;
+    return this;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -70,11 +83,12 @@ public class ExtendableAgreementVO extends AgreementVO {
     if (!super.equals(o)) return false;
     ExtendableAgreementVO that = (ExtendableAgreementVO) o;
     return Objects.equals(externalId, that.externalId)
+        && Objects.equals(participantContextId, that.participantContextId)
         && Objects.equals(negotiationId, that.negotiationId);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), externalId, negotiationId);
+    return Objects.hash(super.hashCode(), participantContextId, externalId, negotiationId);
   }
 }

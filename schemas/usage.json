@@ -13,6 +13,10 @@
       "enum": ["INITIAL","PROVISIONING","PROVISIONING_REQUESTED","PREPARATION_REQUESTED","PROVISIONED","REQUESTING","REQUESTED","STARTING","STARTUP_REQUESTED","STARTED","SUSPENDING",
         "SUSPENDING_REQUESTED","SUSPENDED","RESUMING","RESUMING_REQUESTED","RESUMED","COMPLETING","COMPLETING_REQUESTED","COMPLETED","TERMINATING","TERMINATING_REQUESTED","TERMINATED",
         "DEPROVISIONING", "DEPROVISIONING_REQUESTED", "DEPROVISIONED" ]
+    },
+    "participantContextId": {
+      "type": "string",
+      "description": "Participant context (dataspace) the entity belongs to. Absent means the default context."
     }
   },
   "required": ["externalId", "transferState"]

@@ -13,7 +13,7 @@ FIWARE Data Space Connector EDC Extensions — a set of Eclipse Dataspace Compon
 
 - Language: Java 21
 - Build: Maven (multi-module)
-- Framework: Eclipse EDC 0.14.1 (Dataspace Components)
+- Framework: Eclipse EDC 0.18.1 (Dataspace Components)
 - Test: JUnit 5, Mockito
 - Formatting: Spotless (Google Java Format) + license header enforcement
 - Containers: Docker, Docker Compose
@@ -22,7 +22,7 @@ FIWARE Data Space Connector EDC Extensions — a set of Eclipse Dataspace Compon
 
 ```
 fdsc-edc/
-├── pom.xml                          # Parent POM (edc.version=0.14.1)
+├── pom.xml                          # Parent POM (edc.version=0.18.1)
 ├── tmf-extension/                   # TMForum API storage backend for EDC
 │   └── src/main/java/org/seamware/edc/
 │       ├── TMFContractNegotiationExtension.java   # Main extension, provides stores + API clients
@@ -69,6 +69,7 @@ fdsc-edc/
 ├── policy-extension/                # ODRL PAP policy evaluation (OPA-backed)
 ├── controlplane-oid4vc/             # Shaded JAR + Docker image (OID4VC variant)
 ├── controlplane-dcp/                # Shaded JAR + Docker image (DCP variant)
+├── controlplane-tck/                # Shaded JAR for the DSP TCK run (oid4vc + test-extension, NoopDataFlowController)
 ├── config/tck/
 │   ├── edc.properties               # EDC controlplane config for TCK mode
 │   └── tck.properties               # DSP TCK runner configuration
@@ -79,7 +80,8 @@ fdsc-edc/
 ├── docker/
 │   └── Dockerfile                   # EDC controlplane Docker image (eclipse-temurin:25-jre-alpine)
 ├── docker-compose.tck.yml           # TCK orchestration (postgis, scorpio, tmforum, edc, tck)
-├── schemas/                         # JSON/JSON-LD schemas for contracts/policies
+├── schemas/                         # JSON schemas referenced via TMForum @schemaLocation (extension fields like externalId)
+├── docs/migration/                  # EDC 0.14.1→0.18.1 upgrade report (participant context, artifacts, config keys)
 └── .github/workflows/test.yml       # CI: unit tests + TCK conformance
 ```
 
@@ -103,7 +105,7 @@ mvn clean spotless:check
 mvn spotless:apply
 
 # Build controlplane shaded JAR only (for TCK)
-mvn clean package -pl controlplane-oid4vc -am -DskipTests
+mvn clean package -pl controlplane-tck -am -DskipTests
 
 # Run DSP TCK conformance tests locally
 ./scripts/run-tck.sh
@@ -125,13 +127,14 @@ Java 21 is required. The project uses Maven (no Gradle — `.gradle` files under
 - **Annotation processing:** Lombok for boilerplate, MapStruct for object mapping.
 - **HTTP clients:** OkHttp for TMForum API calls.
 - **JSON:** Jackson with `jackson-datatype-jsr310`.
-- **Doc comments:** roughly half of the `src/main/java` classes carry a short class-level Javadoc; method-level Javadoc is the exception, and `@param`/`@return` blocks are rare (used only in config classes). Match this density — add a one-line Javadoc stating what a type is and why, and do not retrofit docs onto code you did not touch.
+- **Doc comments:** roughly half of the `src/main/java` classes carry a short class-level Javadoc; method-level Javadoc is the exception, and `@param`/`@return` blocks are rare (concentrated in config classes and `policy-extension`). Match this density — add a one-line Javadoc stating what a type is and why, and do not retrofit docs onto code you did not touch.
 - **Constants:** no inline magic values — EDC property keys, IDs and limits are declared as named `static final` constants (see `TMFConfig`, `TransferConfig`, `OID4VPConfig`, `DataAssembly`).
+- **Participant context:** all three controlplanes use `participant-context-connector-classic-core` (one context from `edc.participant.id`/`edc.participant.context.id`). `TMFEdcMapper` stamps `participantContextId` on every entity it builds — the TMForum-backed stores filter in memory via `CriterionOperatorRegistry`, so a null id silently empties catalogs. See `docs/migration/EDC-0.18.1-UPGRADE.md` §4.
 - **Tests:** JUnit 5 with `@ParameterizedTest` + `@MethodSource`/`@CsvSource` where a case table applies; Mockito for EDC SPI collaborators.
 
 ## Important Files
 
-- `pom.xml` — Parent POM, defines `edc.version=0.14.1` and all shared dependency versions
+- `pom.xml` — Parent POM, defines `edc.version=0.18.1` and all shared dependency versions
 - `config/tck/edc.properties` — EDC config for TCK mode (ports, TMForum URLs, test extension flags)
 - `config/tck/tck.properties` — DSP TCK config (asset IDs, agreement IDs, offer IDs, endpoint URLs)
 - `scripts/init-tmforum.sh` — Creates test data in TMForum (assets as ProductSpecifications, contracts as ProductOfferings, agreements)

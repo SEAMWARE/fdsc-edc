@@ -18,7 +18,9 @@ package org.seamware.edc.store;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -33,6 +35,7 @@ import org.seamware.edc.tmf.ProductCatalogApiClient;
 public class TMFBackedContractDefinitionStoreTest {
 
   private static final String TEST_ID = "test-id";
+  private static final String TEST_CONTEXT_ID = "test-context";
 
   private ProductCatalogApiClient productCatalogApiClient;
   private TMFEdcMapper tmfEdcMapper;
@@ -42,10 +45,14 @@ public class TMFBackedContractDefinitionStoreTest {
   public void setup() {
     productCatalogApiClient = mock(ProductCatalogApiClient.class);
     tmfEdcMapper = mock(TMFEdcMapper.class);
+    when(tmfEdcMapper.contextForId(any(), isNull())).thenReturn(Optional.of(TEST_CONTEXT_ID));
+    Monitor monitor = mock(Monitor.class);
 
     tmfBackedContractDefinitionStore =
         new TMFBackedContractDefinitionStore(
-            mock(Monitor.class), productCatalogApiClient, tmfEdcMapper);
+            monitor,
+            new ContractDefinitionIdResolver(monitor, productCatalogApiClient, tmfEdcMapper),
+            tmfEdcMapper);
   }
 
   @Test
@@ -58,7 +65,7 @@ public class TMFBackedContractDefinitionStoreTest {
 
     when(productCatalogApiClient.getProductOfferingByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestOffering()));
-    when(tmfEdcMapper.fromProductOffer(eq(getTestOffering())))
+    when(tmfEdcMapper.fromProductOffer(eq(getTestOffering()), eq(TEST_CONTEXT_ID)))
         .thenReturn(Optional.of(testDefinition));
 
     assertEquals(
@@ -91,7 +98,7 @@ public class TMFBackedContractDefinitionStoreTest {
   public void testFindById_mapping_error() {
     when(productCatalogApiClient.getProductOfferingByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestOffering()));
-    when(tmfEdcMapper.fromProductOffer(eq(getTestOffering())))
+    when(tmfEdcMapper.fromProductOffer(eq(getTestOffering()), eq(TEST_CONTEXT_ID)))
         .thenThrow(new RuntimeException("Something bad happened"));
 
     assertNull(
@@ -103,7 +110,8 @@ public class TMFBackedContractDefinitionStoreTest {
   public void testFindById_unmappable_spec() {
     when(productCatalogApiClient.getProductOfferingByExternalId(eq(TEST_ID)))
         .thenReturn(Optional.of(getTestOffering()));
-    when(tmfEdcMapper.fromProductOffer(eq(getTestOffering()))).thenReturn(Optional.empty());
+    when(tmfEdcMapper.fromProductOffer(eq(getTestOffering()), eq(TEST_CONTEXT_ID)))
+        .thenReturn(Optional.empty());
 
     assertNull(
         tmfBackedContractDefinitionStore.findById(TEST_ID),

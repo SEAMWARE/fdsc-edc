@@ -16,8 +16,6 @@
  */
 package org.seamware.edc.domain;
 
-import static org.seamware.edc.domain.ExtendableQuoteCreateVO.CONTRACT_NEGOTIATION_SCHEMA;
-
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.URI;
 import org.jetbrains.annotations.Nullable;
@@ -33,7 +31,7 @@ public class ExtendableUsageCreateVO extends UsageCreateVO {
     URI current = super.getAtSchemaLocation();
     if (current == null) {
       URI baseUri = SchemaBaseUriHolder.get(); // configurable
-      URI resolved = baseUri.resolve(CONTRACT_NEGOTIATION_SCHEMA);
+      URI resolved = baseUri.resolve(USAGE_SCHEMA);
       setAtSchemaLocation(resolved);
       return resolved;
     }
@@ -42,6 +40,9 @@ public class ExtendableUsageCreateVO extends UsageCreateVO {
 
   @JsonProperty("externalId")
   private String externalId;
+
+  @JsonProperty("participantContextId")
+  private String participantContextId;
 
   @JsonProperty("transferState")
   private String transferState;
@@ -61,6 +62,16 @@ public class ExtendableUsageCreateVO extends UsageCreateVO {
 
   public ExtendableUsageCreateVO setTransferState(String transferState) {
     this.transferState = transferState;
+    return this;
+  }
+
+  /** Participant context (dataspace) the entity belongs to; null means the default context. */
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
+  public ExtendableUsageCreateVO setParticipantContextId(String participantContextId) {
+    this.participantContextId = participantContextId;
     return this;
   }
 }

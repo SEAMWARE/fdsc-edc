@@ -10,6 +10,10 @@
     },
     "negotiationId": {
       "type": "string"
+    },
+    "participantContextId": {
+      "type": "string",
+      "description": "Participant context (dataspace) the entity belongs to. Absent means the default context."
     }
   },
   "required": [

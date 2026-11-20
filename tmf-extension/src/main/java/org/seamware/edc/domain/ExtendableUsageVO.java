@@ -42,6 +42,9 @@ public class ExtendableUsageVO extends UsageVO {
   @JsonProperty("externalId")
   private String externalId;
 
+  @JsonProperty("participantContextId")
+  private String participantContextId;
+
   @JsonProperty("transferState")
   private String transferState;
 
@@ -63,6 +66,16 @@ public class ExtendableUsageVO extends UsageVO {
     return this;
   }
 
+  /** Participant context (dataspace) the entity belongs to; null means the default context. */
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
+  public ExtendableUsageVO setParticipantContextId(String participantContextId) {
+    this.participantContextId = participantContextId;
+    return this;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) return true;
@@ -70,11 +83,12 @@ public class ExtendableUsageVO extends UsageVO {
     if (!super.equals(o)) return false;
     ExtendableUsageVO that = (ExtendableUsageVO) o;
     return Objects.equals(externalId, that.externalId)
+        && Objects.equals(participantContextId, that.participantContextId)
         && Objects.equals(transferState, that.transferState);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(super.hashCode(), externalId, transferState);
+    return Objects.hash(super.hashCode(), participantContextId, externalId, transferState);
   }
 }
