@@ -273,6 +273,9 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
             .map(criterionOperatorRegistry::<ContractAgreement>toPredicate)
             .reduce(x -> true, Predicate::and);
 
+    // Empty for the default context on purpose: its untagged legacy entities carry no
+    // participantContextId for TMForum to filter on, so the whole set is fetched and narrowed by
+    // filterPredicate below, which applies the context criterion in memory (ADR-3).
     Optional<String> serverSideContext =
         ContextCriteria.serverSideContext(criteria, tmfEdcMapper.getDefaultParticipantContextId());
 
@@ -352,6 +355,8 @@ public class TMFBackedContractNegotiationStore implements ContractNegotiationSto
   }
 
   private List<ContractNegotiation> getNegotiations(List<Criterion> criteria) {
+    // As in getFilteredStream: the default context is fetched unfiltered and narrowed in memory,
+    // so its untagged legacy quotes stay visible (ADR-3).
     return toNegotiations(
         fetchQuotesByNegotiationId(
             ContextCriteria.serverSideContext(

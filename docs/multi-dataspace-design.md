@@ -24,6 +24,7 @@ this document.
 | [ADR-10](#adr-10--management-api-access-through-oauth2-tokens) | Management API access through OAuth2 tokens |
 | [ADR-11](#adr-11--virtual-dsp-assembly-explicit-callback-address-no-root-version-endpoint) | Virtual DSP assembly: explicit callback address, no root version endpoint |
 | [ADR-12](#adr-12--test-extension-stays-out-of-controlplane-dcp) | `test-extension` stays out of `controlplane-dcp` |
+| [ADR-13](#adr-13--edr-tokens-are-bound-to-a-transfer-first-and-a-dataspace-second) | EDR tokens are bound to a transfer first and a dataspace second |
 
 Appendices: [measured TMForum behaviour](#appendix-a--measured-tmforum-behaviour),
 [where the configuration keys are read](#appendix-b--where-the-configuration-keys-are-read).
@@ -461,6 +462,56 @@ assembly, which stays in classic mode and keeps the extension unchanged.
 
 **Consequences.** The DCP image is a production assembly only. TCK coverage is
 unaffected.
+
+---
+
+## ADR-13 — EDR tokens are bound to a transfer first and a dataspace second
+
+**Status:** accepted.
+
+**Context.** `FDSCDcpEndpointDataReferenceService` signs the bearer EDR of a
+DCP flow. All participant contexts sign with the **same** key
+(`FDSCTransferControlExtension.KEY_NAME`) and publish it through the **same**
+JWKS endpoint; `OidConfigController` serves one discovery document per context,
+and those documents differ in the `issuer` field alone. The only per-context
+part of an EDR is therefore `iss`/`aud`, this connector's DID in that dataspace.
+
+That raises the question of what stops an EDR minted in dataspace A from
+opening a route of dataspace B, since the signature verifies either way.
+
+**Decision.** Do not rely on the issuer for that separation. Every route is
+bound to **its own transfer**: `TransferMapper` sets `client_id` and
+`required_scopes` of the APISIX `openid-connect` plugin to the transfer process
+id, and the EDR carries that id in its `scope` claim. A token minted for
+transfer X is accepted by the route of transfer X and by no other route.
+
+The issuer stays the second layer. A route points at the discovery document of
+the transfer's own context, resolved through the same `TransferContextResolver`
+result the EDR is signed with, so the two cannot drift.
+
+**Consequences.** A transfer belongs to exactly one dataspace, so the scope
+binding already confines an EDR to the dataspace that issued it: a cross-
+dataspace replay would need that dataspace's own transfer token, which is not
+an escalation. Key rotation stays one operation for the whole connector.
+
+The price is that the separation lives in the route configuration rather than in
+the key material. Two tests keep it honest: `EdrIssuerMatchesDiscoveryTest` pins
+the EDR issuer and the discovery document of a transfer to the same context, and
+`EdrIsRejectedByForeignRouteTest` mints an EDR for a transfer of one context and
+asserts that the route of another transfer — in the same dataspace and in the
+other one — does not accept it, by applying both conditions the gateway applies.
+
+That second test models the gateway rather than running one. The
+`docker-compose.multi-dataspace.yml` stack carries no APISIX and runs with
+`fdscTransfer.enabled=false`, so `verify-multi-dataspace.sh` cannot cover this
+end to end; doing so would need a data plane, a provisioned transfer and
+therefore the DCP wallet that the script's header already puts out of scope.
+
+Giving every context its own signing key would move the separation into the
+cryptography and make the gateway configuration irrelevant to it. That is a
+larger change — one JWKS endpoint per context, one rotation per dataspace — and
+is deliberately deferred. It is the step to take if the gateway configuration
+ever stops being trustworthy.
 
 ---
 

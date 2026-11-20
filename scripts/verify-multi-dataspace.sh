@@ -32,7 +32,10 @@
 #     and none at the root <protocol>/.well-known/dspace-version (guards
 #     against dsp-version-http-api returning to the virtual assembly);
 #   - TMForum seed: offerings per context with participantContextIds=X,*.
-# A full DSP catalog exchange needs a DCP wallet and is out of scope.
+# A full DSP catalog exchange needs a DCP wallet and is out of scope. So is EDR
+# isolation between dataspaces: this stack carries no APISIX and runs with
+# fdscTransfer.enabled=false. EdrIsRejectedByForeignRouteTest covers it instead
+# (ADR-13 of docs/multi-dataspace-design.md).
 #
 # Management tokens are RS256 JWTs signed with SIGNING_KEY_FILE, whose JWKS the
 # controlplane trusts. Requires curl, jq and openssl. Exits non-zero if any

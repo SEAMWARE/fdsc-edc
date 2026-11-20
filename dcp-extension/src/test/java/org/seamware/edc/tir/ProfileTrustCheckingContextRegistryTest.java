@@ -55,6 +55,7 @@ import org.eclipse.edc.protocol.spi.ParticipantIdExtractionFunction;
 import org.eclipse.edc.protocol.spi.ProtocolVersion;
 import org.eclipse.edc.spi.iam.ClaimToken;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -80,6 +81,7 @@ public class ProfileTrustCheckingContextRegistryTest {
   private ParticipantIdExtractionFunction delegate;
   private ProfileTrustCheckingContextRegistry registry;
   private ProfileTrustCheckingContextRegistry defaultOnlyRegistry;
+  private ProfileTrustCheckingContextRegistry unreachableTilRegistry;
 
   @BeforeEach
   public void setup() {
@@ -114,6 +116,49 @@ public class ProfileTrustCheckingContextRegistryTest {
             new EbsiTrustedIssuersRegistry(globalTil),
             Map.of(PROFILE_A, new EbsiTrustedIssuersRegistry(tilA)));
     defaultOnlyRegistry.registerDefault(profile(DEFAULT_PROFILE));
+
+    // A TIL that answers no lookup at all, as an unreachable or erroring one does.
+    TirClient unreachableTil = mock(TirClient.class);
+    when(unreachableTil.getIssuer(any()))
+        .thenThrow(new BadGatewayException("Was not able to get issuer from til."));
+    unreachableTilRegistry =
+        new ProfileTrustCheckingContextRegistry(
+            mock(Monitor.class),
+            new EbsiTrustedIssuersRegistry(globalTil),
+            Map.of(
+                PROFILE_A, new EbsiTrustedIssuersRegistry(unreachableTil),
+                PROFILE_B, new EbsiTrustedIssuersRegistry(tilB)));
+    Stream.of(PROFILE_A, PROFILE_B, PROFILE_WITHOUT_TIL)
+        .map(this::profile)
+        .forEach(unreachableTilRegistry::register);
+  }
+
+  /**
+   * A TIL outage must reject the counterparty (401), not escape as an exception that the DSP
+   * endpoint turns into a 5xx, and it must not affect the other dataspaces.
+   */
+  @ParameterizedTest(name = "unreachable TIL of {0} with issuer {1} -> {2}")
+  @MethodSource("unreachableTilCases")
+  public void unreachableProfileTilRejectsInsteadOfFailing(
+      String profile, String issuer, String expectedParticipantId) {
+    ClaimToken claimToken =
+        ClaimToken.Builder.newInstance()
+            .claim(CLAIMTOKEN_VC_KEY, List.of(credential(issuer, CREDENTIAL_TYPE)))
+            .build();
+
+    assertEquals(
+        expectedParticipantId,
+        unreachableTilRegistry.getIdExtractionFunction(profile).apply(claimToken));
+  }
+
+  private static Stream<Arguments> unreachableTilCases() {
+    return Stream.of(
+        // the dataspace whose TIL is down rejects every issuer, including its own
+        Arguments.of(PROFILE_A, ISSUER_A, null),
+        Arguments.of(PROFILE_A, ISSUER_GLOBAL, null),
+        // the other dataspaces keep working
+        Arguments.of(PROFILE_B, ISSUER_B, PARTICIPANT_ID),
+        Arguments.of(PROFILE_WITHOUT_TIL, ISSUER_GLOBAL, PARTICIPANT_ID));
   }
 
   @ParameterizedTest(name = "{0} with issuer {1} -> {2}")

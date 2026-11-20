@@ -56,7 +56,21 @@ secret alias, by convention `<context id>-sts-client-secret`.
   can reach. The default external URL lacks the new `participantContextId(s)`
   properties.
 
-### 5. Removed from the DCP image
+### 5. Offering and policy ids must be globally unique
+
+Policies live inside product offerings, so resolving one scans the offerings.
+The lookup now **fails** when a policy id is held by more than one offering,
+where before it silently resolved to whichever offering was found first. The
+same applies to offering `externalId`s. A catalog that today contains such a
+duplicate keeps working until the id is negotiated, and then fails with
+`Policy <id> is used by multiple offerings`.
+
+Check the catalog for duplicate policy ids and offering `externalId`s before
+upgrading. Note that an offering served in several dataspaces appears as
+`<externalId>@<context>`, so no other id may collide with that form either; see
+[Keeping ids unique](../../docs/multi-dataspace.md#keeping-ids-unique).
+
+### 6. Removed from the DCP image
 
 - `test-extension` (`testExtension.*` has no effect). DSP TCK runs use
   `controlplane-tck`.

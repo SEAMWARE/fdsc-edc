@@ -49,6 +49,8 @@ public class ProductCatalogApiClient extends ApiClient {
   private static final String PRODUCT_SPECIFICATION_PATH = "productSpecification";
   private static final String PRODUCT_OFFERING_TERM_NAME_PARAM = "productOfferingTerm.name";
   private static final int POLICY_SCAN_PAGE_SIZE = 100;
+  // a second match already proves the id is ambiguous, so the scan can stop there
+  private static final int MATCHES_PROVING_DUPLICATE = 2;
 
   private final String baseUrl;
   private final ObjectMapper objectMapper;
@@ -132,8 +134,10 @@ public class ProductCatalogApiClient extends ApiClient {
 
   /**
    * Get the policy by its plain id, with the contexts of the offering holding it. Policies are
-   * stored inside product-offerings, so every offering is scanned; a policy id held by more than
-   * one offering throws {@link BadGatewayException}.
+   * stored inside product-offerings, so offerings are scanned until a second holder of the id is
+   * found; a policy id held by more than one offering throws {@link BadGatewayException}. Unlike a
+   * plain first-match lookup this cannot stop at the first hit, because an ambiguous id has to be
+   * reported rather than resolved to an arbitrary offering.
    */
   public Optional<OfferingPolicy> getByPolicyId(String policyId) {
     List<OfferingWithPolicy> matches = new ArrayList<>();
@@ -154,14 +158,16 @@ public class ProductCatalogApiClient extends ApiClient {
             offering ->
                 getFromOffering(offering, policyId)
                     .ifPresent(policy -> matches.add(new OfferingWithPolicy(offering, policy))));
-        posAvailable = extendableProductOfferings.size() == POLICY_SCAN_PAGE_SIZE;
+        posAvailable =
+            matches.size() < MATCHES_PROVING_DUPLICATE
+                && extendableProductOfferings.size() == POLICY_SCAN_PAGE_SIZE;
         offset += POLICY_SCAN_PAGE_SIZE;
       } catch (IOException e) {
         monitor.warning("Was not able to get the policy by id.", e);
         throw new BadGatewayException("Was not able to get the policy by id.");
       }
     }
-    if (matches.size() > 1) {
+    if (matches.size() >= MATCHES_PROVING_DUPLICATE) {
       String matchContexts =
           matches.stream()
               .map(

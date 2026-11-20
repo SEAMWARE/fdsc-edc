@@ -51,7 +51,8 @@ import org.eclipse.edc.spi.monitor.Monitor;
 
 /**
  * Restricts a dataspace profile to the issuers of its own TIL. Returns {@code null} (rejected as
- * 401 upstream) unless every presented VC is trusted by that TIL, else delegates.
+ * 401 upstream) unless every presented VC is trusted by that TIL, else delegates. An unreachable
+ * TIL rejects as well, rather than failing the request (ADR-9).
  */
 public class ProfileTrustedIssuerIdExtractionFunction implements ParticipantIdExtractionFunction {
 
@@ -99,7 +100,21 @@ public class ProfileTrustedIssuerIdExtractionFunction implements ParticipantIdEx
     if (issuer == null || issuer.id() == null) {
       return false;
     }
-    Set<String> supportedTypes = profileIssuers.getSupportedTypes(issuer);
+    Set<String> supportedTypes;
+    try {
+      supportedTypes = profileIssuers.getSupportedTypes(issuer);
+    } catch (RuntimeException e) {
+      // The TIL of a profile is the primary client of its own registry, so a lookup failure is
+      // not skipped the way an additional TIL is. Rejecting here keeps an unreachable TIL a 401
+      // for that dataspace instead of a 5xx that reads as a fault of this connector.
+      monitor.warning(
+          String.format(
+              "Could not reach the trusted issuers list of profile %s; treating issuer %s as"
+                  + " untrusted.",
+              profile, issuer.id()),
+          e);
+      return false;
+    }
     return supportedTypes.contains(TrustedIssuerRegistry.WILDCARD)
         || !Collections.disjoint(credential.getType(), supportedTypes);
   }

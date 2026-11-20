@@ -36,7 +36,9 @@ mkdir -p "${KEY_DIR}"
 if [ ! -f "${KEY_FILE}" ]; then
   openssl genrsa -out "${KEY_FILE}" "${KEY_BITS}" 2>/dev/null
 fi
-# Readable by the verifier container, whatever user it runs as.
+# Test-only: world-readable so the verifier container can sign with it whatever
+# user it runs as. This key is a throwaway, generated into a compose volume and
+# never leaving this stack. Never grant 644 to a private key in a deployment.
 chmod 644 "${KEY_FILE}"
 
 modulus=$(openssl rsa -in "${KEY_FILE}" -noout -modulus | cut -d= -f2 | xxd -r -p | b64url)
