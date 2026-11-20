@@ -78,7 +78,7 @@ fdsc-edc/
 │   ├── run-tck.sh                   # One-command local TCK runner
 │   └── verify-tck-config.sh         # Static config consistency checker
 ├── docker/
-│   └── Dockerfile                   # EDC controlplane Docker image (eclipse-temurin:24-jre-alpine)
+│   └── Dockerfile                   # EDC controlplane Docker image (eclipse-temurin:25-jre-alpine)
 ├── docker-compose.tck.yml           # TCK orchestration (postgis, scorpio, tmforum, edc, tck)
 ├── schemas/                         # JSON schemas referenced via TMForum @schemaLocation (extension fields like externalId)
 ├── docs/migration/                  # EDC 0.14.1→0.18.1 upgrade report (participant context, artifacts, config keys)
