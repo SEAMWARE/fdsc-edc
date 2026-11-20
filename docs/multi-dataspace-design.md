@@ -354,13 +354,32 @@ ways to add the dimension were considered:
 The upstream profile registry only appends, so a profile cannot be replaced in
 place; the wrapping happens at registration time, through a registry that
 replaces upstream's default one. Without any `ebsiTir.profiles.*` setting it is
-not registered at all and upstream's default stays in place.
+not registered at all and upstream's default stays in place — which is correct,
+because with no profile TIL there is nothing to separate.
+
+That the wrapper, rather than a core registry, is the one profiles get
+registered on rests on the provider wiring: `TirExtension` names
+`DataspaceProfileContextRegistry` in `@Provides`, which both orders it ahead of
+every extension that injects the registry and suppresses upstream's
+`@Provider(isDefault = true)` in `ControlPlaneDefaultServicesExtension`. If
+either side of that changed, profiles would land on an unwrapped registry and a
+profile without its own TIL would fall back to the layer-1 union — the exact
+hole layer 2 exists to close. `ProfileRegistryWiringTest` asserts both halves,
+as a canary for EDC upgrades. It is not a runtime boot test: an end-to-end one
+needs the `org.eclipse.edc:junit` fixtures, which this repository does not
+depend on today.
 
 **Consequences.**
 
-- A failing or hanging profile TIL is skipped — its issuers count as untrusted —
-  and is not asked again for a cooldown window, so one dataspace's TIL outage
-  does not break the others. A failing global TIL still fails the request.
+- A failing or hanging TIL is skipped on lookup — its issuers count as
+  untrusted — and is not asked again for a cooldown window, so one dataspace's
+  TIL outage does not break the others. This covers the **global** TIL too:
+  because the union registry backs the upstream issuer check, an exception
+  escaping it would fail inbound verification for every dataspace, including one
+  whose own TIL is healthy. An unreachable TIL therefore means "trusts nobody"
+  (401), never a 5xx. Registration is not skipped and still fails loudly, so a
+  misconfigured TIL address surfaces at startup rather than silently disabling
+  trust.
 - TIL lookups are not cached: every credential check queries the global TIL and
   every profile TIL, and the profile's own TIL again in layer 2. Operators
   should keep TIL timeouts short and place TILs close to the connector. A

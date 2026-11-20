@@ -99,7 +99,12 @@ class EdrIssuerMatchesDiscoveryTest {
     String edrIssuer =
         SignedJWT.parse(
                 new FDSCDcpEndpointDataReferenceService(
-                        transferConfig, vault, contextResolver, ownIdentity, Clock.systemUTC())
+                        mock(Monitor.class),
+                        transferConfig,
+                        vault,
+                        contextResolver,
+                        ownIdentity,
+                        Clock.systemUTC())
                     .createEndpointDataReference(dataFlow)
                     .getContent()
                     .getStringProperty(EDC_NAMESPACE + "authorization"))

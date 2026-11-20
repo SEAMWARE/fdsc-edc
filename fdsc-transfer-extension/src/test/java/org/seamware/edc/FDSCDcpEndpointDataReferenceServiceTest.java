@@ -59,6 +59,7 @@ import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcess
 import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.dataplane.spi.DataFlow;
 import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.security.Vault;
 import org.eclipse.edc.spi.types.domain.DataAddress;
@@ -108,6 +109,7 @@ public class FDSCDcpEndpointDataReferenceServiceTest {
         .thenReturn(DEFAULT_IDENTITY);
     fdscDcpEndpointDataReferenceService =
         new FDSCDcpEndpointDataReferenceService(
+            mock(Monitor.class),
             transferConfig,
             vault,
             new TransferContextResolver(transferProcessStore, DEFAULT_CONTEXT),

@@ -74,7 +74,7 @@ public class EbsiTrustedIssuersRegistryTest {
   @BeforeEach
   public void setup() {
     tirClient = mock(TirClient.class);
-    ebsiTrustedIssuersRegistry = new EbsiTrustedIssuersRegistry(tirClient);
+    ebsiTrustedIssuersRegistry = new EbsiTrustedIssuersRegistry(tirClient, mock(Monitor.class));
   }
 
   @ParameterizedTest
@@ -86,13 +86,25 @@ public class EbsiTrustedIssuersRegistryTest {
         credentialTypes, ebsiTrustedIssuersRegistry.getSupportedTypes(getIssuer(TEST_ISSUER)));
   }
 
-  @Test
-  public void testGetSupportedTypes_error_bubble() {
-    when(tirClient.getIssuer(anyString())).thenThrow(new RuntimeException("Error"));
-    assertThrows(
-        RuntimeException.class,
-        () -> ebsiTrustedIssuersRegistry.getSupportedTypes(getIssuer(TEST_ISSUER)),
-        "Errors from the client should bubble.");
+  /**
+   * Lookup errors used to bubble out of here. They must not: this registry backs the global issuer
+   * check, so an escaping exception fails inbound verification for every dataspace, including one
+   * whose own TIL is healthy. An unreachable TIL means "trusts nobody" instead.
+   */
+  @ParameterizedTest(name = "{0} from the TIL leaves no trusted types")
+  @MethodSource("lookupFailures")
+  public void testGetSupportedTypes_lookup_failure_is_skipped(RuntimeException failure) {
+    when(tirClient.getIssuer(anyString())).thenThrow(failure);
+
+    assertTrue(
+        ebsiTrustedIssuersRegistry.getSupportedTypes(getIssuer(TEST_ISSUER)).isEmpty(),
+        "An unreachable TIL must not make an issuer trusted.");
+  }
+
+  private static Stream<Arguments> lookupFailures() {
+    return Stream.of(
+        Arguments.of(new BadGatewayException("TIL unavailable")),
+        Arguments.of(new RuntimeException("Error")));
   }
 
   @Test
@@ -172,14 +184,44 @@ public class EbsiTrustedIssuersRegistryTest {
   }
 
   @Test
-  public void testGetSupportedTypes_propagates_failing_primary_til() {
+  public void testGetSupportedTypes_skips_failing_primary_til() {
+    // This registry also backs the global issuer check, so an escaping exception would fail
+    // inbound verification for every dataspace, including one whose own TIL is healthy.
     TirClient profileTirClient = mock(TirClient.class);
     when(tirClient.getIssuer(anyString())).thenThrow(new BadGatewayException("TIL unavailable"));
+    when(profileTirClient.getIssuer(eq(TEST_ISSUER)))
+        .thenReturn(Optional.of(getIssuerVo(List.of("profile-credential"))));
     EbsiTrustedIssuersRegistry registry =
         new EbsiTrustedIssuersRegistry(tirClient, List.of(profileTirClient), mock(Monitor.class));
 
+    assertEquals(Set.of("profile-credential"), registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+  }
+
+  @ParameterizedTest(name = "primary TIL failure: {0} elapsed -> {1} calls")
+  @MethodSource("cooldownCases")
+  public void testGetSupportedTypes_skips_failed_primary_til_during_cooldown(
+      Duration elapsed, int expectedCalls) {
+    when(tirClient.getIssuer(anyString())).thenThrow(new BadGatewayException("TIL unavailable"));
+    Instant start = Instant.parse("2026-01-01T00:00:00Z");
+    Clock clock = mock(Clock.class);
+    when(clock.instant()).thenReturn(start, start.plus(elapsed));
+    EbsiTrustedIssuersRegistry registry =
+        new EbsiTrustedIssuersRegistry(tirClient, List.of(), mock(Monitor.class), clock);
+
+    registry.getSupportedTypes(getIssuer(TEST_ISSUER));
+    registry.getSupportedTypes(getIssuer(TEST_ISSUER));
+
+    verify(tirClient, times(expectedCalls)).getIssuer(TEST_ISSUER);
+  }
+
+  @Test
+  public void testRegister_still_fails_when_the_til_is_unavailable() {
+    // Only lookups are skipped: a registration that cannot reach the TIL has to be loud.
+    when(tirClient.getIssuer(anyString())).thenThrow(new BadGatewayException("TIL unavailable"));
+
     assertThrows(
-        BadGatewayException.class, () -> registry.getSupportedTypes(getIssuer(TEST_ISSUER)));
+        BadGatewayException.class,
+        () -> ebsiTrustedIssuersRegistry.register(getIssuer(TEST_ISSUER), "SomeCredential"));
   }
 
   private static Stream<Arguments> getTypeSets() {

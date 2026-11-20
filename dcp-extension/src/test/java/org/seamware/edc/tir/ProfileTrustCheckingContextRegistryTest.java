@@ -102,10 +102,10 @@ public class ProfileTrustCheckingContextRegistryTest {
     registry =
         new ProfileTrustCheckingContextRegistry(
             mock(Monitor.class),
-            new EbsiTrustedIssuersRegistry(globalTil),
+            new EbsiTrustedIssuersRegistry(globalTil, mock(Monitor.class)),
             Map.of(
-                PROFILE_A, new EbsiTrustedIssuersRegistry(tilA),
-                PROFILE_B, new EbsiTrustedIssuersRegistry(tilB)));
+                PROFILE_A, new EbsiTrustedIssuersRegistry(tilA, mock(Monitor.class)),
+                PROFILE_B, new EbsiTrustedIssuersRegistry(tilB, mock(Monitor.class))));
     Stream.of(PROFILE_A, PROFILE_B, PROFILE_WITHOUT_TIL)
         .map(this::profile)
         .forEach(registry::register);
@@ -113,8 +113,8 @@ public class ProfileTrustCheckingContextRegistryTest {
     defaultOnlyRegistry =
         new ProfileTrustCheckingContextRegistry(
             mock(Monitor.class),
-            new EbsiTrustedIssuersRegistry(globalTil),
-            Map.of(PROFILE_A, new EbsiTrustedIssuersRegistry(tilA)));
+            new EbsiTrustedIssuersRegistry(globalTil, mock(Monitor.class)),
+            Map.of(PROFILE_A, new EbsiTrustedIssuersRegistry(tilA, mock(Monitor.class))));
     defaultOnlyRegistry.registerDefault(profile(DEFAULT_PROFILE));
 
     // A TIL that answers no lookup at all, as an unreachable or erroring one does.
@@ -124,10 +124,10 @@ public class ProfileTrustCheckingContextRegistryTest {
     unreachableTilRegistry =
         new ProfileTrustCheckingContextRegistry(
             mock(Monitor.class),
-            new EbsiTrustedIssuersRegistry(globalTil),
+            new EbsiTrustedIssuersRegistry(globalTil, mock(Monitor.class)),
             Map.of(
-                PROFILE_A, new EbsiTrustedIssuersRegistry(unreachableTil),
-                PROFILE_B, new EbsiTrustedIssuersRegistry(tilB)));
+                PROFILE_A, new EbsiTrustedIssuersRegistry(unreachableTil, mock(Monitor.class)),
+                PROFILE_B, new EbsiTrustedIssuersRegistry(tilB, mock(Monitor.class))));
     Stream.of(PROFILE_A, PROFILE_B, PROFILE_WITHOUT_TIL)
         .map(this::profile)
         .forEach(unreachableTilRegistry::register);

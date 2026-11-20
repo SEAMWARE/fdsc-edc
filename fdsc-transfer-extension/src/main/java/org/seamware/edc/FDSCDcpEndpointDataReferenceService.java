@@ -50,6 +50,7 @@ import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.edc.connector.dataplane.spi.DataFlow;
 import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.eclipse.edc.spi.security.Vault;
@@ -65,6 +66,7 @@ public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenc
   private static final int EXPIRATION_MS = 300_000;
   public static final String SCOPE_CLAIM = "scope";
 
+  private final Monitor monitor;
   private final TransferConfig transferConfig;
   private final Vault vault;
   private final TransferContextResolver transferContextResolver;
@@ -72,11 +74,13 @@ public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenc
   private final Clock clock;
 
   public FDSCDcpEndpointDataReferenceService(
+      Monitor monitor,
       TransferConfig transferConfig,
       Vault vault,
       TransferContextResolver transferContextResolver,
       OwnParticipantIdentity ownParticipantIdentity,
       Clock clock) {
+    this.monitor = monitor;
     this.transferConfig = transferConfig;
     this.vault = vault;
     this.transferContextResolver = transferContextResolver;
@@ -131,7 +135,15 @@ public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenc
 
       return Result.success(fdscDataAddressBuilder.build());
     } catch (Exception e) {
-      return Result.failure(e.getMessage());
+      // Logged, and reported with the exception rather than its message: an identity that cannot
+      // be resolved for the context arrives as an exception whose message may be null, and a
+      // silent failure here looks like a transfer that simply never starts.
+      monitor.warning(
+          String.format("Could not create the endpoint data reference for %s.", dataFlow.getId()),
+          e);
+      return Result.failure(
+          String.format(
+              "Could not create the endpoint data reference for %s: %s", dataFlow.getId(), e));
     }
   }
 

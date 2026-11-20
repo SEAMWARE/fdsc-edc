@@ -215,7 +215,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
 
     EndpointDataReferenceService endpointDataReferenceService =
         new FDSCDcpEndpointDataReferenceService(
-            transferConfig, vault, transferContextResolver, ownParticipantIdentity, clock);
+            monitor, transferConfig, vault, transferContextResolver, ownParticipantIdentity, clock);
 
     FDSCDcpProvisioner fdscDcpProvisioner =
         new FDSCDcpProvisioner(

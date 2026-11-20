@@ -410,7 +410,11 @@ Seeding is an upsert and runs on every start. A context that already exists, for
 example one created through the management API, is updated and not duplicated.
 Its configuration is **replaced** by the declared entries, so changes made at
 runtime through the management API to a declared context's config are lost on
-restart. Without the SQL store (see
+restart. That includes **private entries**: a secret added or rotated through
+the API and not written back into `fdsc.participants.<key>.privateConfig.*` is
+gone on the next boot, and the context falls back to the declared value. Rotate
+in the configuration, not only through the API. Only the configuration's
+creation timestamp is carried over. Without the SQL store (see
 [Limitations](#limitations-and-pitfalls)) contexts live in memory; contexts
 created only through the management API are gone after a restart.
 

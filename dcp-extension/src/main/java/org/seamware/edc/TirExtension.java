@@ -82,12 +82,13 @@ public class TirExtension implements ServiceExtension {
             DataspaceProfileContextRegistry.class,
             new ProfileTrustCheckingContextRegistry(
                 monitor,
-                new EbsiTrustedIssuersRegistry(tirClient(context)),
+                new EbsiTrustedIssuersRegistry(tirClient(context), monitor),
                 profileClients.entrySet().stream()
                     .collect(
                         Collectors.toMap(
                             Map.Entry::getKey,
-                            profile -> new EbsiTrustedIssuersRegistry(profile.getValue())))));
+                            profile ->
+                                new EbsiTrustedIssuersRegistry(profile.getValue(), monitor)))));
       }
     }
   }

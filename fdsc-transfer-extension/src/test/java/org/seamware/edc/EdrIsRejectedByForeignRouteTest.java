@@ -203,6 +203,7 @@ class EdrIsRejectedByForeignRouteTest {
 
     return SignedJWT.parse(
             new FDSCDcpEndpointDataReferenceService(
+                    mock(Monitor.class),
                     transferConfig,
                     vault,
                     contextResolver(),

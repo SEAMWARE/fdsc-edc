@@ -46,7 +46,11 @@ import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
 
 /**
  * Adds the configured DCP scope to an outgoing request. The scope is chosen by the message's
- * protocol (the dataspace profile name); profiles without an override use the default scope.
+ * protocol, which is the dataspace profile name: EDC keys a profile by {@code
+ * DataspaceProfileContext.name()} and resolves it from the message protocol, so {@code
+ * dcp.profiles.<name>} and {@code ebsiTir.profiles.<name>} share that key space. A profile without
+ * an override uses the default scope; an override whose key matches no profile is logged, since it
+ * is usually a typo in the configuration.
  */
 public class DefaultScopeMappingFunction implements PolicyValidatorRule<RequestPolicyContext> {
 
@@ -67,11 +71,18 @@ public class DefaultScopeMappingFunction implements PolicyValidatorRule<RequestP
 
   @Override
   public Boolean apply(Policy policy, RequestPolicyContext requestPolicyContext) {
-    String scope =
+    String protocol =
         Optional.ofNullable(requestPolicyContext.requestContext().getMessage())
             .map(RemoteMessage::getProtocol)
-            .map(profileScopes::get)
-            .orElse(defaultScope);
+            .orElse(null);
+    if (protocol != null && !profileScopes.isEmpty() && !profileScopes.containsKey(protocol)) {
+      monitor.debug(
+          String.format(
+              "No scope override for profile %s; using the default scope. Overrides configured"
+                  + " for: %s.",
+              protocol, profileScopes.keySet()));
+    }
+    String scope = Optional.ofNullable(protocol).map(profileScopes::get).orElse(defaultScope);
     if (scope == null || scope.isEmpty()) {
       return true;
     }

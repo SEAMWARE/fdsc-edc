@@ -17,6 +17,7 @@
 package org.seamware.edc.bootstrap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -74,6 +75,10 @@ class ParticipantBootstrapExtensionTest {
   private static final String STS_SECRET_KEY = "edc.iam.sts.oauth.client.secret";
   private static final String STS_SECRET = "secret";
   private static final String OTHER_DID = "did:web:other.example";
+  private static final String RUNTIME_ENTRY_KEY = "edc.added.at.runtime";
+  private static final String RUNTIME_ENTRY_VALUE = "set-through-the-management-api";
+  private static final String RUNTIME_SECRET_KEY = "edc.rotated.secret.alias";
+  private static final String RUNTIME_SECRET_VALUE = "rotated-after-the-last-boot";
   private static final long EXISTING_CREATED_AT = 42L;
   private static final String FAILURE_DETAIL = "store unavailable";
 
@@ -176,6 +181,43 @@ class ParticipantBootstrapExtensionTest {
     var saved = savedConfig(CTX_A);
     assertEquals(EXISTING_CREATED_AT, saved.getCreatedAt());
     assertEquals(DID_A, saved.getEntries().get(ParticipantBootstrapConfig.PARTICIPANT_DID_ENTRY));
+  }
+
+  /**
+   * Seeding is declarative (ADR-6): the configuration in {@code fdsc.participants.*} is the whole
+   * desired state, so entries and private entries added or rotated through the management API are
+   * replaced on the next start rather than merged. Pinned here because the opposite — silently
+   * keeping a stale secret the configuration no longer declares — would be the worse surprise.
+   */
+  @Test
+  void reSeedingReplacesRuntimeEntriesInsteadOfMergingThem() {
+    when(participantContextService.getParticipantContext(CTX_A))
+        .thenReturn(
+            ServiceResult.success(
+                ParticipantContext.Builder.newInstance()
+                    .participantContextId(CTX_A)
+                    .identity(DID_A)
+                    .state(ParticipantContextState.ACTIVATED)
+                    .build()));
+    when(participantContextConfigService.get(CTX_A))
+        .thenReturn(
+            ServiceResult.success(
+                ParticipantContextConfiguration.Builder.newInstance()
+                    .participantContextId(CTX_A)
+                    .createdAt(EXISTING_CREATED_AT)
+                    .entries(Map.of(RUNTIME_ENTRY_KEY, RUNTIME_ENTRY_VALUE))
+                    .privateEntries(Map.of(RUNTIME_SECRET_KEY, RUNTIME_SECRET_VALUE))
+                    .build()));
+    var config = participant("a", CTX_A, DID_A, PROFILE_A);
+    config.put(key("a", "privateConfig." + STS_SECRET_KEY), STS_SECRET);
+
+    start(config);
+
+    var saved = savedConfig(CTX_A);
+    assertEquals(Map.of(STS_SECRET_KEY, STS_SECRET), saved.getPrivateEntries());
+    assertFalse(saved.getEntries().containsKey(RUNTIME_ENTRY_KEY));
+    // only createdAt survives from the stored configuration
+    assertEquals(EXISTING_CREATED_AT, saved.getCreatedAt());
   }
 
   @Test

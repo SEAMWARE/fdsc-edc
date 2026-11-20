@@ -55,9 +55,12 @@ import org.seamware.til.model.TrustedIssuerVO;
 
 /**
  * Trusted issuer registry backed by one or more EBSI TILs. Lookups return the union of all TILs;
- * registrations go to the first (primary) TIL only. A failing additional TIL is skipped (its
- * issuers are untrusted) for {@link #UNAVAILABLE_TIL_COOLDOWN}, so it cannot break or stall
- * authentication in other dataspaces.
+ * registrations go to the first (primary) TIL only. A failing TIL is skipped on lookup — its
+ * issuers count as untrusted — for {@link #UNAVAILABLE_TIL_COOLDOWN}, so one unreachable list
+ * cannot break or stall authentication for the dataspaces served by the others. That holds for the
+ * primary TIL too: this registry also backs the global issuer check, where an escaping exception
+ * would fail inbound verification for every dataspace, including one with a healthy TIL of its own.
+ * Registration is not skipped and still fails loudly.
  */
 public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
 
@@ -72,8 +75,8 @@ public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
   private final Clock clock;
   private final Map<TirClient, Instant> unavailableUntil = new ConcurrentHashMap<>();
 
-  public EbsiTrustedIssuersRegistry(TirClient tirClient) {
-    this(tirClient, List.of(), null);
+  public EbsiTrustedIssuersRegistry(TirClient tirClient, Monitor monitor) {
+    this(tirClient, List.of(), monitor);
   }
 
   public EbsiTrustedIssuersRegistry(
@@ -108,7 +111,7 @@ public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
   @Override
   public Set<String> getSupportedTypes(Issuer issuer) {
     return Stream.concat(
-            tirClient.getIssuer(issuer.id()).stream(),
+            lookupSkippingFailure(tirClient, issuer.id()).stream(),
             additionalClients.stream()
                 .flatMap(client -> lookupSkippingFailure(client, issuer.id()).stream()))
         .filter(trustedIssuer -> trustedIssuer.getCredentials() != null)
@@ -131,7 +134,8 @@ public class EbsiTrustedIssuersRegistry implements TrustedIssuerRegistry {
       unavailableUntil.put(client, clock.instant().plus(UNAVAILABLE_TIL_COOLDOWN));
       monitor.warning(
           String.format(
-              "Skipping unavailable profile TIL for issuer %s; not asking it again for %s.",
+              "Skipping unavailable TIL for issuer %s; not asking it again for %s. Its issuers"
+                  + " count as untrusted until it answers.",
               issuerId, UNAVAILABLE_TIL_COOLDOWN),
           e);
       return Optional.empty();

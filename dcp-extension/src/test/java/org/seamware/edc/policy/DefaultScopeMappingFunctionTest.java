@@ -37,7 +37,11 @@ package org.seamware.edc.policy;
  */
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -54,6 +58,7 @@ import org.eclipse.edc.spi.iam.RequestScope;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.eclipse.edc.spi.types.domain.message.RemoteMessage;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -91,6 +96,42 @@ public class DefaultScopeMappingFunctionTest {
         Arguments.of("no protocol", DEFAULT_SCOPE, null, Set.of(DEFAULT_SCOPE)),
         Arguments.of("override without default scope", "", PROFILE_A, Set.of(SCOPE_A)),
         Arguments.of("no override and no default scope", "", PROFILE_B, Set.of()));
+  }
+
+  /**
+   * A profile name is also a configuration key, so a typo in {@code dcp.profiles.<name>} silently
+   * falls back to the default scope. The fallback has to leave a trace naming both sides.
+   */
+  @ParameterizedTest(name = "protocol {0} -> diagnostic logged: {1}")
+  @MethodSource("diagnosticCases")
+  public void unmatchedOverrideIsLogged(String protocol, boolean expectDiagnostic) {
+    var monitor = mock(Monitor.class);
+
+    new DefaultScopeMappingFunction(monitor, DEFAULT_SCOPE, PROFILE_SCOPES)
+        .apply(Policy.Builder.newInstance().build(), policyContext(protocol));
+
+    verify(monitor, times(expectDiagnostic ? 1 : 0))
+        .debug(contains("No scope override for profile"));
+  }
+
+  private static Stream<Arguments> diagnosticCases() {
+    return Stream.of(
+        // the typo case: a configured override that no message protocol matches
+        Arguments.of(UNKNOWN_PROFILE, true),
+        Arguments.of(PROFILE_B, true),
+        // a profile that does have an override, and a message without a protocol
+        Arguments.of(PROFILE_A, false),
+        Arguments.of(null, false));
+  }
+
+  @Test
+  public void noDiagnosticWithoutConfiguredOverrides() {
+    var monitor = mock(Monitor.class);
+
+    new DefaultScopeMappingFunction(monitor, DEFAULT_SCOPE)
+        .apply(Policy.Builder.newInstance().build(), policyContext(UNKNOWN_PROFILE));
+
+    verify(monitor, never()).debug(contains("No scope override for profile"));
   }
 
   // The policy engine runs post-validators in registration order, which is not fixed.
