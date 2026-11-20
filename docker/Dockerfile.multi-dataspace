@@ -1,7 +1,7 @@
 # controlplane-dcp (virtual mode) for the multi-dataspace verification stack.
 # Embeds the example configuration for environments where bind mounts are
 # unavailable (e.g., rootless Docker, CI with overlayfs).
-FROM eclipse-temurin:24_36-jre-alpine
+FROM eclipse-temurin:25.0.5_8-jre-alpine
 
 ARG JVM_ARGS=""
 ARG JAR
@@ -14,4 +14,9 @@ COPY ${JAR} edc.jar
 COPY config/multi-dataspace/edc.properties /app/config/edc.properties
 
 ENV ENV_JVM_ARGS=${JVM_ARGS:-"-Xms256m -Xmx512m"}
-CMD ["sh", "-c", "exec java $ENV_JVM_ARGS -Djava.security.egd=file:/dev/urandom -jar edc.jar"]
+
+# Java4Shell (CVE-2026-114938) — see docker/Dockerfile for the full rationale
+# and for how to remove this once a patched alpine base image is published.
+ENV JAVA4SHELL_MITIGATION="-XX:-UseBASE64Intrinsics"
+
+CMD ["sh", "-c", "exec java $JAVA4SHELL_MITIGATION $ENV_JVM_ARGS -Djava.security.egd=file:/dev/urandom -jar edc.jar"]
