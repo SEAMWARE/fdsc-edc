@@ -45,6 +45,9 @@ public class ExtendableQuoteItemVO extends QuoteItemVO {
   @JsonProperty("externalId")
   private String externalId;
 
+  @JsonProperty("participantContextId")
+  private String participantContextId;
+
   /** Corresponds to the (dsp) dataset id included in the corresponding offer */
   @JsonProperty("datasetId")
   private String datasetId;
@@ -73,6 +76,16 @@ public class ExtendableQuoteItemVO extends QuoteItemVO {
 
   public ExtendableQuoteItemVO setDatasetId(String datasetId) {
     this.datasetId = datasetId;
+    return this;
+  }
+
+  /** Participant context (dataspace) the entity belongs to; null means the default context. */
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
+  public ExtendableQuoteItemVO setParticipantContextId(String participantContextId) {
+    this.participantContextId = participantContextId;
     return this;
   }
 }

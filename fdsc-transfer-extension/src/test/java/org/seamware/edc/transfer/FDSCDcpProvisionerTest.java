@@ -45,6 +45,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
+import org.eclipse.edc.connector.controlplane.transfer.spi.store.TransferProcessStore;
+import org.eclipse.edc.connector.controlplane.transfer.spi.types.TransferProcess;
 import org.eclipse.edc.connector.dataplane.spi.provision.DeprovisionedResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionResource;
 import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionedResource;
@@ -58,6 +60,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.seamware.edc.HttpClientException;
 import org.seamware.edc.SchemaBaseUriHolder;
+import org.seamware.edc.TransferContextResolver;
 import org.seamware.edc.apisix.ApisixAdminClient;
 import org.seamware.edc.apisix.Route;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
@@ -66,7 +69,11 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
 
   private ApisixAdminClient apisixAdminClient;
   private ProductCatalogApiClient productCatalogApiClient;
+  private static final String TEST_CONTEXT = "context-b";
+  private static final String TEST_DEFAULT_CONTEXT = "default-context";
+
   private TransferMapper transferMapper;
+  private TransferProcessStore transferProcessStore;
 
   private FDSCDcpProvisioner provisioner;
 
@@ -78,6 +85,13 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
     apisixAdminClient = mock(ApisixAdminClient.class);
     productCatalogApiClient = mock(ProductCatalogApiClient.class);
     transferMapper = mock(TransferMapper.class);
+    transferProcessStore = mock(TransferProcessStore.class);
+    when(transferProcessStore.findById(TEST_TRANSFER_PROCESS_ID))
+        .thenReturn(
+            TransferProcess.Builder.newInstance()
+                .id(TEST_TRANSFER_PROCESS_ID)
+                .participantContextId(TEST_CONTEXT)
+                .build());
 
     provisioner =
         new FDSCDcpProvisioner(
@@ -87,7 +101,8 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
             transferMapper,
             new ObjectMapper(),
             dataPlaneStore,
-            endpointDataReferenceService);
+            endpointDataReferenceService,
+            new TransferContextResolver(transferProcessStore, TEST_DEFAULT_CONTEXT));
   }
 
   @Test
@@ -96,7 +111,9 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
         .thenReturn(
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
-    when(transferMapper.toDcpServiceRoute(any(), eq(TEST_UPSTREAM))).thenReturn(testRoute);
+    when(transferMapper.toDcpServiceRoute(
+            eq(TEST_TRANSFER_PROCESS_ID), eq(TEST_UPSTREAM), eq(TEST_CONTEXT)))
+        .thenReturn(testRoute);
 
     ProvisionResource provisionResource = provisionResource();
 
@@ -109,6 +126,22 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
     ArgumentCaptor<Route> routeCaptor = ArgumentCaptor.forClass(Route.class);
     verify(apisixAdminClient, times(1)).addRoute(routeCaptor.capture());
     assertEquals(routeCaptor.getValue(), testRoute);
+  }
+
+  @Test
+  public void testProvision_error_no_transfer_process() throws Exception {
+    when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
+        .thenReturn(
+            Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
+    when(transferProcessStore.findById(any())).thenReturn(null);
+
+    StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
+
+    assertTrue(
+        result.fatalError(),
+        "Without a known participant context, provisioning should fail instead of guessing.");
+    verify(endpointDataReferenceService, never()).createEndpointDataReference(any());
+    verify(apisixAdminClient, never()).addRoute(any());
   }
 
   @Test
@@ -170,7 +203,7 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
         .thenReturn(
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
-    when(transferMapper.toDcpServiceRoute(any(), any()))
+    when(transferMapper.toDcpServiceRoute(any(), any(), any()))
         .thenThrow(new RuntimeException("Failed to map"));
     StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 
@@ -183,7 +216,7 @@ public class FDSCDcpProvisionerTest extends AbstractProvisionerTest {
     when(productCatalogApiClient.getProductSpecByExternalId(eq(TEST_ASSET_ID)))
         .thenReturn(
             Optional.of(getProductSpec(TEST_ASSET_ID, List.of(getUpstreamSpec(TEST_UPSTREAM)))));
-    when(transferMapper.toDcpServiceRoute(any(), any())).thenReturn(getRoute());
+    when(transferMapper.toDcpServiceRoute(any(), any(), any())).thenReturn(getRoute());
     when(apisixAdminClient.addRoute(any())).thenThrow(new BadGatewayException("Failed to add."));
     StatusResult<ProvisionedResource> result = provisioner.provision(provisionResource()).get();
 

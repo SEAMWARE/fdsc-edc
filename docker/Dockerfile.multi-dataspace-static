@@ -1,0 +1,8 @@
+# Static server for the multi-dataspace verification stack: serves schemas/
+# (TMForum @schemaLocation targets) and a JWKS for management API tokens.
+FROM nginx:1.27-alpine
+
+RUN apk --no-cache add openssl xxd
+
+COPY schemas /usr/share/nginx/html/schemas
+COPY --chmod=755 docker/multi-dataspace/generate-jwks.sh /docker-entrypoint.d/40-generate-jwks.sh

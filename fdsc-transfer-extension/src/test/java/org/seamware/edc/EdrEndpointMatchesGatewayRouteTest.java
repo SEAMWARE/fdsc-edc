@@ -140,7 +140,7 @@ public class EdrEndpointMatchesGatewayRouteTest {
   }
 
   private Route dcpRoute() {
-    return transferMapper.toDcpServiceRoute(ID, UPSTREAM);
+    return transferMapper.toDcpServiceRoute(ID, UPSTREAM, null);
   }
 
   private Route oid4vpRoute() {

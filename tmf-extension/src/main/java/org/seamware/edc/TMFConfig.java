@@ -26,6 +26,7 @@ import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import org.eclipse.edc.participantcontext.spi.types.ParticipantContext;
 import org.eclipse.edc.spi.EdcException;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.system.configuration.Config;
 
@@ -38,13 +39,18 @@ public class TMFConfig {
   public static final String EDC_PARTICIPANT_ID_SETTING = "edc.participant.id";
 
   /**
-   * EDC core setting holding the participant context id; only read when the runtime registers no
-   * participant context supplier.
+   * Context that owns TMForum entities carrying no context tag. Overrides the context of the
+   * runtime's {@code SingleParticipantContextSupplier}; required in virtual mode.
    */
-  public static final String EDC_PARTICIPANT_CONTEXT_ID_SETTING = "edc.participant.context.id";
+  public static final String DEFAULT_PARTICIPANT_CONTEXT_ID_SETTING =
+      "tmfExtension.defaultParticipantContextId";
+
+  /** Entry of a ProductOffering's {@code participantContextIds} that offers it in every context. */
+  public static final String ALL_PARTICIPANT_CONTEXTS = "*";
 
   private static final String TMF_EXTENSION_CONFIG_PATH = "tmfExtension";
   private static final String TMF_EXTENSION_CATALOG_CONFIG_PATH = "tmfExtension.catalog";
+  private static final String SCHEMA_BASE_URI_KEY = "schemaBaseUri";
   private static final URI DEFAULT_SCHEMA_BASE_URI =
       URI.create("https://raw.githubusercontent.com/wistefan/edc-dsc/refs/heads/init/schemas/");
 
@@ -69,45 +75,90 @@ public class TMFConfig {
 
   // identity this runtime acts on behalf of, mirrors edc.participant.id
   private String participantId;
-  // participant context stamped onto every entity, mirrors edc.participant.context.id
-  private String participantContextId;
+  // context of untagged (legacy) TMForum entities; null when none could be resolved
+  private String defaultParticipantContextId;
 
   // configuration for the catalog endpoint
   private CatalogConfig catalogConfig;
 
   /**
    * Endpoint-only view for the extensions in this package that need the TMForum URLs and the
-   * enabled flag. Leaves {@code participantId}/{@code participantContextId} unset, so a value read
-   * off this instance cannot silently diverge from the participant context the runtime registers.
+   * enabled flag. Leaves {@code participantId}/{@code defaultParticipantContextId} unset, so a
+   * value read off this instance cannot silently diverge from the participant context the runtime
+   * registers.
    */
   static TMFConfig fromConfig(Config config) {
     return endpointConfigBuilder(config).build();
   }
 
   /**
-   * Builds the config, taking the participant identity from {@code participantContext} when the
-   * runtime supplies one, so the ids stamped on entities cannot drift from the context EDC itself
-   * filters by. A {@code null} context falls back to the {@code edc.participant.*} settings.
+   * Builds the config. The participant id comes from {@code participantContext} when the runtime
+   * supplies one, else from {@code edc.participant.id}. The default context is the explicit {@link
+   * #DEFAULT_PARTICIPANT_CONTEXT_ID_SETTING}, else the supplied context, else unset (logged).
    */
-  public static TMFConfig fromConfig(Config config, ParticipantContext participantContext) {
+  public static TMFConfig fromConfig(
+      Config config, ParticipantContext participantContext, Monitor monitor) {
     TMFConfig.Builder tmfConfigBuilder = endpointConfigBuilder(config);
 
     if (participantContext != null) {
       tmfConfigBuilder.participantId(participantContext.getIdentity());
-      tmfConfigBuilder.participantContextId(participantContext.getParticipantContextId());
     } else {
-      // Only reached without a supplier, e.g. in tests. Mirrors the rule
-      // ClassicParticipantContextDefaultServicesExtension applies: an unset context id falls back
-      // to the participant id, so stamped entities match the context EDC seeds and filters by.
-      String participantId =
+      tmfConfigBuilder.participantId(
           config.getString(
-              EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT);
-      tmfConfigBuilder.participantId(participantId);
-      tmfConfigBuilder.participantContextId(
-          config.getString(EDC_PARTICIPANT_CONTEXT_ID_SETTING, participantId));
+              EDC_PARTICIPANT_ID_SETTING, ServiceExtensionContext.ANONYMOUS_PARTICIPANT));
     }
+    tmfConfigBuilder.defaultParticipantContextId(
+        resolveDefaultParticipantContextId(config, participantContext, monitor));
 
     return tmfConfigBuilder.build();
+  }
+
+  /**
+   * Deliberately ignores {@code edc.participant.*} without a supplier: in virtual mode those are
+   * per-context entries, not the runtime's identity.
+   */
+  private static String resolveDefaultParticipantContextId(
+      Config config, ParticipantContext participantContext, Monitor monitor) {
+    String explicitContextId =
+        blankToNull(config.getString(DEFAULT_PARTICIPANT_CONTEXT_ID_SETTING, null));
+    String suppliedContextId =
+        Optional.ofNullable(participantContext)
+            .map(ParticipantContext::getParticipantContextId)
+            .map(TMFConfig::blankToNull)
+            .orElse(null);
+    if (explicitContextId != null) {
+      if (suppliedContextId != null && !suppliedContextId.equals(explicitContextId)) {
+        monitor.warning(
+            String.format(
+                "%s=%s differs from the runtime's participant context %s. Untagged TMForum"
+                    + " entities are assigned to %s.",
+                DEFAULT_PARTICIPANT_CONTEXT_ID_SETTING,
+                explicitContextId,
+                suppliedContextId,
+                explicitContextId));
+      }
+      return explicitContextId;
+    }
+    if (suppliedContextId == null) {
+      monitor.warning(
+          String.format(
+              "Neither %s nor a single participant context is available. TMForum entities without"
+                  + " a participant context stay invisible.",
+              DEFAULT_PARTICIPANT_CONTEXT_ID_SETTING));
+    }
+    return suppliedContextId;
+  }
+
+  private static String blankToNull(String value) {
+    return value == null || value.isBlank() ? null : value;
+  }
+
+  /**
+   * @deprecated use {@link #getDefaultParticipantContextId()}; entities carry their own context.
+   */
+  @Deprecated
+  public String getParticipantContextId() {
+    return defaultParticipantContextId;
   }
 
   private static TMFConfig.Builder endpointConfigBuilder(Config config) {
@@ -130,7 +181,7 @@ public class TMFConfig {
         .ifPresent(tmfConfigBuilder::usageManagementApi);
     getNullSafeFromConfig(() -> tmfExtensionConfig.getString("partyCatalogApi"))
         .ifPresent(tmfConfigBuilder::partyCatalogApi);
-    getNullSafeFromConfig(() -> tmfExtensionConfig.getString("schemaBaseUri"))
+    getNullSafeFromConfig(() -> tmfExtensionConfig.getString(SCHEMA_BASE_URI_KEY))
         .ifPresent(tmfConfigBuilder::schemaBaseUri);
 
     CatalogConfig.Builder catalogConfigBuilder = new CatalogConfig.Builder();
@@ -163,8 +214,8 @@ public class TMFConfig {
       return this;
     }
 
-    public Builder participantContextId(String participantContextId) {
-      tmfConfig.participantContextId = participantContextId;
+    public Builder defaultParticipantContextId(String defaultParticipantContextId) {
+      tmfConfig.defaultParticipantContextId = defaultParticipantContextId;
       return this;
     }
 

@@ -226,14 +226,6 @@ public class TMFBackedLeaseHolder implements LeaseHolder {
 
   private ContractNegotiationState copyStateWithLease(
       ContractNegotiationState source, boolean leased, String leasedBy, long leaseExpiry) {
-    return new ContractNegotiationState()
-        .setControlplane(source.getControlplane())
-        .setPending(source.isPending())
-        .setState(source.getState())
-        .setCorrelationId(source.getCorrelationId())
-        .setCounterPartyAddress(source.getCounterPartyAddress())
-        .setLeased(leased)
-        .setLeasedBy(leasedBy)
-        .setLeaseExpiry(leaseExpiry);
+    return source.copy().setLeased(leased).setLeasedBy(leasedBy).setLeaseExpiry(leaseExpiry);
   }
 }

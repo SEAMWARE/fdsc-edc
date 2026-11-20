@@ -50,12 +50,15 @@ import java.util.Optional;
 import java.util.UUID;
 import org.eclipse.edc.connector.dataplane.spi.DataFlow;
 import org.eclipse.edc.connector.dataplane.spi.edr.EndpointDataReferenceService;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.result.ServiceResult;
 import org.eclipse.edc.spi.security.Vault;
 import org.eclipse.edc.spi.types.domain.DataAddress;
+import org.seamware.edc.store.OwnParticipantIdentity;
 import org.seamware.edc.transfer.FDSCDataAddress;
 
+/** Issues the bearer EDR for a DCP flow, signed as the identity of the transfer's own context. */
 public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenceService {
 
   public static final String ENDPOINT_TYPE = "https://w3id.org/idsa/v4.1/HTTP";
@@ -63,16 +66,25 @@ public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenc
   private static final int EXPIRATION_MS = 300_000;
   public static final String SCOPE_CLAIM = "scope";
 
+  private final Monitor monitor;
   private final TransferConfig transferConfig;
   private final Vault vault;
-  private final String issuerId;
+  private final TransferContextResolver transferContextResolver;
+  private final OwnParticipantIdentity ownParticipantIdentity;
   private final Clock clock;
 
   public FDSCDcpEndpointDataReferenceService(
-      TransferConfig transferConfig, Vault vault, String issuerId, Clock clock) {
+      Monitor monitor,
+      TransferConfig transferConfig,
+      Vault vault,
+      TransferContextResolver transferContextResolver,
+      OwnParticipantIdentity ownParticipantIdentity,
+      Clock clock) {
+    this.monitor = monitor;
     this.transferConfig = transferConfig;
     this.vault = vault;
-    this.issuerId = issuerId;
+    this.transferContextResolver = transferContextResolver;
+    this.ownParticipantIdentity = ownParticipantIdentity;
     this.clock = clock;
   }
 
@@ -82,7 +94,14 @@ public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenc
     if (optionalJwkJson.isEmpty()) {
       return Result.failure("No signing key available.");
     }
+    Result<String> participantContextId = transferContextResolver.resolve(dataFlow.getId());
+    if (participantContextId.failed()) {
+      return Result.failure(participantContextId.getFailureDetail());
+    }
     try {
+      // the issuer must equal the issuer of the context's discovery document the route points at
+      String issuerId =
+          ownParticipantIdentity.participantId(participantContextId.getContent(), null);
 
       JWK jwk = JWK.parse(optionalJwkJson.get());
       // the key is inserted to Vault by the FDSCTransferControlExtension, thus its assured that its
@@ -116,7 +135,15 @@ public class FDSCDcpEndpointDataReferenceService implements EndpointDataReferenc
 
       return Result.success(fdscDataAddressBuilder.build());
     } catch (Exception e) {
-      return Result.failure(e.getMessage());
+      // Logged, and reported with the exception rather than its message: an identity that cannot
+      // be resolved for the context arrives as an exception whose message may be null, and a
+      // silent failure here looks like a transfer that simply never starts.
+      monitor.warning(
+          String.format("Could not create the endpoint data reference for %s.", dataFlow.getId()),
+          e);
+      return Result.failure(
+          String.format(
+              "Could not create the endpoint data reference for %s: %s", dataFlow.getId(), e));
     }
   }
 

@@ -42,6 +42,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.seamware.pap.model.GenericJsonInputVO;
 
 /**
@@ -219,6 +221,28 @@ class PolicyContextInputMapperTest {
           TEST_SIGNING_DATE, agreementMap.get(PolicyContextInputMapper.KEY_AGREEMENT_SIGNING_DATE));
     }
 
+    @ParameterizedTest(name = "participant context {0}")
+    @NullSource
+    @ValueSource(strings = {"context-a", "context-b"})
+    @DisplayName("Transfer context carries the agreement's participant context only when set")
+    @SuppressWarnings("unchecked")
+    void toJsonInput_transferContext_includesOptionalParticipantContextId(
+        String participantContextId) {
+      TransferProcessPolicyContext context = createMockTransferContext(participantContextId);
+
+      GenericJsonInputVO result = mapper.toJsonInput(context);
+
+      Map<String, Object> agreementMap =
+          (Map<String, Object>)
+              result.getPayload().get(PolicyContextInputMapper.KEY_CONTRACT_AGREEMENT);
+      assertEquals(
+          participantContextId,
+          agreementMap.get(PolicyContextInputMapper.KEY_AGREEMENT_PARTICIPANT_CONTEXT_ID));
+      assertEquals(
+          participantContextId != null,
+          agreementMap.containsKey(PolicyContextInputMapper.KEY_AGREEMENT_PARTICIPANT_CONTEXT_ID));
+    }
+
     @Test
     @DisplayName("Transfer context includes evaluation timestamp in payload")
     void toJsonInput_transferContext_includesNow() {
@@ -250,6 +274,10 @@ class PolicyContextInputMapperTest {
      * Creates a mock transfer process context with a contract agreement and evaluation timestamp.
      */
     private TransferProcessPolicyContext createMockTransferContext() {
+      return createMockTransferContext(null);
+    }
+
+    private TransferProcessPolicyContext createMockTransferContext(String participantContextId) {
       TransferProcessPolicyContext context = mock(TransferProcessPolicyContext.class);
       ParticipantAgent agent =
           new ParticipantAgent(TEST_IDENTITY, Map.of("claim1", (Object) "value1"), Map.of());
@@ -261,6 +289,7 @@ class PolicyContextInputMapperTest {
               .consumerId(TEST_CONSUMER_ID)
               .contractSigningDate(TEST_SIGNING_DATE)
               .policy(Policy.Builder.newInstance().build())
+              .participantContextId(participantContextId)
               .build();
 
       when(context.scope()).thenReturn(TEST_SCOPE_TRANSFER);

@@ -36,6 +36,7 @@ package org.seamware.edc;
  * #L%
  */
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
@@ -154,11 +155,24 @@ public class TransferConfig {
 
   /**
    * @param address of the apisix admin-api
-   * @param token to be used when accessing the admin-api
+   * @param token to be used when accessing the admin-api. Grants write access to the gateway, so it
+   *     is kept out of every rendering of the configuration: the extension logs the config as JSON
+   *     at startup, and {@link TransferConfig} is {@code @ToString}.
    * @param httpsProxy address of an httpsProxy to be added to the routes. If null, no proxy will be
    *     used
    */
-  public record Apisix(String address, String token, String httpsProxy) {
+  public record Apisix(String address, @JsonIgnore String token, String httpsProxy) {
+
+    /** Stands in for the admin token wherever the configuration is printed. */
+    private static final String REDACTED_TOKEN = "***";
+
+    /** Redacts the admin token; the record default would print it verbatim. */
+    @Override
+    public String toString() {
+      return String.format(
+          "Apisix[address=%s, token=%s, httpsProxy=%s]",
+          address, token == null ? null : REDACTED_TOKEN, httpsProxy);
+    }
 
     public static class Builder {
       private String address;

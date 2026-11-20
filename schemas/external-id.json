@@ -7,6 +7,13 @@
   "properties": {
     "externalId": {
       "type": "string"
+    },
+    "participantContextIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Participant contexts (dataspaces) a ProductOffering is made in; \"*\" means all. Absent means the default context only."
     }
   },
   "required": ["externalId"]

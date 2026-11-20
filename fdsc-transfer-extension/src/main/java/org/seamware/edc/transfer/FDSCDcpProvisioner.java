@@ -52,6 +52,7 @@ import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.seamware.edc.HttpClientException;
+import org.seamware.edc.TransferContextResolver;
 import org.seamware.edc.apisix.ApisixAdminClient;
 import org.seamware.edc.apisix.Route;
 import org.seamware.edc.domain.ExtendableProductSpecification;
@@ -63,6 +64,8 @@ public class FDSCDcpProvisioner extends FDSCProvisioner {
   /** Resource type emitted by {@link FDSCDcpProviderResourceDefinitionGenerator}. */
   public static final String PROVISION_TYPE = "fdsc-dcp-provider";
 
+  private final TransferContextResolver transferContextResolver;
+
   public FDSCDcpProvisioner(
       Monitor monitor,
       ApisixAdminClient apisixAdminClient,
@@ -70,7 +73,8 @@ public class FDSCDcpProvisioner extends FDSCProvisioner {
       TransferMapper transferMapper,
       ObjectMapper objectMapper,
       DataPlaneStore dataPlaneStore,
-      EndpointDataReferenceService endpointDataReferenceService) {
+      EndpointDataReferenceService endpointDataReferenceService,
+      TransferContextResolver transferContextResolver) {
     super(
         monitor,
         apisixAdminClient,
@@ -79,6 +83,7 @@ public class FDSCDcpProvisioner extends FDSCProvisioner {
         copy(objectMapper),
         dataPlaneStore,
         endpointDataReferenceService);
+    this.transferContextResolver = transferContextResolver;
   }
 
   private static ObjectMapper copy(ObjectMapper objectMapper) {
@@ -125,6 +130,16 @@ public class FDSCDcpProvisioner extends FDSCProvisioner {
                   "Without an configured upstreamAddress, the service cannot be provisioned.");
             }
 
+            // same resolver the EDR service signs with, so route discovery and EDR issuer agree
+            Result<String> participantContextId =
+                transferContextResolver.resolve(provisionResource.getFlowId());
+            if (participantContextId.failed()) {
+              return StatusResult.failure(
+                  ResponseStatus.FATAL_ERROR,
+                  "Unable to resolve the participant context of the transfer: "
+                      + participantContextId.getFailureDetail());
+            }
+
             Result<DataAddress> endpointDataReference = endpointDataReference(provisionResource);
             if (endpointDataReference.failed()) {
               return StatusResult.failure(
@@ -135,7 +150,9 @@ public class FDSCDcpProvisioner extends FDSCProvisioner {
 
             Route serviceRoute =
                 transferMapper.toDcpServiceRoute(
-                    provisionResource.getFlowId(), upstreamAddress.get());
+                    provisionResource.getFlowId(),
+                    upstreamAddress.get(),
+                    participantContextId.getContent());
             apisixAdminClient.addRoute(serviceRoute);
 
             return StatusResult.success(

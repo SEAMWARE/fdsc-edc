@@ -61,6 +61,7 @@ import org.eclipse.edc.connector.dataplane.spi.provision.ProvisionerManager;
 import org.eclipse.edc.connector.dataplane.spi.provision.ResourceDefinitionGeneratorManager;
 import org.eclipse.edc.connector.dataplane.spi.store.DataPlaneStore;
 import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.participantcontext.spi.identity.ParticipantIdentityResolver;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.runtime.metamodel.annotation.Provider;
 import org.eclipse.edc.spi.monitor.Monitor;
@@ -74,6 +75,7 @@ import org.seamware.edc.ccs.CredentialsConfigServiceClient;
 import org.seamware.edc.dcp.JwksController;
 import org.seamware.edc.dcp.OidConfigController;
 import org.seamware.edc.pap.OdrlPapClient;
+import org.seamware.edc.store.OwnParticipantIdentity;
 import org.seamware.edc.store.TMFEdcMapper;
 import org.seamware.edc.store.TransferTypes;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
@@ -126,12 +128,13 @@ public class FDSCTransferControlExtension implements ServiceExtension {
 
   @Inject public ContractNegotiationStore contractNegotiationStore;
 
+  @Inject public TransferProcessStore transferProcessStore;
+
   private ApisixAdminClient apisixAdminClient;
   private CredentialsConfigServiceClient credentialsConfigServiceClient;
   private OdrlPapClient odrlPapClient;
   private TransferConfig transferConfig;
   private TransferMapper transferMapper;
-  private TransferProcessStore transferProcessStore;
 
   @Override
   public String name() {
@@ -187,9 +190,23 @@ public class FDSCTransferControlExtension implements ServiceExtension {
       String keyString = rsaJWK.toJSONString();
       vault.storeSecret(KEY_NAME, keyString);
     }
+    // looked up lazily: injecting the resolver closes a boot cycle via the participant-context core
+    OwnParticipantIdentity ownParticipantIdentity =
+        new OwnParticipantIdentity(
+            () -> context.getService(ParticipantIdentityResolver.class, true),
+            tmfConfig.getParticipantId(),
+            tmfConfig.getDefaultParticipantContextId());
+    TransferContextResolver transferContextResolver =
+        new TransferContextResolver(
+            transferProcessStore, tmfConfig.getDefaultParticipantContextId());
+
     webService.registerResource(new JwksController(vault, monitor));
     webService.registerResource(
-        new OidConfigController(monitor, transferConfig, tmfConfig.getParticipantId()));
+        new OidConfigController(
+            monitor,
+            transferConfig,
+            ownParticipantIdentity,
+            tmfConfig.getDefaultParticipantContextId()));
 
     FDSCDcpProviderResourceDefinitionGenerator fdscProviderResourceDefinitionGenerator =
         new FDSCDcpProviderResourceDefinitionGenerator(monitor);
@@ -198,7 +215,7 @@ public class FDSCTransferControlExtension implements ServiceExtension {
 
     EndpointDataReferenceService endpointDataReferenceService =
         new FDSCDcpEndpointDataReferenceService(
-            transferConfig, vault, tmfConfig.getParticipantId(), clock);
+            monitor, transferConfig, vault, transferContextResolver, ownParticipantIdentity, clock);
 
     FDSCDcpProvisioner fdscDcpProvisioner =
         new FDSCDcpProvisioner(
@@ -208,9 +225,11 @@ public class FDSCTransferControlExtension implements ServiceExtension {
             transferMapper(context),
             objectMapper,
             dataPlaneStore,
-            endpointDataReferenceService);
+            endpointDataReferenceService,
+            transferContextResolver);
     registerProvisioner(fdscDcpProvisioner);
     monitor.info("Registered DCP Provisioner.");
+    // context-less on purpose: the legacy signaling controller selects it in every context
     dataPlaneInstanceStore.save(
         DataPlaneInstance.Builder.newInstance()
             .id(DATAPLANE_DCP_ID)
@@ -329,7 +348,8 @@ public class FDSCTransferControlExtension implements ServiceExtension {
   @Provider
   public TransferMapper transferMapper(ServiceExtensionContext context) {
     if (transferMapper == null) {
-      transferMapper = new TransferMapper(transferConfig(context));
+      transferMapper =
+          new TransferMapper(transferConfig(context), tmfConfig.getDefaultParticipantContextId());
     }
     return transferMapper;
   }

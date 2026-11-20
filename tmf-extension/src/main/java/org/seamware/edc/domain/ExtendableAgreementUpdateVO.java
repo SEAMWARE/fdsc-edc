@@ -41,6 +41,9 @@ public class ExtendableAgreementUpdateVO extends AgreementUpdateVO {
   @JsonProperty("externalId")
   private String externalId;
 
+  @JsonProperty("participantContextId")
+  private String participantContextId;
+
   @JsonProperty("negotiationId")
   private String negotiationId;
 
@@ -59,6 +62,16 @@ public class ExtendableAgreementUpdateVO extends AgreementUpdateVO {
 
   public ExtendableAgreementUpdateVO setExternalId(String externalId) {
     this.externalId = externalId;
+    return this;
+  }
+
+  /** Participant context (dataspace) the entity belongs to; null means the default context. */
+  public String getParticipantContextId() {
+    return participantContextId;
+  }
+
+  public ExtendableAgreementUpdateVO setParticipantContextId(String participantContextId) {
+    this.participantContextId = participantContextId;
     return this;
   }
 }
