@@ -22,7 +22,7 @@
   - Otherwise the call passes only if `sub` == owner == `resource.getParticipantContextId()`.
   - **The new extension must call `authorizationService.addLookupFunction(EndpointDataReferenceEntry.class, ...)`.**
 - Scopes follow `prefix[:resource]:action`. `management-api:read` (no resource part means `*`) satisfies `management-api:edrs:read`, and admin ≥ write ≥ read (`ManagementApiScopes.READ/WRITE/ADMIN`).
-- Upstream has **no** EDR refresh: no `auto_refresh` and no `EdrService`. Those come from Tractus-X. The FDSC provider data plane (APISIX + JWT from `FDSCDcpEndpointDataReferenceService`) issues no refresh token either. So refresh has to be written here, and it can only work against data planes that put refresh metadata into the DataAddress.
+- Upstream has **no** EDR refresh: no `auto_refresh` and no `EdrService`. Those come from Tractus-X. The FDSC provider data plane (APISIX + JWT from `FDSCDcpEndpointDataReferenceService`) issues no refresh token either. The only known renewing data plane is Tractus-X (`https://w3id.org/tractusx/auth/` namespace, with a consumer-signed refresh call). So this plan ships a refresh extension point with a no-op default (Step 4) and no HTTP refresher.
 - Neither `edr-store-core` nor `edr-store-receiver` is in `controlplane-virtual-base-bom`. `controlplane-dcp/pom.xml` already declares both (and `edr-store-spi`) explicitly.
   - Upstream's v3 `JsonObjectFromEndpointDataReferenceEntryTransformer` lives in `edr-cache-api`, which is not on the classpath and does not output `participantContextId`. A new transformer is needed.
 
@@ -31,7 +31,7 @@
 ### Step 1: Add `edr-api-extension` module with ownership lookup and partition tests
 Create the new Maven module `edr-api-extension/`. Its package is `org.seamware.edc.edr`.
 - `pom.xml` (parent `fdsc-edc`). Dependencies, scope `provided` where the existing extensions do the same:
-  - `edr-store-spi`, `connector-participant-context-spi`, `web-spi`, `json-ld-spi`, `transform-spi`, `validator-spi`, plus the module that holds `org.eclipse.edc.api.auth.spi` (`AuthorizationService`, `RequiredScope`, `ManagementApiScopes`). Confirm the artifactId from the 0.18.1 sources; `auth-spi` or `management-api-authorization-spi` are likely.
+  - `edr-store-spi`, `connector-participant-context-spi`, `web-spi`, `json-ld-spi`, `transform-spi`, `validator-spi`, and `auth-spi`, which holds `org.eclipse.edc.api.auth.spi` (`AuthorizationService`, `RequiredScope`, `ManagementApiScopes`). The reviewer confirmed this artifact against the 0.18.1 sources.
   - Test dependencies: JUnit 5, `junit-jupiter-params`, Mockito, and `edr-store-core` for the real in-memory index.
 - Add `<module>edr-api-extension</module>` to the root `pom.xml` before the `controlplane-*` modules.
 - Add a dependency on `edr-api-extension` in `controlplane-dcp/pom.xml`, next to `participant-bootstrap-extension`. Do **not** add it to `controlplane-oid4vc` or `controlplane-tck`, which are classic mode.
@@ -72,7 +72,7 @@ In `edr-api-extension`, add `EdrApiV5Controller` with `@Path("/v5beta/participan
 - In `EdrManagementApiV5Extension`, inject `WebService`, `TypeTransformerRegistry`, `JsonObjectValidatorRegistry`, `JsonLd` and `TypeManager`. Register the controller with `webService.registerResource(ApiContext.MANAGEMENT, ...)` and the `JerseyJsonLdInterceptor` with `MANAGEMENT_SCOPE_V5` / `ManagementApiJsonSchema.V5.version()`, following the `AssetApiV5Extension` pattern. This may add `api-lib`/`management-api-lib` dependencies.
 - Tests:
   - `EdrApiV5ControllerTest` (Mockito) covers success and the 404/403 paths for each endpoint.
-  - A parameterized authorization matrix (`@MethodSource`) uses the real `AuthorizationServiceImpl` from `management-api-authorization` (test scope) with a `SecurityContext` whose `ParticipantPrincipal` has a given `sub` and scope. Cases:
+  - A parameterized authorization matrix (`@MethodSource`) uses the real `AuthorizationServiceImpl` (`org.eclipse.edc.api.authorization.service`) from `org.eclipse.edc:auth-authorization-oauth2-lib` (test scope; `management-api-authorization` only holds the extension that creates it) with a `SecurityContext` whose `ParticipantPrincipal` has a given `sub` and scope. Cases:
     - own context with read: 200
     - foreign context without admin: 403
     - foreign context with admin: 200
@@ -80,27 +80,25 @@ In `edr-api-extension`, add `EdrApiV5Controller` with `@Path("/v5beta/participan
   - Assert the `@RequiredScope` values on each method by reflection: read for query/GET, write for DELETE.
 - Acceptance: unit tests and spotless pass. The image builds. In the multi-dataspace compose stack, `POST .../v5beta/participants/dataspace-a/edrs/request` with an admin token returns `200 []`.
 
-### Step 4: Refresh expired EDR tokens when the data plane supports it
-Upstream EDC 0.18.1 has no refresh, and the FDSC/APISIX provider data plane issues no refresh tokens. So refresh is opt-in per DataAddress and must not affect the FDSC path. In `edr-api-extension`:
-- Add an `EdrTokenRefresher` interface, with `HttpEdrTokenRefresher` as the default implementation, registered as `@Provider(isDefault = true)` so a deployment can replace it.
-  - It refreshes only when the DataAddress carries `refreshEndpoint` **and** `refreshToken` (EDC namespace property names, as constants) **and** the access token is expired.
-  - Expiry comes from `expiresIn` (seconds) relative to the entry's `createdAt`, or from the JWT `exp` claim when the token parses as a JWT. Apply a configurable leeway (`edc.edr.refresh.leeway.seconds`, default constant, read in a small config record).
-  - The refresh is an RFC 6749 §6 `refresh_token` grant: POST a form to `refreshEndpoint`, using the runtime's `EdcHttpClient`. On success, build a DataAddress with the new `access_token` → `authorization`, `refresh_token` and `expires_in`, and persist it with `store.save(entry, newAddress)`.
-  - On failure, return the stored DataAddress unchanged and log a warning through `Monitor`.
-- `GET .../dataaddress` gets `@QueryParam("auto_refresh") @DefaultValue("true") boolean autoRefresh`. When the flag is true, it calls the refresher before returning.
-- Tests: `HttpEdrTokenRefresherTest`, parameterized over these cases:
-  - no refresh metadata: unchanged, no HTTP call
-  - not expired: unchanged
-  - expired with a 200 response: new token, `save` called
-  - expired with a 4xx/5xx response: unchanged
-  - The HTTP endpoint is a mock (OkHttp `MockWebServer` or a Mockito'd `EdcHttpClient`).
-  - Add a controller test that `auto_refresh=false` skips the refresher.
+### Step 4: Token-refresh extension point (no-op default)
+No data plane this project supports renews EDR tokens. Upstream EDC 0.18.1 has no refresh. The FDSC/APISIX provider data plane issues no refresh token. The only EDC-ecosystem data plane known to renew tokens is Tractus-X: it uses the `https://w3id.org/tractusx/auth/` namespace (`refreshEndpoint`, `refreshToken`, `expiresIn`, `refreshAudience`), and its refresh call needs an `Authorization` token signed by the consumer, not a bare RFC 6749 `refresh_token` grant. Writing an HTTP refresher for a contract nobody here runs would be speculative code that never fires, and it would also open the consumer controlplane to provider-chosen outbound URLs. So this step ships only the seam that the ticket's "if the data plane renews tokens" case needs. In `edr-api-extension`:
+- Add an `EdrTokenRefresher` interface: `DataAddress refreshIfNeeded(EndpointDataReferenceEntry entry, DataAddress current)`. The contract is that it returns the address to serve, persists any renewal itself, and returns `current` unchanged on failure.
+- Add `NoopEdrTokenRefresher`, which returns `current` unchanged and makes no outbound call. `EdrManagementApiV5Extension` provides it with `@Provider(isDefault = true)`, so a deployment with a renewing data plane can supply its own implementation from a separate extension.
+- `GET .../dataaddress` gets `@QueryParam("auto_refresh") @DefaultValue("true") boolean autoRefresh`, with the same name and default as the Tractus-X EDR API, so clients do not need to change if a real refresher is plugged in later. When the flag is true, the controller passes the resolved DataAddress through the refresher before it transforms it.
+- Write the rules a future non-default implementation must follow into the `EdrTokenRefresher` Javadoc (short) and into ADR-14 (in full):
+  - Implement a named, existing contract, such as the Tractus-X one above, not an invented one.
+  - Store an absolute expiry (`expiresAt = now + expiresIn`) in the DataAddress when it saves a renewal. `EndpointDataReferenceStoreImpl.save` keeps the entry's original `createdAt`, so expiry measured from `createdAt` would treat every refreshed token as already expired.
+  - Only call a refresh endpoint that has the same scheme, host and port as the EDR `endpoint`, or one on a configured allow-list. The URL comes from the provider, and an unchecked one is a blind-SSRF vector from the controlplane's network position.
+- Tests:
+  - `NoopEdrTokenRefresherTest` checks that it returns the same instance for an address with and without (Tractus-X-style) refresh properties. Parameterize this with `@MethodSource`.
+  - A controller test, parameterized over `auto_refresh` = true/false, uses a Mockito `EdrTokenRefresher`. It checks that the refresher is called exactly when the flag is true, and that the response is built from the address the refresher returned.
+- Acceptance: `mvn -pl edr-api-extension test` and spotless pass. There is no new outbound HTTP code and no new configuration property.
 
 ### Step 5: In-process two-context EDR isolation test
 In `edr-api-extension/src/test`, add `EdrTwoContextIsolationTest`, which reproduces the ticket's acceptance criterion without a wallet or APISIX.
 - Wire real objects:
   - the real `EndpointDataReferenceStoreReceiver` (from `edr-store-receiver`, test scope) feeding a real `EndpointDataReferenceStoreImpl` (in-memory index plus an in-memory map cache);
-  - the real `AuthorizationServiceImpl` with the Step 1 lookup;
+  - the real `AuthorizationServiceImpl` (test-scope `auth-authorization-oauth2-lib`, as in Step 3) with the Step 1 lookup;
   - the `EdrApiV5Controller`.
 - Publish CONSUMER `TransferProcessStarted` events for `dataspace-a` and `dataspace-b`. Each event's DataAddress has `endpoint`, `authorization` and `endpointType`; the receiver's `ContractAgreementService`/`PolicyArchive` collaborators are mocked.
 - Assert:
@@ -118,10 +116,10 @@ In `edr-api-extension/src/test`, add `EdrTwoContextIsolationTest`, which reprodu
     - the required scopes (`management-api:read` for query/GET, `:write` for DELETE, `:admin` for foreign contexts);
     - partitioning: entries carry the transfer's `participantContextId` and are only visible to that context;
     - the `dataaddress` response shape (`endpoint`, `authorization`, `endpointType`);
-    - `auto_refresh` semantics: only for data planes that return `refreshEndpoint`/`refreshToken`, and a no-op for FDSC/APISIX EDRs;
+    - `auto_refresh` semantics: the parameter is accepted (default `true`), but the default refresher is a no-op because no supported data plane renews tokens. A deployment can plug in its own `EdrTokenRefresher`;
     - a curl example.
   - Remove "EDR retrieval" from any out-of-scope wording.
-- `docs/multi-dataspace-design.md`: add ADR-14, "EDRs exposed per participant context through v5beta". It records that there is no upstream v5 resource, the reuse of the receiver-stamped `participantContextId`, the `AuthorizationService` lookup, and refresh as opt-in.
+- `docs/multi-dataspace-design.md`: add ADR-14, "EDRs exposed per participant context through v5beta". It records that there is no upstream v5 resource, the reuse of the receiver-stamped `participantContextId`, the `AuthorizationService` lookup, and the refresh decision. That decision is a no-op default behind the `EdrTokenRefresher` extension point rather than an HTTP refresher, because FDSC/APISIX issues no refresh tokens and the only renewing data plane (Tractus-X) uses its own consumer-signed contract. It also lists the rules from Step 4 that any future implementation must follow: absolute `expiresAt`, and a same-origin or allow-listed refresh endpoint to prevent SSRF.
 - `scripts/verify-multi-dataspace.sh`: add `verify_edrs()`. Update the header comment so EDR retrieval is in scope for auth and isolation, while the end-to-end STARTED path is covered by `EdrTwoContextIsolationTest` and the FIWARE Data Space Connector ITs (`dsp_dcp_flow`, `dsp_advanced_policy` Scenario C). Use the existing `expect_status`/`token` helpers and named HTTP constants. Checks:
   - admin `POST .../{A,B}/edrs/request {}`: 200, a JSON array;
   - non-admin B `POST .../B/edrs/request`: 200;
