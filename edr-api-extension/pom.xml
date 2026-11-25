@@ -71,6 +71,12 @@
         </dependency>
         <dependency>
             <groupId>org.eclipse.edc</groupId>
+            <artifactId>edr-store-receiver</artifactId>
+            <version>${edc.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
             <artifactId>query-lib</artifactId>
             <version>${edc.version}</version>
             <scope>test</scope>
