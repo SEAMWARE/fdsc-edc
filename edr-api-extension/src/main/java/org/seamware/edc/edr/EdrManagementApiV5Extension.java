@@ -16,6 +16,10 @@
  */
 package org.seamware.edc.edr;
 
+import static org.eclipse.edc.api.management.ManagementApi.MANAGEMENT_API_CONTEXT;
+
+import jakarta.json.Json;
+import java.util.Map;
 import org.eclipse.edc.api.auth.spi.AuthorizationService;
 import org.eclipse.edc.edr.spi.store.EndpointDataReferenceStore;
 import org.eclipse.edc.edr.spi.types.EndpointDataReferenceEntry;
@@ -23,6 +27,8 @@ import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
+import org.seamware.edc.edr.transform.JsonObjectFromEndpointDataReferenceEntryTransformer;
 
 /** Exposes the EDR store through the participant-context scoped management API (v5beta). */
 @Extension(EdrManagementApiV5Extension.NAME)
@@ -34,6 +40,8 @@ public class EdrManagementApiV5Extension implements ServiceExtension {
 
   @Inject private AuthorizationService authorizationService;
 
+  @Inject private TypeTransformerRegistry transformerRegistry;
+
   @Override
   public String name() {
     return NAME;
@@ -43,5 +51,12 @@ public class EdrManagementApiV5Extension implements ServiceExtension {
   public void initialize(ServiceExtensionContext context) {
     authorizationService.addLookupFunction(
         EndpointDataReferenceEntry.class, new EdrOwnershipLookup(endpointDataReferenceStore));
+    // DataAddress -> JsonObject is already registered in this context by
+    // management-api-configuration.
+    transformerRegistry
+        .forContext(MANAGEMENT_API_CONTEXT)
+        .register(
+            new JsonObjectFromEndpointDataReferenceEntryTransformer(
+                Json.createBuilderFactory(Map.of())));
   }
 }

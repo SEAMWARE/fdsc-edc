@@ -16,35 +16,45 @@
  */
 package org.seamware.edc.edr;
 
+import static org.eclipse.edc.api.management.ManagementApi.MANAGEMENT_API_CONTEXT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import org.eclipse.edc.api.auth.spi.AuthorizationService;
 import org.eclipse.edc.edr.spi.store.EndpointDataReferenceStore;
 import org.eclipse.edc.edr.spi.types.EndpointDataReferenceEntry;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.seamware.edc.edr.transform.JsonObjectFromEndpointDataReferenceEntryTransformer;
 
 @ExtendWith(MockitoExtension.class)
 class EdrManagementApiV5ExtensionTest {
 
   @Mock private EndpointDataReferenceStore endpointDataReferenceStore;
   @Mock private AuthorizationService authorizationService;
+  @Mock private TypeTransformerRegistry transformerRegistry;
   @InjectMocks private EdrManagementApiV5Extension extension;
 
   @Test
-  void initialize_registersEdrEntryOwnershipLookup() {
+  void initialize_registersEdrEntryOwnershipLookupAndTransformer() {
+    var managementApiRegistry = mock(TypeTransformerRegistry.class);
+    when(transformerRegistry.forContext(MANAGEMENT_API_CONTEXT)).thenReturn(managementApiRegistry);
+
     extension.initialize(mock(ServiceExtensionContext.class));
 
     verify(authorizationService)
         .addLookupFunction(eq(EndpointDataReferenceEntry.class), any(EdrOwnershipLookup.class));
+    verify(managementApiRegistry)
+        .register(any(JsonObjectFromEndpointDataReferenceEntryTransformer.class));
   }
 
   @Test
