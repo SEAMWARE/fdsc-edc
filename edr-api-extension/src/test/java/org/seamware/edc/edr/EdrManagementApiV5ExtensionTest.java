@@ -19,6 +19,7 @@ package org.seamware.edc.edr;
 import static org.eclipse.edc.api.management.ManagementApi.MANAGEMENT_API_CONTEXT;
 import static org.eclipse.edc.web.spi.configuration.ApiContext.MANAGEMENT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -53,6 +54,7 @@ class EdrManagementApiV5ExtensionTest {
   @Mock private JsonObjectValidatorRegistry validatorRegistry;
   @Mock private JsonLd jsonLd;
   @Mock private TypeManager typeManager;
+  @Mock private EdrTokenRefresher tokenRefresher;
   @InjectMocks private EdrManagementApiV5Extension extension;
 
   @Test
@@ -72,6 +74,11 @@ class EdrManagementApiV5ExtensionTest {
     verify(webService)
         .registerDynamicResource(
             eq(MANAGEMENT), eq(EdrApiV5Controller.class), any(JerseyJsonLdInterceptor.class));
+  }
+
+  @Test
+  void noopEdrTokenRefresher_isDefault() {
+    assertInstanceOf(NoopEdrTokenRefresher.class, extension.noopEdrTokenRefresher());
   }
 
   @Test

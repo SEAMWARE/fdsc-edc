@@ -30,6 +30,7 @@ import org.eclipse.edc.edr.spi.types.EndpointDataReferenceEntry;
 import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
+import org.eclipse.edc.runtime.metamodel.annotation.Provider;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
 import org.eclipse.edc.spi.types.TypeManager;
@@ -59,6 +60,8 @@ public class EdrManagementApiV5Extension implements ServiceExtension {
 
   @Inject private TypeManager typeManager;
 
+  @Inject private EdrTokenRefresher tokenRefresher;
+
   @Override
   public String name() {
     return NAME;
@@ -82,6 +85,7 @@ public class EdrManagementApiV5Extension implements ServiceExtension {
             managementApiTransformerRegistry,
             validatorRegistry,
             authorizationService,
+            tokenRefresher,
             context.getMonitor()));
     webService.registerDynamicResource(
         MANAGEMENT,
@@ -93,5 +97,11 @@ public class EdrManagementApiV5Extension implements ServiceExtension {
             MANAGEMENT_SCOPE_V5,
             validatorRegistry,
             ManagementApiJsonSchema.V5.version()));
+  }
+
+  /** No-op default; a deployment with a token-renewing data plane provides its own refresher. */
+  @Provider(isDefault = true)
+  public EdrTokenRefresher noopEdrTokenRefresher() {
+    return new NoopEdrTokenRefresher();
   }
 }

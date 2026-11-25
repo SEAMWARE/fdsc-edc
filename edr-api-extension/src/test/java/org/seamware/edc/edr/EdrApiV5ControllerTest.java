@@ -25,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -58,12 +59,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class EdrApiV5ControllerTest {
 
   private static final String CONTEXT_ID = "dataspace-a";
   private static final String TP_ID = "tp-1";
+  private static final boolean AUTO_REFRESH = true;
   private static final String ASSET_FILTER_PROPERTY = "assetId";
   private static final String ASSET_ID = "asset-1";
   private static final String DATA_ADDRESS_TYPE = "HttpData";
@@ -78,6 +81,7 @@ class EdrApiV5ControllerTest {
   private final TypeTransformerRegistry transformerRegistry = mock();
   private final JsonObjectValidatorRegistry validatorRegistry = mock();
   private final AuthorizationService authorizationService = mock();
+  private final EdrTokenRefresher tokenRefresher = mock();
   private final SecurityContext securityContext = mock();
   private EdrApiV5Controller controller;
 
@@ -89,6 +93,7 @@ class EdrApiV5ControllerTest {
             transformerRegistry,
             validatorRegistry,
             authorizationService,
+            tokenRefresher,
             mock(Monitor.class));
   }
 
@@ -154,16 +159,39 @@ class EdrApiV5ControllerTest {
     verifyNoInteractions(store);
   }
 
-  @Test
-  void getDataAddress_returnsTransformedDataAddress() {
+  @ParameterizedTest(name = "auto_refresh={0}")
+  @ValueSource(booleans = {true, false})
+  void getDataAddress_servesRefresherResultOnlyWhenAutoRefresh(boolean autoRefresh) {
     authorizeEntry(ServiceResult.success());
-    var dataAddress = DataAddress.Builder.newInstance().type(DATA_ADDRESS_TYPE).build();
-    var dataAddressJson = Json.createObjectBuilder().add("type", DATA_ADDRESS_TYPE).build();
-    when(store.resolveByTransferProcess(TP_ID)).thenReturn(StoreResult.success(dataAddress));
-    when(transformerRegistry.transform(dataAddress, JsonObject.class))
-        .thenReturn(Result.success(dataAddressJson));
+    var entry = entry();
+    var cached = DataAddress.Builder.newInstance().type(DATA_ADDRESS_TYPE).build();
+    var refreshed = DataAddress.Builder.newInstance().type(DATA_ADDRESS_TYPE).build();
+    var served = autoRefresh ? refreshed : cached;
+    var servedJson = Json.createObjectBuilder().add("type", DATA_ADDRESS_TYPE).build();
+    when(store.resolveByTransferProcess(TP_ID)).thenReturn(StoreResult.success(cached));
+    when(store.findById(TP_ID)).thenReturn(entry);
+    when(tokenRefresher.refreshIfNeeded(entry, cached)).thenReturn(refreshed);
+    when(transformerRegistry.transform(served, JsonObject.class))
+        .thenReturn(Result.success(servedJson));
 
-    assertSame(dataAddressJson, controller.getEdrDataAddressV5(CONTEXT_ID, TP_ID, securityContext));
+    var result = controller.getEdrDataAddressV5(CONTEXT_ID, TP_ID, autoRefresh, securityContext);
+
+    assertSame(servedJson, result);
+    verify(tokenRefresher, times(autoRefresh ? 1 : 0)).refreshIfNeeded(any(), any());
+  }
+
+  @Test
+  void getDataAddress_entryVanishedBeforeRefresh_throwsNotFound() {
+    authorizeEntry(ServiceResult.success());
+    when(store.resolveByTransferProcess(TP_ID))
+        .thenReturn(
+            StoreResult.success(DataAddress.Builder.newInstance().type(DATA_ADDRESS_TYPE).build()));
+    when(store.findById(TP_ID)).thenReturn(null);
+
+    assertThrows(
+        ObjectNotFoundException.class,
+        () -> controller.getEdrDataAddressV5(CONTEXT_ID, TP_ID, AUTO_REFRESH, securityContext));
+    verifyNoInteractions(tokenRefresher);
   }
 
   @Test
@@ -173,7 +201,7 @@ class EdrApiV5ControllerTest {
 
     assertThrows(
         ObjectNotFoundException.class,
-        () -> controller.getEdrDataAddressV5(CONTEXT_ID, TP_ID, securityContext));
+        () -> controller.getEdrDataAddressV5(CONTEXT_ID, TP_ID, AUTO_REFRESH, securityContext));
   }
 
   @Test
@@ -198,7 +226,7 @@ class EdrApiV5ControllerTest {
 
   static Stream<Arguments> entryAuthorizationFailures() {
     Consumer<EdrApiV5Controller> getDataAddress =
-        c -> c.getEdrDataAddressV5(CONTEXT_ID, TP_ID, null);
+        c -> c.getEdrDataAddressV5(CONTEXT_ID, TP_ID, AUTO_REFRESH, null);
     Consumer<EdrApiV5Controller> delete = c -> c.removeEdrV5(CONTEXT_ID, TP_ID, null);
     return Stream.of(
         Arguments.of(
