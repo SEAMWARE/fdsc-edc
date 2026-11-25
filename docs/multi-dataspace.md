@@ -605,8 +605,8 @@ EDR (data plane endpoint and access token) under the transfer process id. The
   or completed. The EDR stays readable as long as the transfer is STARTED, even
   after its token expired: re-start the transfer for a fresh token.
 - **Entries** (`POST .../request`) list `@id` (the transfer process id),
-  `transferProcessId`, `assetId`, `agreementId`, `providerId`, `createdAt` and
-  `participantContextId`.
+  `transferProcessId`, `assetId`, `agreementId`, `providerId`,
+  `contractNegotiationId` (when known), `createdAt` and `participantContextId`.
 - **`dataaddress`** returns the DataAddress to call the provider with: `endpoint`
   (the URL), `authorization` (the bearer token) and `endpointType`, plus
   provider-specific properties such as `authType`.

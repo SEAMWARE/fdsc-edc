@@ -94,7 +94,7 @@ public class EdrApiV5Controller {
     this.monitor = monitor;
   }
 
-  /** Lists the context's EDR entries; an absent or empty body returns all of them. */
+  /** Lists the context's EDR entries; an absent body or a criteria-less QuerySpec returns all. */
   @POST
   @Path("/request")
   @RequiredScope(EdrApiScopes.READ)
