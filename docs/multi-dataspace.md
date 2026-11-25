@@ -155,8 +155,9 @@ The verifier prints one line per check and exits non-zero if any fails. It
 covers: both contexts exist and are listed by the management API; both see the
 shared product; a token scoped to B may read it in B but not through A; DSP
 profile routing answers 401/404 as described above; version metadata is per
-context and absent at the root; and TMForum returns the right offerings per
-context.
+context and absent at the root; TMForum returns the right offerings per
+context; and the EDR endpoints enforce scopes and context isolation. No transfer
+starts in this stack (that needs a DCP wallet), so the EDR listings are empty.
 
 ### The seeded catalogue
 
@@ -539,6 +540,9 @@ and v4 APIs are gone from the DCP image. Resources are scoped by context:
 <web.http.management.path>/v5beta/participants/<context id>/assets/request       # query assets
 <web.http.management.path>/v5beta/participants/<context id>/assets/<asset id>
 <web.http.management.path>/v5beta/participants/<context id>/contractnegotiations/...
+<web.http.management.path>/v5beta/participants/<context id>/edrs/request          # query EDRs
+<web.http.management.path>/v5beta/participants/<context id>/edrs/<transfer id>/dataaddress
+<web.http.management.path>/v5beta/participants/<context id>/edrs/<transfer id>    # DELETE
 ```
 
 There is no collection `GET` on assets; query with `POST .../assets/request` and
@@ -572,6 +576,52 @@ audience check. The claims used are:
    `admin`) and a *hardcoded claim* mapper that sets `sub` to the context id.
    Keycloak otherwise puts the service account's user id into `sub`, which names
    no context, and every request gets 401.
+
+### Endpoint data references (EDRs)
+
+When a consumer transfer reaches STARTED, the connector stores the provider's
+EDR (data plane endpoint and access token) under the transfer process id. The
+`edrs` resource reads it back:
+
+| Call | Scope | Returns |
+|---|---|---|
+| `POST .../edrs/request` with a QuerySpec (`{}` for all) | `management-api:read` | the context's EDR entries |
+| `GET .../edrs/<transfer id>/dataaddress` | `management-api:read` | the EDR itself |
+| `DELETE .../edrs/<transfer id>` | `management-api:write` | 204; the entry and its token are removed |
+
+`management-api:admin` reaches the EDRs of every context; the narrower
+`management-api:edrs:read|write` scopes work as well.
+
+- **One context, one set of EDRs.** Each entry carries the `participantContextId`
+  of the transfer it was stored for, and only that context sees it. Another
+  context's EDR gives 403 through its own path and 404 through yours; an
+  unknown transfer id gives 404.
+- **Lifetime.** The entry disappears when the transfer is terminated, suspended
+  or completed. The EDR stays readable as long as the transfer is STARTED, even
+  after its token expired: re-start the transfer for a fresh token.
+- **Entries** (`POST .../request`) list `@id` (the transfer process id),
+  `transferProcessId`, `assetId`, `agreementId`, `providerId`, `createdAt` and
+  `participantContextId`.
+- **`dataaddress`** returns the DataAddress to call the provider with: `endpoint`
+  (the URL), `authorization` (the bearer token) and `endpointType`, plus
+  provider-specific properties such as `authType`.
+- **`auto_refresh`** (query parameter of `dataaddress`, default `true`) is
+  accepted for compatibility with the Tractus-X EDR API, but the default
+  refresher does nothing: no data plane this connector supports renews tokens.
+  A deployment with a renewing data plane can register its own
+  `EdrTokenRefresher` from an extension
+  ([ADR-14](multi-dataspace-design.md#adr-14--edrs-exposed-per-participant-context-through-v5beta)).
+
+```bash
+# the transfer ids of dataspace-b's EDRs
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{}' "$MANAGEMENT/v5beta/participants/dataspace-b/edrs/request" | jq -r '.[]."@id"'
+
+# endpoint and token of one transfer, then call the provider's data plane with them
+EDR=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  "$MANAGEMENT/v5beta/participants/dataspace-b/edrs/$TRANSFER_ID/dataaddress")
+curl -H "Authorization: Bearer $(echo "$EDR" | jq -r .authorization)" "$(echo "$EDR" | jq -r .endpoint)"
+```
 
 ## DCP scopes and trusted issuers
 
@@ -700,6 +750,8 @@ to whichever context you name as the default.
   lists the offerings made in that dataspace (the untagged ones of the default
   context are not included, see
   [the demo](#see-it-running-the-two-dataspace-demo)).
+- `POST <management>/v5beta/participants/<context id>/edrs/request` with a
+  token of that context returns 200 and with a token of another context 403.
 
 [`scripts/verify-multi-dataspace.sh`](../scripts/verify-multi-dataspace.sh) runs
 these checks and more against the compose stack; see

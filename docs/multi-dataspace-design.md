@@ -600,6 +600,14 @@ refresher is plugged in, with no change on their side. The cost is that a
 consumer of a Tractus-X provider receives the cached token and has to re-start
 the transfer when it expires.
 
+Two layers test this. `EdrTwoContextIsolationTest` runs EDC's real
+`EndpointDataReferenceStoreReceiver`, store and `AuthorizationServiceImpl` and
+feeds them STARTED and TERMINATED transfer events of two contexts. It checks
+that each context lists and reads only its own EDR, that a foreign one gives 403
+or 404, and that a terminated transfer's EDR is gone. `verify-multi-dataspace.sh`
+checks the same scope and context rules against the running image. No transfer
+starts in that stack, so the listings it sees are empty.
+
 ---
 
 ## Appendix A — Measured TMForum behaviour

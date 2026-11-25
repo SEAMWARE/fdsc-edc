@@ -106,6 +106,10 @@ Provides test utilities for conformance testing in a FIWARE Dataspace setup.
 
 Seeds EDC participant contexts from `fdsc.participants.*` at startup, one per dataspace, each with its own DID, STS client and dataspace profiles. Only `controlplane-dcp` contains it; see [docs/multi-dataspace.md](docs/multi-dataspace.md).
 
+#### edr-api-extension
+
+Serves consumer EDRs per participant context at `/v5beta/participants/<context id>/edrs` (query, `dataaddress`, delete), with the v5beta OAuth2 scopes and ownership checks. Only `controlplane-dcp` contains it; see [docs/multi-dataspace.md](docs/multi-dataspace.md#endpoint-data-references-edrs).
+
 #### controlplane-oid4vc / controlplane-dcp
 
 Assembly modules that combine the above extensions into deployable shaded JARs and Docker images. Each bundles the full EDC controlplane stack (DSP protocol, management API, EDR store, HashiCorp Vault integration) with the appropriate authentication extension.
