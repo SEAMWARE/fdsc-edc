@@ -31,11 +31,17 @@
 #   - DSP version metadata at <protocol>/{ctx}/.well-known/dspace-version,
 #     and none at the root <protocol>/.well-known/dspace-version (guards
 #     against dsp-version-http-api returning to the virtual assembly);
-#   - TMForum seed: offerings per context with participantContextIds=X,*.
-# A full DSP catalog exchange needs a DCP wallet and is out of scope. So is EDR
-# isolation between dataspaces: this stack carries no APISIX and runs with
-# fdscTransfer.enabled=false. EdrIsRejectedByForeignRouteTest covers it instead
-# (ADR-13 of docs/multi-dataspace-design.md).
+#   - TMForum seed: offerings per context with participantContextIds=X,*;
+#   - EDR retrieval (management API v5 edrs resource): scopes, token and
+#     context isolation of query, dataaddress and delete (ADR-14).
+# A full DSP catalog exchange needs a DCP wallet and is out of scope, so no
+# transfer reaches STARTED here and the EDR checks only see empty listings and
+# unknown ids. The STARTED path is covered by EdrTwoContextIsolationTest and by
+# the FIWARE Data Space Connector ITs (dsp_dcp_flow, dsp_advanced_policy
+# Scenario C). EDR token isolation at the gateway is out of scope too: this
+# stack carries no APISIX and runs with fdscTransfer.enabled=false.
+# EdrIsRejectedByForeignRouteTest covers it instead (ADR-13 of
+# docs/multi-dataspace-design.md).
 #
 # Management tokens are RS256 JWTs signed with SIGNING_KEY_FILE, whose JWKS the
 # controlplane trusts. Requires curl, jq and openssl. Exits non-zero if any
@@ -88,6 +94,7 @@ OFFER_SHARED_B="MDS-OFFER-SHARED-B"
 OFFER_A_ONLY="MDS-OFFER-A-ONLY"
 OFFER_ALL="MDS-OFFER-ALL"
 OFFER_LEGACY="MDS-OFFER-LEGACY"
+UNKNOWN_TRANSFER="mds-unknown-transfer"
 
 HTTP_OK=200
 HTTP_UNAUTHORIZED=401
@@ -266,6 +273,35 @@ EOF
   fi
 }
 
+verify_edrs() {
+  log "--- Management API: EDRs"
+  for context in "$CONTEXT_A" "$CONTEXT_B"; do
+    if expect_status "admin queries EDRs of ${context}" "$HTTP_OK" \
+      POST "${PARTICIPANTS_API}/${context}/edrs/request" "$ADMIN_TOKEN" "$QUERY_SPEC"; then
+      expect_body "EDRs of ${context} are a JSON array" 'type == "array"'
+    fi
+  done
+  expect_status "non-admin ${CONTEXT_B} queries its own EDRs" "$HTTP_OK" \
+    POST "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/request" "$CONTEXT_B_TOKEN" "$QUERY_SPEC" || true
+  expect_status "non-admin ${CONTEXT_B} cannot query EDRs of ${CONTEXT_A}" "$HTTP_FORBIDDEN" \
+    POST "${PARTICIPANTS_API}/${CONTEXT_A}/edrs/request" "$CONTEXT_B_TOKEN" "$QUERY_SPEC" || true
+
+  # An unknown id in a foreign context is denied either way: 403 or 404, whichever check fails first.
+  status=$(request GET "${PARTICIPANTS_API}/${CONTEXT_A}/edrs/${UNKNOWN_TRANSFER}/dataaddress" \
+    "$CONTEXT_B_TOKEN" "") || true
+  if [ "$status" = "$HTTP_FORBIDDEN" ] || [ "$status" = "$HTTP_NOT_FOUND" ]; then
+    pass "non-admin ${CONTEXT_B} cannot read an EDR through ${CONTEXT_A} (${status})"
+  else
+    fail "non-admin ${CONTEXT_B} reads an EDR through ${CONTEXT_A}: expected ${HTTP_FORBIDDEN} or ${HTTP_NOT_FOUND}, got ${status}: $(head -c 300 "$RESPONSE_FILE")"
+  fi
+  expect_status "unknown EDR in ${CONTEXT_B} is not found" "$HTTP_NOT_FOUND" \
+    GET "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/${UNKNOWN_TRANSFER}/dataaddress" "$CONTEXT_B_TOKEN" "" || true
+  expect_status "read-only ${CONTEXT_B} token cannot delete an EDR" "$HTTP_FORBIDDEN" \
+    DELETE "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/${UNKNOWN_TRANSFER}" "$CONTEXT_B_TOKEN" "" || true
+  expect_status "EDR query without token is rejected" "$HTTP_UNAUTHORIZED" \
+    POST "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/request" "" "$QUERY_SPEC" || true
+}
+
 log "=== Multi-dataspace verification ==="
 ADMIN_TOKEN=$(token "$ADMIN_SUBJECT" "$ADMIN_SCOPE")
 CONTEXT_B_TOKEN=$(token "$CONTEXT_B" "$READ_SCOPE")
@@ -275,6 +311,7 @@ verify_assets || true
 verify_dsp_routing
 verify_dsp_versions
 verify_tmforum_seed || true
+verify_edrs
 
 if [ "$failures" -gt 0 ]; then
   log "=== ${failures} of ${checks} checks FAILED ==="
