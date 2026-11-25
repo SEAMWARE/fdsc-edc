@@ -26,11 +26,13 @@ import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.SecurityContext;
 import org.eclipse.edc.api.auth.spi.AuthorizationService;
@@ -44,9 +46,11 @@ import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.result.ServiceResult;
+import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
 import org.eclipse.edc.validator.spi.JsonObjectValidatorRegistry;
 import org.eclipse.edc.web.spi.exception.InvalidRequestException;
+import org.eclipse.edc.web.spi.exception.ObjectNotFoundException;
 import org.eclipse.edc.web.spi.exception.ValidationFailureException;
 import org.eclipse.edc.web.spi.validation.SchemaType;
 
@@ -63,11 +67,15 @@ public class EdrApiV5Controller {
   static final String BASE_PATH = "/v5beta/participants/{participantContextId}/edrs";
   static final String PARTICIPANT_CONTEXT_ID_PARAM = "participantContextId";
   static final String TRANSFER_PROCESS_ID_PARAM = "transferProcessId";
+  // Same name and default as the Tractus-X EDR API, so clients keep working with a real refresher.
+  static final String AUTO_REFRESH_PARAM = "auto_refresh";
+  static final String AUTO_REFRESH_DEFAULT = "true";
 
   private final EndpointDataReferenceStore store;
   private final TypeTransformerRegistry transformerRegistry;
   private final JsonObjectValidatorRegistry validatorRegistry;
   private final AuthorizationService authorizationService;
+  private final EdrTokenRefresher tokenRefresher;
   private final Monitor monitor;
 
   /** Expects the {@code management-api} transformer context. */
@@ -76,11 +84,13 @@ public class EdrApiV5Controller {
       TypeTransformerRegistry managementApiTransformerRegistry,
       JsonObjectValidatorRegistry validatorRegistry,
       AuthorizationService authorizationService,
+      EdrTokenRefresher tokenRefresher,
       Monitor monitor) {
     this.store = store;
     this.transformerRegistry = managementApiTransformerRegistry;
     this.validatorRegistry = validatorRegistry;
     this.authorizationService = authorizationService;
+    this.tokenRefresher = tokenRefresher;
     this.monitor = monitor;
   }
 
@@ -116,19 +126,26 @@ public class EdrApiV5Controller {
         .collect(toJsonArray());
   }
 
-  /** Returns the cached EDR DataAddress (endpoint, authorization, ...) of a transfer process. */
+  /**
+   * Returns the cached EDR DataAddress (endpoint, authorization, ...) of a transfer process, passed
+   * through the {@link EdrTokenRefresher} unless {@code auto_refresh=false}.
+   */
   @GET
   @Path("/{transferProcessId}/dataaddress")
   @RequiredScope(EdrApiScopes.READ)
   public JsonObject getEdrDataAddressV5(
       @PathParam(PARTICIPANT_CONTEXT_ID_PARAM) String participantContextId,
       @PathParam(TRANSFER_PROCESS_ID_PARAM) String transferProcessId,
+      @QueryParam(AUTO_REFRESH_PARAM) @DefaultValue(AUTO_REFRESH_DEFAULT) boolean autoRefresh,
       @Context SecurityContext securityContext) {
     authorizeEntry(securityContext, participantContextId, transferProcessId);
 
     var dataAddress =
         ServiceResult.from(store.resolveByTransferProcess(transferProcessId))
             .orElseThrow(exceptionMapper(EndpointDataReferenceEntry.class, transferProcessId));
+    if (autoRefresh) {
+      dataAddress = refresh(transferProcessId, dataAddress);
+    }
     return transformerRegistry
         .transform(dataAddress, JsonObject.class)
         .orElseThrow(failure -> new EdcException(failure.getFailureDetail()));
@@ -146,6 +163,15 @@ public class EdrApiV5Controller {
 
     ServiceResult.from(store.delete(transferProcessId))
         .orElseThrow(exceptionMapper(EndpointDataReferenceEntry.class, transferProcessId));
+  }
+
+  private DataAddress refresh(String transferProcessId, DataAddress current) {
+    var entry = store.findById(transferProcessId);
+    if (entry == null) {
+      // Deleted between authorization and resolution, e.g. by a concurrent transfer termination.
+      throw new ObjectNotFoundException(EndpointDataReferenceEntry.class, transferProcessId);
+    }
+    return tokenRefresher.refreshIfNeeded(entry, current);
   }
 
   private void authorizeEntry(

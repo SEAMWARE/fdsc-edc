@@ -69,6 +69,7 @@ class EdrApiV5AuthorizationTest {
   private static final String DATA_ADDRESS_TYPE = "HttpData";
   private static final String ID_KEY = "id";
   private static final String QUERY = "queryEdrsV5";
+  private static final boolean AUTO_REFRESH = true;
   private static final String GET_DATA_ADDRESS = "getEdrDataAddressV5";
   private static final String DELETE = "removeEdrV5";
   private static final Set<String> KNOWN_CONTEXTS = Set.of(CONTEXT_A, CONTEXT_B);
@@ -121,6 +122,7 @@ class EdrApiV5AuthorizationTest {
             transformerRegistry,
             mock(JsonObjectValidatorRegistry.class),
             authorizationService,
+            new NoopEdrTokenRefresher(),
             mock(Monitor.class));
   }
 
@@ -158,7 +160,9 @@ class EdrApiV5AuthorizationTest {
         switch (endpoint) {
           case QUERY -> () -> controller.queryEdrsV5(pathContext, null, securityContext);
           case GET_DATA_ADDRESS ->
-              () -> controller.getEdrDataAddressV5(pathContext, transferProcessId, securityContext);
+              () ->
+                  controller.getEdrDataAddressV5(
+                      pathContext, transferProcessId, AUTO_REFRESH, securityContext);
           case DELETE ->
               () -> controller.removeEdrV5(pathContext, transferProcessId, securityContext);
           default -> throw new IllegalArgumentException(endpoint);
