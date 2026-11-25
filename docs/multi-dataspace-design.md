@@ -25,6 +25,7 @@ this document.
 | [ADR-11](#adr-11--virtual-dsp-assembly-explicit-callback-address-no-root-version-endpoint) | Virtual DSP assembly: explicit callback address, no root version endpoint |
 | [ADR-12](#adr-12--test-extension-stays-out-of-controlplane-dcp) | `test-extension` stays out of `controlplane-dcp` |
 | [ADR-13](#adr-13--edr-tokens-are-bound-to-a-transfer-first-and-a-dataspace-second) | EDR tokens are bound to a transfer first and a dataspace second |
+| [ADR-14](#adr-14--edrs-exposed-per-participant-context-through-v5beta) | EDRs exposed per participant context through v5beta |
 
 Appendices: [measured TMForum behaviour](#appendix-a--measured-tmforum-behaviour),
 [where the configuration keys are read](#appendix-b--where-the-configuration-keys-are-read).
@@ -531,6 +532,81 @@ cryptography and make the gateway configuration irrelevant to it. That is a
 larger change — one JWKS endpoint per context, one rotation per dataspace — and
 is deliberately deferred. It is the step to take if the gateway configuration
 ever stops being trustworthy.
+
+---
+
+## ADR-14 — EDRs exposed per participant context through v5beta
+
+**Status:** accepted.
+
+**Context.** A consumer needs the EDR of a STARTED transfer to call the
+provider's data plane. EDC 0.18.1 has no v5 EDR resource. `EdrCacheApiV3Controller`
+is v3 only and is not part of `controlplane-virtual-base-bom`, so
+`controlplane-dcp`, which serves only v5beta, had no way to read an EDR.
+
+**Decision — exposure.** `edr-api-extension` adds
+`/v5beta/participants/{participantContextId}/edrs` (`EdrApiV5Controller`):
+`POST /request`, `GET /{transferProcessId}/dataaddress` and
+`DELETE /{transferProcessId}`, with the `management-api:edrs:read|write` scopes.
+It adds no partitioning of its own. `edr-store-receiver` already stamps each
+`EndpointDataReferenceEntry` with the context of the transfer it was saved for.
+Queries add a `participantContextId` criterion. By-id calls go through
+`AuthorizationService` with an `EndpointDataReferenceEntry` lookup function
+(`EdrOwnershipLookup`), so a foreign context gets 403 and an unknown entry 404,
+the same as for every upstream v5 resource.
+
+**Decision — token refresh.** No data plane this project supports renews tokens.
+Upstream EDC 0.18.1 has no refresh at all (no `auto_refresh`, no `EdrService`),
+and the FDSC provider data plane (APISIX with the JWT from
+`FDSCDcpEndpointDataReferenceService`) issues no refresh token. The only
+EDC-ecosystem data plane known to renew tokens is Tractus-X. Its EDR carries
+`refreshEndpoint`, `refreshToken`, `expiresIn` and `refreshAudience` in the
+`https://w3id.org/tractusx/auth/` namespace. Its refresh call needs an
+`Authorization` token signed by the consumer, so it is not a bare RFC 6749
+`refresh_token` grant.
+
+So only the seam ships. `EdrTokenRefresher.refreshIfNeeded(entry, current)`
+returns the address to serve. `EdrManagementApiV5Extension` provides
+`NoopEdrTokenRefresher` as the `@Provider(isDefault = true)`. It returns
+`current` unchanged and makes no outbound call. `GET .../dataaddress` takes
+`auto_refresh` (default `true`), with the same name and default as the Tractus-X
+EDR API. When the flag is true, the controller passes the resolved address
+through the refresher before transforming it. A deployment with a renewing data
+plane registers its own `EdrTokenRefresher` from a separate extension, and that
+replaces the default.
+
+A non-default refresher must follow these rules:
+
+1. **Implement a named, existing contract**, such as the Tractus-X one above,
+   not an invented one. Persist any renewal itself through
+   `EndpointDataReferenceStore.save`, and return `current` unchanged on failure
+   so a failed renewal never turns a valid read into an error.
+2. **Store an absolute expiry.** When it saves a renewal, write
+   `expiresAt = now + expiresIn` into the DataAddress.
+   `EndpointDataReferenceStoreImpl.save` keeps the entry's original
+   `createdAt`, so an expiry measured from `createdAt` would treat every
+   refreshed token as already expired and refresh on every read.
+3. **Only call a refresh endpoint on the EDR's own origin** (same scheme, host
+   and port as the EDR `endpoint`) or on a configured allow-list. The provider
+   chooses the URL. An unchecked one lets any provider make the consumer
+   controlplane send requests into its own network (blind SSRF).
+
+**Consequences.** EDR isolation between dataspaces rests on the same
+`AuthorizationService` rules as assets or contract negotiations, and is not a
+second mechanism. There is no outbound HTTP code and no configuration property
+for a feature nobody here runs, and no provider-controlled URL is ever fetched.
+Clients can send `auto_refresh` today and will get renewed tokens once a real
+refresher is plugged in, with no change on their side. The cost is that a
+consumer of a Tractus-X provider receives the cached token and has to re-start
+the transfer when it expires.
+
+Two layers test this. `EdrTwoContextIsolationTest` runs EDC's real
+`EndpointDataReferenceStoreReceiver`, store and `AuthorizationServiceImpl` and
+feeds them STARTED and TERMINATED transfer events of two contexts. It checks
+that each context lists and reads only its own EDR, that a foreign one gives 403
+or 404, and that a terminated transfer's EDR is gone. `verify-multi-dataspace.sh`
+checks the same scope and context rules against the running image. No transfer
+starts in that stack, so the listings it sees are empty.
 
 ---
 

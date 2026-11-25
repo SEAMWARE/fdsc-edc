@@ -67,21 +67,29 @@ fdsc-edc/
 ├── dcp-extension/                   # DCP authentication with TIR support
 ├── fdsc-transfer-extension/         # FDSC data transfer provisioning
 ├── policy-extension/                # ODRL PAP policy evaluation (OPA-backed)
+├── participant-bootstrap-extension/ # Seeds participant contexts from fdsc.participants.* (virtual mode, DCP only)
 ├── controlplane-oid4vc/             # Shaded JAR + Docker image (OID4VC variant)
-├── controlplane-dcp/                # Shaded JAR + Docker image (DCP variant)
+├── controlplane-dcp/                # Shaded JAR + Docker image (DCP variant, virtual participant-context mode, management API v5beta only)
 ├── controlplane-tck/                # Shaded JAR for the DSP TCK run (oid4vc + test-extension, NoopDataFlowController)
 ├── config/tck/
 │   ├── edc.properties               # EDC controlplane config for TCK mode
 │   └── tck.properties               # DSP TCK runner configuration
+├── config/multi-dataspace/edc.properties  # Two-context (dataspace-a/-b) controlplane-dcp config
 ├── scripts/
 │   ├── init-tmforum.sh              # Populates TMForum with TCK test data
 │   ├── run-tck.sh                   # One-command local TCK runner
+│   ├── init-tmforum-multi-dataspace.sh  # Seeds TMForum for the two-dataspace demo
+│   ├── verify-multi-dataspace.sh    # curl/jq checks of v5beta auth, DSP routing, TMForum seed
 │   └── verify-tck-config.sh         # Static config consistency checker
 ├── docker/
 │   └── Dockerfile                   # EDC controlplane Docker image (eclipse-temurin:25-jre-alpine)
 ├── docker-compose.tck.yml           # TCK orchestration (postgis, scorpio, tmforum, edc, tck)
+├── docker-compose.multi-dataspace.yml  # Two-dataspace demo; `run --rm verify` runs verify-multi-dataspace.sh
 ├── schemas/                         # JSON schemas referenced via TMForum @schemaLocation (extension fields like externalId)
 ├── docs/migration/                  # EDC 0.14.1→0.18.1 upgrade report (participant context, artifacts, config keys)
+├── docs/multi-dataspace.md          # Operator guide for controlplane-dcp 2.x (v5beta management API, OAuth2 scopes)
+├── docs/multi-dataspace-design.md   # ADR-1..13 of the multi-dataspace design
+├── releases/NOTES.md, releases/notes/  # Release notes index + one file per release topic
 └── .github/workflows/test.yml       # CI: unit tests + TCK conformance
 ```
 
@@ -129,7 +137,7 @@ Java 21 is required. The project uses Maven (no Gradle — `.gradle` files under
 - **JSON:** Jackson with `jackson-datatype-jsr310`.
 - **Doc comments:** roughly half of the `src/main/java` classes carry a short class-level Javadoc; method-level Javadoc is the exception, and `@param`/`@return` blocks are rare (concentrated in config classes and `policy-extension`). Match this density — add a one-line Javadoc stating what a type is and why, and do not retrofit docs onto code you did not touch.
 - **Constants:** no inline magic values — EDC property keys, IDs and limits are declared as named `static final` constants (see `TMFConfig`, `TransferConfig`, `OID4VPConfig`, `DataAssembly`).
-- **Participant context:** all three controlplanes use `participant-context-connector-classic-core` (one context from `edc.participant.id`/`edc.participant.context.id`). `TMFEdcMapper` stamps `participantContextId` on every entity it builds — the TMForum-backed stores filter in memory via `CriterionOperatorRegistry`, so a null id silently empties catalogs. See `docs/migration/EDC-0.18.1-UPGRADE.md` §4.
+- **Participant context:** `controlplane-dcp` runs EDC's *virtual* assembly (`controlplane-virtual-base-bom`): many contexts, management API only under `/v5beta/participants/{contextId}/...`, OAuth2 JWT auth (`@RequiredScope`, `AuthorizationService.authorize(securityContext, contextId, resourceId, Class)`; a new resource type needs `authorizationService.addLookupFunction`). `controlplane-oid4vc`/`controlplane-tck` use `participant-context-connector-classic-core` (one context from `edc.participant.id`/`edc.participant.context.id`). `TMFEdcMapper` stamps `participantContextId` on every entity it builds — the TMForum-backed stores filter in memory via `CriterionOperatorRegistry`, so a null id silently empties catalogs. See `docs/migration/EDC-0.18.1-UPGRADE.md` §4.
 - **Tests:** JUnit 5 with `@ParameterizedTest` + `@MethodSource`/`@CsvSource` where a case table applies; Mockito for EDC SPI collaborators.
 
 ## Important Files

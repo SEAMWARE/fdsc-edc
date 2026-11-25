@@ -102,6 +102,11 @@
             <artifactId>participant-bootstrap-extension</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.seamware.edc</groupId>
+            <artifactId>edr-api-extension</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>org.eclipse.edc</groupId>
