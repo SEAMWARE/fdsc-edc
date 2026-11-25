@@ -1,7 +1,7 @@
 # Implementation Plan: controlplane-dcp 2.0.0: expose EDRs through the participant-context management API (v5beta)
 
 ## Overview
-`controlplane-dcp` 2.x runs EDC 0.18.1 in virtual participant-context mode and serves only management API v5beta. EDC 0.18.1 has no v5 EDR resource: `EdrCacheApiV3Controller` is v3 only and is not in the virtual BOM. So a consumer cannot read the EDR of a STARTED transfer. This plan adds a new `edr-api-extension` module with a context-scoped `/v5beta/participants/{contextId}/edrs` resource that uses the v5beta OAuth2 scope and ownership checks, wires it into `controlplane-dcp`, and adds conditional token refresh, tests, docs and verify-script coverage. It ships as a `minor` release (2.1.0).
+`controlplane-dcp` 2.x runs EDC 0.18.1 in virtual participant-context mode and serves only management API v5beta. EDC 0.18.1 has no v5 EDR resource: `EdrCacheApiV3Controller` is v3 only and is not in the virtual BOM. So a consumer cannot read the EDR of a STARTED transfer. This plan adds a new `edr-api-extension` module with a context-scoped `/v5beta/participants/{contextId}/edrs` resource that uses the v5beta OAuth2 scope and ownership checks, wires it into `controlplane-dcp`, and adds a token-refresh extension point (no-op default), tests, docs and verify-script coverage. It ships as a `minor` release (2.1.0).
 
 ### Verified facts about EDC 0.18.1 (sources from Maven Central)
 - `org.eclipse.edc.edr.spi.types.EndpointDataReferenceEntry` (`edr-store-spi`) extends `AbstractParticipantResource`, so it **has `participantContextId`**. Its other fields are `assetId`, `agreementId`, `transferProcessId`, `contractNegotiationId` and `providerId`. `id` is always the `transferProcessId`.
