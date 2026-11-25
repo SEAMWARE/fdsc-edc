@@ -17,6 +17,7 @@
 package org.seamware.edc.edr;
 
 import static org.eclipse.edc.api.management.ManagementApi.MANAGEMENT_API_CONTEXT;
+import static org.eclipse.edc.web.spi.configuration.ApiContext.MANAGEMENT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -27,8 +28,14 @@ import static org.mockito.Mockito.when;
 import org.eclipse.edc.api.auth.spi.AuthorizationService;
 import org.eclipse.edc.edr.spi.store.EndpointDataReferenceStore;
 import org.eclipse.edc.edr.spi.types.EndpointDataReferenceEntry;
+import org.eclipse.edc.jsonld.spi.JsonLd;
+import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.spi.types.TypeManager;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
+import org.eclipse.edc.validator.spi.JsonObjectValidatorRegistry;
+import org.eclipse.edc.web.jersey.providers.jsonld.JerseyJsonLdInterceptor;
+import org.eclipse.edc.web.spi.WebService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -42,19 +49,29 @@ class EdrManagementApiV5ExtensionTest {
   @Mock private EndpointDataReferenceStore endpointDataReferenceStore;
   @Mock private AuthorizationService authorizationService;
   @Mock private TypeTransformerRegistry transformerRegistry;
+  @Mock private WebService webService;
+  @Mock private JsonObjectValidatorRegistry validatorRegistry;
+  @Mock private JsonLd jsonLd;
+  @Mock private TypeManager typeManager;
   @InjectMocks private EdrManagementApiV5Extension extension;
 
   @Test
-  void initialize_registersEdrEntryOwnershipLookupAndTransformer() {
+  void initialize_registersLookupTransformerAndController() {
     var managementApiRegistry = mock(TypeTransformerRegistry.class);
     when(transformerRegistry.forContext(MANAGEMENT_API_CONTEXT)).thenReturn(managementApiRegistry);
+    var context = mock(ServiceExtensionContext.class);
+    when(context.getMonitor()).thenReturn(mock(Monitor.class));
 
-    extension.initialize(mock(ServiceExtensionContext.class));
+    extension.initialize(context);
 
     verify(authorizationService)
         .addLookupFunction(eq(EndpointDataReferenceEntry.class), any(EdrOwnershipLookup.class));
     verify(managementApiRegistry)
         .register(any(JsonObjectFromEndpointDataReferenceEntryTransformer.class));
+    verify(webService).registerResource(eq(MANAGEMENT), any(EdrApiV5Controller.class));
+    verify(webService)
+        .registerDynamicResource(
+            eq(MANAGEMENT), eq(EdrApiV5Controller.class), any(JerseyJsonLdInterceptor.class));
   }
 
   @Test

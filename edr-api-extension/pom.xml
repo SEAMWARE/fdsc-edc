@@ -42,6 +42,26 @@
             <artifactId>management-api-lib</artifactId>
             <version>${edc.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>web-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>validator-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>jersey-providers-lib</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>connector-participant-context-spi</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>org.eclipse.edc</groupId>
@@ -64,6 +84,12 @@
         <dependency>
             <groupId>org.eclipse.edc</groupId>
             <artifactId>management-api-configuration</artifactId>
+            <version>${edc.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>auth-authorization-oauth2-lib</artifactId>
             <version>${edc.version}</version>
             <scope>test</scope>
         </dependency>

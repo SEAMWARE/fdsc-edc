@@ -20,12 +20,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.eclipse.edc.edr.spi.store.EndpointDataReferenceCache;
 import org.eclipse.edc.edr.spi.store.EndpointDataReferenceStore;
 import org.eclipse.edc.edr.spi.types.EndpointDataReferenceEntry;
 import org.eclipse.edc.edr.store.EndpointDataReferenceStoreImpl;
@@ -33,7 +30,6 @@ import org.eclipse.edc.edr.store.defaults.InMemoryEndpointDataReferenceEntryInde
 import org.eclipse.edc.query.CriterionOperatorRegistryImpl;
 import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.query.QuerySpec;
-import org.eclipse.edc.spi.result.StoreResult;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.eclipse.edc.transaction.spi.NoopTransactionContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -61,7 +57,7 @@ class EdrOwnershipLookupTest {
     store =
         new EndpointDataReferenceStoreImpl(
             new InMemoryEndpointDataReferenceEntryIndex(CriterionOperatorRegistryImpl.ofDefaults()),
-            new InMemoryCache(),
+            new InMemoryEndpointDataReferenceCache(),
             new NoopTransactionContext());
     save(CONTEXT_A, TP_A1);
     save(CONTEXT_A, TP_A2);
@@ -134,31 +130,5 @@ class EdrOwnershipLookupTest {
             .build();
     var dataAddress = DataAddress.Builder.newInstance().type(DATA_ADDRESS_TYPE).build();
     assertTrue(store.save(entry, dataAddress).succeeded());
-  }
-
-  /** Map-backed stand-in for the vault-backed EDR cache. */
-  private static class InMemoryCache implements EndpointDataReferenceCache {
-
-    private final Map<String, DataAddress> addresses = new ConcurrentHashMap<>();
-
-    @Override
-    public StoreResult<DataAddress> get(String transferProcessId) {
-      var address = addresses.get(transferProcessId);
-      return address == null
-          ? StoreResult.notFound(transferProcessId)
-          : StoreResult.success(address);
-    }
-
-    @Override
-    public StoreResult<Void> put(String transferProcessId, DataAddress edr) {
-      addresses.put(transferProcessId, edr);
-      return StoreResult.success();
-    }
-
-    @Override
-    public StoreResult<Void> delete(String transferProcessId) {
-      addresses.remove(transferProcessId);
-      return StoreResult.success();
-    }
   }
 }

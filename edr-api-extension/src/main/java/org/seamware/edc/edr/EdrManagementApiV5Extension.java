@@ -17,17 +17,26 @@
 package org.seamware.edc.edr;
 
 import static org.eclipse.edc.api.management.ManagementApi.MANAGEMENT_API_CONTEXT;
+import static org.eclipse.edc.api.management.ManagementApi.MANAGEMENT_SCOPE_V5;
+import static org.eclipse.edc.spi.constants.CoreConstants.JSON_LD;
+import static org.eclipse.edc.web.spi.configuration.ApiContext.MANAGEMENT;
 
 import jakarta.json.Json;
 import java.util.Map;
 import org.eclipse.edc.api.auth.spi.AuthorizationService;
+import org.eclipse.edc.api.management.schema.ManagementApiJsonSchema;
 import org.eclipse.edc.edr.spi.store.EndpointDataReferenceStore;
 import org.eclipse.edc.edr.spi.types.EndpointDataReferenceEntry;
+import org.eclipse.edc.jsonld.spi.JsonLd;
 import org.eclipse.edc.runtime.metamodel.annotation.Extension;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
+import org.eclipse.edc.spi.types.TypeManager;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
+import org.eclipse.edc.validator.spi.JsonObjectValidatorRegistry;
+import org.eclipse.edc.web.jersey.providers.jsonld.JerseyJsonLdInterceptor;
+import org.eclipse.edc.web.spi.WebService;
 import org.seamware.edc.edr.transform.JsonObjectFromEndpointDataReferenceEntryTransformer;
 
 /** Exposes the EDR store through the participant-context scoped management API (v5beta). */
@@ -42,6 +51,14 @@ public class EdrManagementApiV5Extension implements ServiceExtension {
 
   @Inject private TypeTransformerRegistry transformerRegistry;
 
+  @Inject private WebService webService;
+
+  @Inject private JsonObjectValidatorRegistry validatorRegistry;
+
+  @Inject private JsonLd jsonLd;
+
+  @Inject private TypeManager typeManager;
+
   @Override
   public String name() {
     return NAME;
@@ -53,10 +70,28 @@ public class EdrManagementApiV5Extension implements ServiceExtension {
         EndpointDataReferenceEntry.class, new EdrOwnershipLookup(endpointDataReferenceStore));
     // DataAddress -> JsonObject is already registered in this context by
     // management-api-configuration.
-    transformerRegistry
-        .forContext(MANAGEMENT_API_CONTEXT)
-        .register(
-            new JsonObjectFromEndpointDataReferenceEntryTransformer(
-                Json.createBuilderFactory(Map.of())));
+    var managementApiTransformerRegistry = transformerRegistry.forContext(MANAGEMENT_API_CONTEXT);
+    managementApiTransformerRegistry.register(
+        new JsonObjectFromEndpointDataReferenceEntryTransformer(
+            Json.createBuilderFactory(Map.of())));
+
+    webService.registerResource(
+        MANAGEMENT,
+        new EdrApiV5Controller(
+            endpointDataReferenceStore,
+            managementApiTransformerRegistry,
+            validatorRegistry,
+            authorizationService,
+            context.getMonitor()));
+    webService.registerDynamicResource(
+        MANAGEMENT,
+        EdrApiV5Controller.class,
+        new JerseyJsonLdInterceptor(
+            jsonLd,
+            typeManager,
+            JSON_LD,
+            MANAGEMENT_SCOPE_V5,
+            validatorRegistry,
+            ManagementApiJsonSchema.V5.version()));
   }
 }
