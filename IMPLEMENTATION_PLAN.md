@@ -121,7 +121,7 @@ In `edr-api-extension/src/test`, add `EdrTwoContextIsolationTest`, which reprodu
   - Remove "EDR retrieval" from any out-of-scope wording.
 - `docs/multi-dataspace-design.md`: ADR-14, "EDRs exposed per participant context through v5beta", was already added in Step 4 (exposure and refresh decisions, plus the rules for a future refresher). Only check it against what Steps 5–6 changed, e.g. reference `EdrTwoContextIsolationTest` in its Consequences.
 - `scripts/verify-multi-dataspace.sh`: add `verify_edrs()`. Update the header comment so EDR retrieval is in scope for auth and isolation, while the end-to-end STARTED path is covered by `EdrTwoContextIsolationTest` and the FIWARE Data Space Connector ITs (`dsp_dcp_flow`, `dsp_advanced_policy` Scenario C). Use the existing `expect_status`/`token` helpers and named HTTP constants. Checks:
-  - admin `POST .../{A,B}/edrs/request {}`: 200, a JSON array;
+  - admin `POST .../{A,B}/edrs/request` with the minimal QuerySpec (`@context` + `@type`; the v5 schema check rejects a bare `{}` with 400): 200, a JSON array;
   - non-admin B `POST .../B/edrs/request`: 200;
   - non-admin B `POST .../A/edrs/request`: 403;
   - non-admin B `GET .../A/edrs/<unknown>/dataaddress`: 403 or 404, accepting both;
