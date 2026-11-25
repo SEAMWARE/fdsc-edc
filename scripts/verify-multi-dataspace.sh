@@ -101,7 +101,6 @@ HTTP_UNAUTHORIZED=401
 HTTP_FORBIDDEN=403
 HTTP_NOT_FOUND=404
 
-EMPTY_QUERY_SPEC='{}'
 QUERY_SPEC='{"@context":["https://w3id.org/edc/connector/management/v2"],"@type":"QuerySpec"}'
 CATALOG_REQUEST='{"@context":["https://w3id.org/dspace/2025/1/context.jsonld"],"@type":"CatalogRequestMessage","filter":[]}'
 
@@ -278,14 +277,14 @@ verify_edrs() {
   log "--- Management API: EDRs"
   for context in "$CONTEXT_A" "$CONTEXT_B"; do
     if expect_status "admin queries EDRs of ${context}" "$HTTP_OK" \
-      POST "${PARTICIPANTS_API}/${context}/edrs/request" "$ADMIN_TOKEN" "$EMPTY_QUERY_SPEC"; then
+      POST "${PARTICIPANTS_API}/${context}/edrs/request" "$ADMIN_TOKEN" "$QUERY_SPEC"; then
       expect_body "EDRs of ${context} are a JSON array" 'type == "array"'
     fi
   done
   expect_status "non-admin ${CONTEXT_B} queries its own EDRs" "$HTTP_OK" \
-    POST "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/request" "$CONTEXT_B_TOKEN" "$EMPTY_QUERY_SPEC" || true
+    POST "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/request" "$CONTEXT_B_TOKEN" "$QUERY_SPEC" || true
   expect_status "non-admin ${CONTEXT_B} cannot query EDRs of ${CONTEXT_A}" "$HTTP_FORBIDDEN" \
-    POST "${PARTICIPANTS_API}/${CONTEXT_A}/edrs/request" "$CONTEXT_B_TOKEN" "$EMPTY_QUERY_SPEC" || true
+    POST "${PARTICIPANTS_API}/${CONTEXT_A}/edrs/request" "$CONTEXT_B_TOKEN" "$QUERY_SPEC" || true
 
   # An unknown id in a foreign context is denied either way: 403 or 404, whichever check fails first.
   status=$(request GET "${PARTICIPANTS_API}/${CONTEXT_A}/edrs/${UNKNOWN_TRANSFER}/dataaddress" \
@@ -300,7 +299,7 @@ verify_edrs() {
   expect_status "read-only ${CONTEXT_B} token cannot delete an EDR" "$HTTP_FORBIDDEN" \
     DELETE "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/${UNKNOWN_TRANSFER}" "$CONTEXT_B_TOKEN" "" || true
   expect_status "EDR query without token is rejected" "$HTTP_UNAUTHORIZED" \
-    POST "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/request" "" "$EMPTY_QUERY_SPEC" || true
+    POST "${PARTICIPANTS_API}/${CONTEXT_B}/edrs/request" "" "$QUERY_SPEC" || true
 }
 
 log "=== Multi-dataspace verification ==="

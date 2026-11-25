@@ -546,7 +546,12 @@ and v4 APIs are gone from the DCP image. Resources are scoped by context:
 ```
 
 There is no collection `GET` on assets; query with `POST .../assets/request` and
-a QuerySpec body (`{}` for all).
+a QuerySpec body. The v5 schema check needs `@context` and `@type` even to list
+everything; a bare `{}` gives 400:
+
+```json
+{"@context":["https://w3id.org/edc/connector/management/v2"],"@type":"QuerySpec"}
+```
 
 | Key | Meaning |
 |---|---|
@@ -585,7 +590,7 @@ EDR (data plane endpoint and access token) under the transfer process id. The
 
 | Call | Scope | Returns |
 |---|---|---|
-| `POST .../edrs/request` with a QuerySpec (`{}` for all) | `management-api:read` | the context's EDR entries |
+| `POST .../edrs/request` with a QuerySpec (see above) | `management-api:read` | the context's EDR entries |
 | `GET .../edrs/<transfer id>/dataaddress` | `management-api:read` | the EDR itself |
 | `DELETE .../edrs/<transfer id>` | `management-api:write` | 204; the entry and its token are removed |
 
@@ -615,7 +620,8 @@ EDR (data plane endpoint and access token) under the transfer process id. The
 ```bash
 # the transfer ids of dataspace-b's EDRs
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{}' "$MANAGEMENT/v5beta/participants/dataspace-b/edrs/request" | jq -r '.[]."@id"'
+  -d '{"@context":["https://w3id.org/edc/connector/management/v2"],"@type":"QuerySpec"}' \
+  "$MANAGEMENT/v5beta/participants/dataspace-b/edrs/request" | jq -r '.[]."@id"'
 
 # endpoint and token of one transfer, then call the provider's data plane with them
 EDR=$(curl -s -H "Authorization: Bearer $TOKEN" \

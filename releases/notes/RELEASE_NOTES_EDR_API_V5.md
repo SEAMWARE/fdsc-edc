@@ -15,7 +15,7 @@ and `controlplane-tck` are unchanged.
 
 | Method and path | Scope | Purpose |
 |---|---|---|
-| `POST /v5beta/participants/<context id>/edrs/request` | `management-api:read` | Query the context's EDR entries with a QuerySpec (`{}` for all) |
+| `POST /v5beta/participants/<context id>/edrs/request` | `management-api:read` | Query the context's EDR entries with a QuerySpec (`@context` and `@type` required; a bare `{}` gives 400) |
 | `GET /v5beta/participants/<context id>/edrs/<transfer id>/dataaddress` | `management-api:read` | The EDR: `endpoint`, `authorization`, `endpointType` |
 | `DELETE /v5beta/participants/<context id>/edrs/<transfer id>` | `management-api:write` | Remove the entry and its cached token |
 
