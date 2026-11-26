@@ -380,7 +380,9 @@ public class TMFContractNegotiationExtension implements ServiceExtension {
               monitor,
               new ContractDefinitionIdResolver(
                   monitor, productCatalogApi(tmfConfig), tmfEdcMapper(tmfConfig)),
-              tmfEdcMapper(tmfConfig));
+              tmfEdcMapper(tmfConfig),
+              productCatalogApi(tmfConfig),
+              criterionOperatorRegistry);
     }
     return contractDefinitionStore;
   }

@@ -110,6 +110,11 @@
             <version>${edc.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.eclipse.edc</groupId>
+            <artifactId>store-lib</artifactId>
+            <version>${edc.version}</version>
+        </dependency>
+        <dependency>
             <groupId>com.squareup.okhttp3</groupId>
             <artifactId>okhttp</artifactId>
             <version>${version.com.squareup.okhttp3}</version>
