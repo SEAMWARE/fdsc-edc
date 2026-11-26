@@ -16,34 +16,87 @@
  */
 package org.seamware.edc.store;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractDefinitionStore;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.query.CriterionOperatorRegistry;
+import org.eclipse.edc.spi.query.QueryResolver;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.StoreResult;
+import org.eclipse.edc.store.ReflectionBasedQueryResolver;
 import org.jetbrains.annotations.NotNull;
+import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.tmf.DuplicateIdException;
+import org.seamware.edc.tmf.ProductCatalogApiClient;
 
+/** Read-only {@link ContractDefinitionStore} that derives definitions from TMForum offerings. */
 public class TMFBackedContractDefinitionStore implements ContractDefinitionStore {
+
+  static final int PAGE_SIZE = 100;
 
   private final Monitor monitor;
   private final ContractDefinitionIdResolver contractDefinitionIdResolver;
   private final TMFEdcMapper tmfEdcMapper;
+  private final ProductCatalogApiClient productCatalogApiClient;
+  private final QueryResolver<ContractDefinition> queryResolver;
 
   public TMFBackedContractDefinitionStore(
       Monitor monitor,
       ContractDefinitionIdResolver contractDefinitionIdResolver,
-      TMFEdcMapper tmfEdcMapper) {
+      TMFEdcMapper tmfEdcMapper,
+      ProductCatalogApiClient productCatalogApiClient,
+      CriterionOperatorRegistry criterionOperatorRegistry) {
     this.monitor = monitor;
     this.contractDefinitionIdResolver = contractDefinitionIdResolver;
     this.tmfEdcMapper = tmfEdcMapper;
+    this.productCatalogApiClient = productCatalogApiClient;
+    this.queryResolver =
+        new ReflectionBasedQueryResolver<>(ContractDefinition.class, criterionOperatorRegistry);
   }
 
+  /**
+   * Filters, sorts and pages the definitions of the queried context like EDC's in-memory store.
+   * TMForum failures propagate instead of yielding an empty catalog.
+   */
   @Override
   public @NotNull Stream<ContractDefinition> findAll(QuerySpec querySpec) {
-    throw new UnsupportedOperationException(
-        "Querying for contract definitions is currently not supported.");
+    String defaultContextId = tmfEdcMapper.getDefaultParticipantContextId();
+    // stamped before the criteria are applied, so a context criterion matches shared offerings
+    String participantContextId =
+        ContextCriteria.requestedContext(querySpec.getFilterExpression()).orElse(defaultContextId);
+    String serverSideContextId =
+        ContextCriteria.serverSideContext(querySpec.getFilterExpression(), defaultContextId)
+            .orElse(null);
+
+    List<ContractDefinition> definitions = new ArrayList<>();
+    int offset = 0;
+    List<ExtendableProductOffering> page;
+    do {
+      page = productCatalogApiClient.getProductOfferings(offset, PAGE_SIZE, serverSideContextId);
+      page.stream()
+          .map(offering -> toDefinition(offering, participantContextId))
+          .flatMap(Optional::stream)
+          .forEach(definitions::add);
+      offset += PAGE_SIZE;
+    } while (page.size() == PAGE_SIZE);
+
+    return queryResolver.query(definitions.stream(), querySpec);
+  }
+
+  private Optional<ContractDefinition> toDefinition(
+      ExtendableProductOffering offering, String participantContextId) {
+    try {
+      return tmfEdcMapper.fromProductOffer(offering, participantContextId);
+    } catch (RuntimeException e) {
+      monitor.debug(
+          String.format(
+              "Skipping product offering %s: %s", offering.getExternalId(), e.getMessage()));
+      return Optional.empty();
+    }
   }
 
   @Override

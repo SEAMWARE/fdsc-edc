@@ -18,17 +18,32 @@ package org.seamware.edc.store;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.contract.spi.types.offer.ContractDefinition;
+import org.eclipse.edc.query.CriterionOperatorRegistryImpl;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.query.Criterion;
+import org.eclipse.edc.spi.query.QuerySpec;
+import org.eclipse.edc.spi.query.SortOrder;
+import org.eclipse.edc.web.spi.exception.BadGatewayException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.seamware.edc.domain.ExtendableProductOffering;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
@@ -36,6 +51,17 @@ public class TMFBackedContractDefinitionStoreTest {
 
   private static final String TEST_ID = "test-id";
   private static final String TEST_CONTEXT_ID = "test-context";
+  private static final String DEFAULT_CONTEXT_ID = "default-context";
+  private static final String OTHER_CONTEXT_ID = "other-context";
+  private static final String PARTICIPANT_CONTEXT_ID_FIELD = "participantContextId";
+  private static final String ID_FIELD = "id";
+  private static final String EQUALS = "=";
+  private static final String REJECTED_PREFIX = "rejected-";
+  private static final String BROKEN_PREFIX = "broken-";
+  private static final String OFFERING_PREFIX = "offering-";
+  private static final int MULTI_PAGE_OFFERING_COUNT =
+      TMFBackedContractDefinitionStore.PAGE_SIZE + TMFBackedContractDefinitionStore.PAGE_SIZE / 2;
+  private static final int UNBOUNDED = Integer.MAX_VALUE;
 
   private ProductCatalogApiClient productCatalogApiClient;
   private TMFEdcMapper tmfEdcMapper;
@@ -46,13 +72,147 @@ public class TMFBackedContractDefinitionStoreTest {
     productCatalogApiClient = mock(ProductCatalogApiClient.class);
     tmfEdcMapper = mock(TMFEdcMapper.class);
     when(tmfEdcMapper.contextForId(any(), isNull())).thenReturn(Optional.of(TEST_CONTEXT_ID));
+    when(tmfEdcMapper.getDefaultParticipantContextId()).thenReturn(DEFAULT_CONTEXT_ID);
     Monitor monitor = mock(Monitor.class);
 
     tmfBackedContractDefinitionStore =
         new TMFBackedContractDefinitionStore(
             monitor,
             new ContractDefinitionIdResolver(monitor, productCatalogApiClient, tmfEdcMapper),
-            tmfEdcMapper);
+            tmfEdcMapper,
+            productCatalogApiClient,
+            CriterionOperatorRegistryImpl.ofDefaults());
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("findAllCases")
+  public void testFindAll(
+      String description,
+      List<String> offeringIds,
+      QuerySpec querySpec,
+      String expectedServerSideContext,
+      String expectedStampedContext,
+      List<String> expectedIds) {
+    serveOfferings(offeringIds);
+
+    List<ContractDefinition> definitions =
+        tmfBackedContractDefinitionStore.findAll(querySpec).toList();
+
+    assertEquals(
+        expectedIds,
+        definitions.stream().map(ContractDefinition::getId).toList(),
+        "The matching definitions should be returned in the requested window and order.");
+    definitions.forEach(
+        definition ->
+            assertEquals(
+                expectedStampedContext,
+                definition.getParticipantContextId(),
+                "Definitions should be built for the requested context."));
+    int pageSize = TMFBackedContractDefinitionStore.PAGE_SIZE;
+    for (int offset = 0; offset <= offeringIds.size(); offset += pageSize) {
+      verify(productCatalogApiClient)
+          .getProductOfferings(eq(offset), eq(pageSize), eq(expectedServerSideContext));
+    }
+    verifyNoMoreInteractions(productCatalogApiClient);
+  }
+
+  private static Stream<Arguments> findAllCases() {
+    List<String> abc = List.of(offeringId("b"), offeringId("c"), offeringId("a"));
+    List<String> multiPage =
+        IntStream.range(0, MULTI_PAGE_OFFERING_COUNT)
+            .mapToObj(i -> offeringId(String.format("%03d", i)))
+            .toList();
+    return Stream.of(
+        Arguments.of(
+            "no criteria uses the default context, unfiltered",
+            abc,
+            QuerySpec.max(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            abc),
+        Arguments.of(
+            "explicit default context is fetched unfiltered",
+            abc,
+            contextQuery(DEFAULT_CONTEXT_ID).build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            abc),
+        Arguments.of(
+            "non-default context is filtered server-side",
+            abc,
+            contextQuery(OTHER_CONTEXT_ID).build(),
+            OTHER_CONTEXT_ID,
+            OTHER_CONTEXT_ID,
+            abc),
+        Arguments.of(
+            "rejected and unmappable offerings are skipped",
+            List.of(offeringId("a"), REJECTED_PREFIX + "x", offeringId("b"), BROKEN_PREFIX + "y"),
+            contextQuery(OTHER_CONTEXT_ID).build(),
+            OTHER_CONTEXT_ID,
+            OTHER_CONTEXT_ID,
+            List.of(offeringId("a"), offeringId("b"))),
+        Arguments.of(
+            "further criteria are applied",
+            abc,
+            contextQuery(DEFAULT_CONTEXT_ID)
+                .filter(new Criterion(ID_FIELD, EQUALS, offeringId("c")))
+                .build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            List.of(offeringId("c"))),
+        Arguments.of(
+            "offset and limit select a window",
+            abc,
+            QuerySpec.Builder.newInstance().offset(1).limit(1).build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            List.of(offeringId("c"))),
+        Arguments.of(
+            "offset beyond size returns nothing",
+            abc,
+            QuerySpec.Builder.newInstance().offset(abc.size() + 1).limit(1).build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            List.of()),
+        Arguments.of(
+            "offset with an unbounded limit returns the tail without overflow",
+            abc,
+            contextQuery(DEFAULT_CONTEXT_ID).offset(1).limit(UNBOUNDED).build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            List.of(offeringId("c"), offeringId("a"))),
+        Arguments.of(
+            "offerings are fetched across pages",
+            multiPage,
+            contextQuery(DEFAULT_CONTEXT_ID).limit(UNBOUNDED).build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            multiPage),
+        Arguments.of(
+            "sort by id ascending",
+            abc,
+            QuerySpec.Builder.newInstance().sortField(ID_FIELD).sortOrder(SortOrder.ASC).build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            List.of(offeringId("a"), offeringId("b"), offeringId("c"))),
+        Arguments.of(
+            "sort by id descending",
+            abc,
+            QuerySpec.Builder.newInstance().sortField(ID_FIELD).sortOrder(SortOrder.DESC).build(),
+            null,
+            DEFAULT_CONTEXT_ID,
+            List.of(offeringId("c"), offeringId("b"), offeringId("a"))));
+  }
+
+  @Test
+  public void testFindAll_api_error_propagates() {
+    when(productCatalogApiClient.getProductOfferings(anyInt(), anyInt(), any()))
+        .thenThrow(new BadGatewayException("TMForum is down"));
+
+    assertThrows(
+        BadGatewayException.class,
+        () -> tmfBackedContractDefinitionStore.findAll(QuerySpec.max()),
+        "TMForum failures should not be hidden as an empty catalog.");
   }
 
   @Test
@@ -116,6 +276,51 @@ public class TMFBackedContractDefinitionStoreTest {
     assertNull(
         tmfBackedContractDefinitionStore.findById(TEST_ID),
         "If no corresponding offer exists, null should be returned.");
+  }
+
+  /** Serves the offerings page-wise and maps them like the real mapper, stamping the context. */
+  private void serveOfferings(List<String> offeringIds) {
+    when(productCatalogApiClient.getProductOfferings(anyInt(), anyInt(), any()))
+        .thenAnswer(
+            invocation -> {
+              int offset = invocation.getArgument(0);
+              int limit = invocation.getArgument(1);
+              return offeringIds
+                  .subList(
+                      Math.min(offset, offeringIds.size()),
+                      Math.min(offset + limit, offeringIds.size()))
+                  .stream()
+                  .map(id -> new ExtendableProductOffering().setExternalId(id))
+                  .toList();
+            });
+    when(tmfEdcMapper.fromProductOffer(any(), any()))
+        .thenAnswer(
+            invocation -> {
+              ExtendableProductOffering offering = invocation.getArgument(0);
+              String id = offering.getExternalId();
+              if (id.startsWith(BROKEN_PREFIX)) {
+                throw new IllegalArgumentException("Unmappable offering");
+              }
+              if (id.startsWith(REJECTED_PREFIX)) {
+                return Optional.empty();
+              }
+              return Optional.of(
+                  ContractDefinition.Builder.newInstance()
+                      .id(id)
+                      .participantContextId(invocation.getArgument(1))
+                      .accessPolicyId(id)
+                      .contractPolicyId(id)
+                      .build());
+            });
+  }
+
+  private static QuerySpec.Builder contextQuery(String participantContextId) {
+    return QuerySpec.Builder.newInstance()
+        .filter(new Criterion(PARTICIPANT_CONTEXT_ID_FIELD, EQUALS, participantContextId));
+  }
+
+  private static String offeringId(String suffix) {
+    return OFFERING_PREFIX + suffix;
   }
 
   private ExtendableProductOffering getTestOffering() {
