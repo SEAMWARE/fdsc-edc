@@ -404,6 +404,37 @@ public class MultiContextStoresTest extends AbstractStoreTest {
     verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), isNull());
   }
 
+  private static Stream<Arguments> definitionsPerContext() {
+    return Stream.of(
+        Arguments.of(DEFAULT_CONTEXT, Set.of(OFFER_ID)),
+        Arguments.of(CONTEXT_A, Set.of(OFFER_ID_A)),
+        Arguments.of(CONTEXT_B, Set.of(OFFER_ID_B)),
+        Arguments.of(CONTEXT_C, Set.of()));
+  }
+
+  // the query ContractDefinitionResolverImpl sends for a catalog request
+  @ParameterizedTest(name = "requested in {0}")
+  @MethodSource("definitionsPerContext")
+  public void testFindAllDefinitions_resolverQueryReturnsOnlyTheContextsOfferings(
+      String context, Set<String> expectedDefinitionIds) {
+    givenSpecs();
+    offerings.add(offering(OFFER_ID, null));
+    offerings.add(offering(OFFER_ID_A, List.of(CONTEXT_A)));
+    offerings.add(offering(OFFER_ID_B, List.of(CONTEXT_B)));
+    QuerySpec query =
+        QuerySpec.Builder.newInstance()
+            .filter(contextCriterion(context))
+            .limit(Integer.MAX_VALUE)
+            .build();
+
+    List<ContractDefinition> definitions = contractDefinitionStore.findAll(query).toList();
+
+    assertEquals(
+        expectedDefinitionIds,
+        definitions.stream().map(ContractDefinition::getId).collect(Collectors.toSet()));
+    definitions.forEach(d -> assertEquals(context, d.getParticipantContextId()));
+  }
+
   /** Asserts the catalog and the dataset lookup in the context show exactly the expected offer. */
   private void assertOffers(String context, Optional<String> expectedDefinitionId) {
     ParticipantContext participantContext =
@@ -450,37 +481,6 @@ public class MultiContextStoresTest extends AbstractStoreTest {
   // ---- FIXTURES ----
 
   /** Emulates TMForum's {@code participantContextIds} filter: the context or {@code *}. */
-  private static Stream<Arguments> definitionsPerContext() {
-    return Stream.of(
-        Arguments.of(DEFAULT_CONTEXT, Set.of(OFFER_ID)),
-        Arguments.of(CONTEXT_A, Set.of(OFFER_ID_A)),
-        Arguments.of(CONTEXT_B, Set.of(OFFER_ID_B)),
-        Arguments.of(CONTEXT_C, Set.of()));
-  }
-
-  // the query ContractDefinitionResolverImpl sends for a catalog request
-  @ParameterizedTest(name = "requested in {0}")
-  @MethodSource("definitionsPerContext")
-  public void testFindAllDefinitions_resolverQueryReturnsOnlyTheContextsOfferings(
-      String context, Set<String> expectedDefinitionIds) {
-    givenSpecs();
-    offerings.add(offering(OFFER_ID, null));
-    offerings.add(offering(OFFER_ID_A, List.of(CONTEXT_A)));
-    offerings.add(offering(OFFER_ID_B, List.of(CONTEXT_B)));
-    QuerySpec query =
-        QuerySpec.Builder.newInstance()
-            .filter(contextCriterion(context))
-            .limit(Integer.MAX_VALUE)
-            .build();
-
-    List<ContractDefinition> definitions = contractDefinitionStore.findAll(query).toList();
-
-    assertEquals(
-        expectedDefinitionIds,
-        definitions.stream().map(ContractDefinition::getId).collect(Collectors.toSet()));
-    definitions.forEach(d -> assertEquals(context, d.getParticipantContextId()));
-  }
-
   private void givenTMForumServesOfferings() {
     when(productCatalogApi.getProductOfferings(anyInt(), anyInt(), any()))
         .thenAnswer(
