@@ -48,7 +48,7 @@ This is a bug fix (PR label `patch`), released as **2.1.1** of
 | Image | Change |
 |---|---|
 | `controlplane-dcp` | Catalog requests work again |
-| `controlplane-oid4vc`, `controlplane-tck` | Same code. These images happened to load the TMForum service in the right order, so their behaviour does not change |
+| `controlplane-oid4vc`, `controlplane-tck` | Same code. With `tmfExtension.catalog.enabled=true`, DSP catalog requests are unchanged: these images happened to load the TMForum service in the right order. With `tmfExtension.catalog.enabled=false`, the stock catalog path now returns datasets instead of failing with a 500. Management API queries of contract definitions now answer instead of failing in both cases |
 
 ## Upgrade
 
