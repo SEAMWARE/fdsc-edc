@@ -781,6 +781,13 @@ these checks and more against the compose stack; see
   `:`-free names for profiles with per-profile overrides.
 - **TIL latency** adds up across dataspaces, see
   [DCP scopes and trusted issuers](#dcp-scopes-and-trusted-issuers).
+- **A consumer-side `401` on catalog requests can hide a provider `500`.** If
+  the provider log shows `JWT id ... was already used` for the same request,
+  the first attempt most likely failed with a 500. The proxy then retried it
+  with the same DCP token, and DCP rejects a reused token. Look further up the
+  provider log for the error of the first attempt before you debug credentials
+  or trust. `controlplane-dcp` 2.1.0 failed every catalog request this way, see
+  [the 2.1.1 release note](../releases/notes/RELEASE_NOTES_CATALOG_FIX.md).
 - **Shared ODRL-PAP.** Policies of all dataspaces are evaluated by one PAP; use
   the agreement's `participantContextId` in PAP policies where dataspaces must
   differ.

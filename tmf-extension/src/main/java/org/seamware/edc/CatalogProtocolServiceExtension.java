@@ -21,7 +21,7 @@ import org.eclipse.edc.connector.controlplane.services.spi.catalog.CatalogProtoc
 import org.eclipse.edc.connector.controlplane.services.spi.protocol.ProtocolTokenValidator;
 import org.eclipse.edc.policy.engine.spi.PolicyEngine;
 import org.eclipse.edc.runtime.metamodel.annotation.Inject;
-import org.eclipse.edc.runtime.metamodel.annotation.Requires;
+import org.eclipse.edc.runtime.metamodel.annotation.Provides;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.system.ServiceExtension;
 import org.eclipse.edc.spi.system.ServiceExtensionContext;
@@ -30,7 +30,9 @@ import org.seamware.edc.store.TMForumBackedCatalogProtocolService;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
 /** Extension to provide the catalog with contents from TMForum */
-@Requires(CatalogProtocolService.class)
+// @Provides makes the DSP catalog controllers inject after us: registerService in initialize() is
+// invisible to the dependency graph. Never add @Requires(CatalogProtocolService.class) - it cycles.
+@Provides(CatalogProtocolService.class)
 public class CatalogProtocolServiceExtension implements ServiceExtension {
 
   private static final String NAME = "Protocol Service Extension";
@@ -42,6 +44,8 @@ public class CatalogProtocolServiceExtension implements ServiceExtension {
 
   @Inject public TMFEdcMapper tmfEdcMapper;
 
+  // Also orders us after the stock CatalogProtocolService provider, whose @Provider result would
+  // otherwise overwrite our registration.
   @Inject public ProtocolTokenValidator protocolTokenValidator;
 
   @Inject public PolicyEngine policyEngine;
