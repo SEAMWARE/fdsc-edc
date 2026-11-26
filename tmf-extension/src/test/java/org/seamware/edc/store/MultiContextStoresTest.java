@@ -37,6 +37,7 @@ import java.net.URI;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -58,6 +59,7 @@ import org.eclipse.edc.query.CriterionOperatorRegistryImpl;
 import org.eclipse.edc.spi.iam.TokenRepresentation;
 import org.eclipse.edc.spi.monitor.Monitor;
 import org.eclipse.edc.spi.query.Criterion;
+import org.eclipse.edc.spi.query.CriterionOperatorRegistry;
 import org.eclipse.edc.spi.query.QuerySpec;
 import org.eclipse.edc.spi.result.Result;
 import org.eclipse.edc.spi.result.ServiceFailure;
@@ -92,6 +94,7 @@ public class MultiContextStoresTest extends AbstractStoreTest {
   private static final String OFFER_ID = "offer";
   private static final String OFFER_ID_A = "offer-a";
   private static final String OFFER_ID_B = "offer-b";
+  private static final String OTHER_OFFER_ID = "other-offer";
   private static final String POLICY_UID = "policy-uid";
   private static final String SPEC_ID = "spec-tmf-id";
   private static final String OTHER_ASSET_ID = "other-asset-id";
@@ -147,7 +150,9 @@ public class MultiContextStoresTest extends AbstractStoreTest {
         new TMFBackedContractDefinitionStore(
             monitor,
             new ContractDefinitionIdResolver(monitor, productCatalogApi, tmfEdcMapper),
-            tmfEdcMapper);
+            tmfEdcMapper,
+            productCatalogApi,
+            CriterionOperatorRegistryImpl.ofDefaults());
     assetIndex =
         new TMFBackedAssetIndex(
             monitor, productCatalogApi, tmfEdcMapper, CriterionOperatorRegistryImpl.ofDefaults());
@@ -402,6 +407,74 @@ public class MultiContextStoresTest extends AbstractStoreTest {
     verify(productCatalogApi, never()).getProductOfferings(anyInt(), anyInt(), isNull());
   }
 
+  private static Stream<Arguments> definitionsPerContext() {
+    return Stream.of(
+        Arguments.of(DEFAULT_CONTEXT, Set.of(OFFER_ID)),
+        Arguments.of(CONTEXT_A, Set.of(OFFER_ID_A)),
+        Arguments.of(CONTEXT_B, Set.of(OFFER_ID_B)),
+        Arguments.of(CONTEXT_C, Set.of()));
+  }
+
+  // the query ContractDefinitionResolverImpl sends for a catalog request
+  @ParameterizedTest(name = "requested in {0}")
+  @MethodSource("definitionsPerContext")
+  public void testFindAllDefinitions_resolverQueryReturnsOnlyTheContextsOfferings(
+      String context, Set<String> expectedDefinitionIds) {
+    givenSpecs();
+    offerings.add(offering(OFFER_ID, null));
+    offerings.add(offering(OFFER_ID_A, List.of(CONTEXT_A)));
+    offerings.add(offering(OFFER_ID_B, List.of(CONTEXT_B)));
+    QuerySpec query =
+        QuerySpec.Builder.newInstance()
+            .filter(contextCriterion(context))
+            .limit(Integer.MAX_VALUE)
+            .build();
+
+    List<ContractDefinition> definitions = contractDefinitionStore.findAll(query).toList();
+
+    assertEquals(
+        expectedDefinitionIds,
+        definitions.stream().map(ContractDefinition::getId).collect(Collectors.toSet()));
+    definitions.forEach(d -> assertEquals(context, d.getParticipantContextId()));
+  }
+
+  // an empty selector would put every asset under every offering's policy in EDC's catalog
+  @Test
+  public void testFindAllDefinitions_selectOnlyTheirOfferingsAsset() {
+    givenSpecs();
+    offerings.add(offering(OFFER_ID, null));
+    offerings.add(offering(OTHER_OFFER_ID, null, OTHER_SPEC_ID));
+    CriterionOperatorRegistry registry = CriterionOperatorRegistryImpl.ofDefaults();
+    // stands in for EDC's AssetPropertyLookup, which resolves Asset.PROPERTY_ID in the runtime
+    registry.registerPropertyLookup(
+        (key, object) -> object instanceof Asset asset ? asset.getProperty(key) : null);
+    List<Asset> assets = assetIndex.queryAssets(QuerySpec.max()).toList();
+
+    Map<String, Set<String>> selectedAssetIds =
+        contractDefinitionStore
+            .findAll(QuerySpec.max())
+            .collect(
+                Collectors.toMap(
+                    ContractDefinition::getId,
+                    definition ->
+                        assets.stream()
+                            .filter(asset -> selects(registry, definition, asset))
+                            .map(Asset::getId)
+                            .collect(Collectors.toSet())));
+
+    assertEquals(
+        Map.of(OFFER_ID, Set.of(TEST_ASSET_ID), OTHER_OFFER_ID, Set.of(OTHER_ASSET_ID)),
+        selectedAssetIds,
+        "Each definition should select only the asset of its offering's specification.");
+  }
+
+  /** Matches the asset like EDC's DatasetResolverImpl: all selector criteria must hold. */
+  private static boolean selects(
+      CriterionOperatorRegistry registry, ContractDefinition definition, Asset asset) {
+    return definition.getAssetsSelector().stream()
+        .allMatch(criterion -> registry.<Asset>toPredicate(criterion).test(asset));
+  }
+
   /** Asserts the catalog and the dataset lookup in the context show exactly the expected offer. */
   private void assertOffers(String context, Optional<String> expectedDefinitionId) {
     ParticipantContext participantContext =
@@ -495,12 +568,17 @@ public class MultiContextStoresTest extends AbstractStoreTest {
   }
 
   private static ExtendableProductOffering offering(String externalId, List<String> tags) {
+    return offering(externalId, tags, SPEC_ID);
+  }
+
+  private static ExtendableProductOffering offering(
+      String externalId, List<String> tags, String specId) {
     ExtendableProductOffering offering =
         getExtendableProductOffering(
             externalId, Optional.of(getTestOdrlPolicy()), Optional.of(getTestOdrlPolicy()));
     offering.setParticipantContextIds(tags);
     ExtendableProductSpecificationRef specRef = new ExtendableProductSpecificationRef();
-    specRef.setId(SPEC_ID);
+    specRef.setId(specId);
     offering.setExtendableProductSpecification(specRef);
     return offering;
   }
