@@ -17,7 +17,9 @@
 package org.seamware.edc.store;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 import org.eclipse.edc.connector.controlplane.contract.spi.offer.store.ContractDefinitionStore;
@@ -30,6 +32,8 @@ import org.eclipse.edc.spi.result.StoreResult;
 import org.eclipse.edc.store.ReflectionBasedQueryResolver;
 import org.jetbrains.annotations.NotNull;
 import org.seamware.edc.domain.ExtendableProductOffering;
+import org.seamware.edc.domain.ExtendableProductSpecification;
+import org.seamware.edc.domain.ExtendableProductSpecificationRef;
 import org.seamware.edc.tmf.DuplicateIdException;
 import org.seamware.edc.tmf.ProductCatalogApiClient;
 
@@ -60,7 +64,8 @@ public class TMFBackedContractDefinitionStore implements ContractDefinitionStore
 
   /**
    * Filters, sorts and pages the definitions of the queried context like EDC's in-memory store.
-   * TMForum failures propagate instead of yielding an empty catalog.
+   * Each selects only its offering's asset; offerings without a resolvable specification are
+   * skipped. TMForum failures propagate instead of yielding an empty catalog.
    */
   @Override
   public @NotNull Stream<ContractDefinition> findAll(QuerySpec querySpec) {
@@ -72,25 +77,56 @@ public class TMFBackedContractDefinitionStore implements ContractDefinitionStore
         ContextCriteria.serverSideContext(querySpec.getFilterExpression(), defaultContextId)
             .orElse(null);
 
-    List<ContractDefinition> definitions = new ArrayList<>();
+    List<ExtendableProductOffering> offerings = new ArrayList<>();
     int offset = 0;
     List<ExtendableProductOffering> page;
     do {
       page = productCatalogApiClient.getProductOfferings(offset, PAGE_SIZE, serverSideContextId);
-      page.stream()
-          .map(offering -> toDefinition(offering, participantContextId))
-          .flatMap(Optional::stream)
-          .forEach(definitions::add);
+      offerings.addAll(page);
       offset += PAGE_SIZE;
     } while (page.size() == PAGE_SIZE);
 
-    return queryResolver.query(definitions.stream(), querySpec);
+    Map<String, String> assetIds = offerings.isEmpty() ? Map.of() : assetIdsBySpecificationId();
+    Stream<ContractDefinition> definitions =
+        offerings.stream()
+            .map(offering -> toDefinition(offering, participantContextId, assetIds))
+            .flatMap(Optional::stream);
+    return queryResolver.query(definitions, querySpec);
+  }
+
+  /** Asset ids (specification {@code externalId}s) keyed by the TMForum specification id. */
+  private Map<String, String> assetIdsBySpecificationId() {
+    Map<String, String> assetIds = new HashMap<>();
+    int offset = 0;
+    List<ExtendableProductSpecification> page;
+    do {
+      page = productCatalogApiClient.getProductSpecifications(offset, PAGE_SIZE);
+      page.stream()
+          .filter(spec -> spec.getId() != null && spec.getExternalId() != null)
+          .forEach(spec -> assetIds.put(spec.getId(), spec.getExternalId()));
+      offset += PAGE_SIZE;
+    } while (page.size() == PAGE_SIZE);
+    return assetIds;
   }
 
   private Optional<ContractDefinition> toDefinition(
-      ExtendableProductOffering offering, String participantContextId) {
+      ExtendableProductOffering offering,
+      String participantContextId,
+      Map<String, String> assetIds) {
+    // without a selector the definition would offer every asset
+    Optional<String> assetId =
+        Optional.ofNullable(offering.getExtendableProductSpecification())
+            .map(ExtendableProductSpecificationRef::getId)
+            .map(assetIds::get);
+    if (assetId.isEmpty()) {
+      monitor.debug(
+          String.format(
+              "Skipping product offering %s: it references no product specification with an externalId.",
+              offering.getExternalId()));
+      return Optional.empty();
+    }
     try {
-      return tmfEdcMapper.fromProductOffer(offering, participantContextId);
+      return tmfEdcMapper.fromProductOffer(offering, participantContextId, assetId.get());
     } catch (RuntimeException e) {
       monitor.debug(
           String.format(

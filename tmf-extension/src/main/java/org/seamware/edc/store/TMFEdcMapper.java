@@ -54,6 +54,7 @@ import org.eclipse.edc.policy.model.Policy;
 import org.eclipse.edc.policy.model.PolicyType;
 import org.eclipse.edc.protocol.dsp.spi.type.Dsp2025Constants;
 import org.eclipse.edc.spi.monitor.Monitor;
+import org.eclipse.edc.spi.query.Criterion;
 import org.eclipse.edc.spi.types.domain.DataAddress;
 import org.eclipse.edc.transform.spi.TypeTransformerRegistry;
 import org.jetbrains.annotations.Nullable;
@@ -130,6 +131,7 @@ public class TMFEdcMapper {
 
   public static final String QUOTE_ITEM_ADD_ACTION = "add";
   public static final String FDSC_DATA_ADDRESS_TYPE = "FDSC";
+  private static final String EQUALS_OPERATOR = "=";
 
   private final Monitor monitor;
   private final ObjectMapper objectMapper;
@@ -1034,6 +1036,27 @@ public class TMFEdcMapper {
    */
   public Optional<ContractDefinition> fromProductOffer(
       ExtendableProductOffering productOfferingVO, @Nullable String participantContextId) {
+    return fromProductOffer(productOfferingVO, participantContextId, List.of());
+  }
+
+  /**
+   * Maps the offering like {@link #fromProductOffer(ExtendableProductOffering, String)}, selecting
+   * only the asset {@code assetId}; an empty selector would match every asset in EDC's catalog.
+   */
+  public Optional<ContractDefinition> fromProductOffer(
+      ExtendableProductOffering productOfferingVO,
+      @Nullable String participantContextId,
+      String assetId) {
+    return fromProductOffer(
+        productOfferingVO,
+        participantContextId,
+        List.of(Criterion.criterion(Asset.PROPERTY_ID, EQUALS_OPERATOR, assetId)));
+  }
+
+  private Optional<ContractDefinition> fromProductOffer(
+      ExtendableProductOffering productOfferingVO,
+      @Nullable String participantContextId,
+      List<Criterion> assetsSelector) {
     Optional<String> definitionId = contractDefinitionId(productOfferingVO, participantContextId);
     if (definitionId.isEmpty()) {
       return Optional.empty();
@@ -1043,7 +1066,8 @@ public class TMFEdcMapper {
         ContractDefinition.Builder.newInstance()
             .clock(clock)
             .id(definitionId.get())
-            .participantContextId(participantContextId);
+            .participantContextId(participantContextId)
+            .assetsSelector(assetsSelector);
 
     Optional<ExtendableProductOfferingTerm> optionalTerm =
         getContractDefinitionTerm(productOfferingVO);
